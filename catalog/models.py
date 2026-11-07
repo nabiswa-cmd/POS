@@ -114,6 +114,15 @@ class Product(models.Model):
     stock_qty = models.IntegerField(default=0, editable=False)
     reorder_level = models.PositiveIntegerField(default=0)
 
+    tax_class = models.CharField(
+        max_length=1, default="B",
+        choices=[("A", "A - Exempt"), ("B", "B - Standard rate (VAT)"), ("C", "C - Zero-rated"),
+                 ("D", "D - Non-VAT"), ("E", "E - Special rate (8%)")],
+        help_text="Wines and spirits are normally B (standard rate). Confirm with your accountant.")
+    etims_item_class_code = models.CharField(
+        "eTIMS item class code", max_length=20, blank=True,
+        help_text="KRA's item classification code for this product. Needed only when eTIMS is switched on.")
+
     supplier = models.ForeignKey(Supplier, null=True, blank=True, on_delete=models.SET_NULL, related_name="products")
     shelf = models.ForeignKey(Shelf, null=True, blank=True, on_delete=models.SET_NULL, related_name="products")
     image = models.ImageField(upload_to="products/", blank=True)

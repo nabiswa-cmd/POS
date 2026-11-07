@@ -2,12 +2,20 @@
 of Phase 3; these are the calls it makes. Every endpoint needs a signed-in cashier with an open shift."""
 from functools import wraps
 
+from django.conf import settings
 from django.http import JsonResponse
+from django.shortcuts import redirect, render
+from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET
 
+from accounts import services as auth_services
+from catalog import barcodes
 from core.http import bad, client_ip, login_required_json, post_json
+from core.models import ShopSettings
+from tills.models import CashierShift
 
-from . import receipt, rules, services
+from . import etims, receipt, rules, services, shortcuts, tax
+from .models import Sale
 
 
 
@@ -18,14 +26,11 @@ def _guard(view):
         try:
             shift = services.open_shift_for(request.user, request.session.get("pos_till"))
             return view(request, *args, shift=shift, **kwargs)
+        except services.ApprovalNeeded as exc:
+            return JsonResponse({"ok": False, "error": str(exc), "approval_required": exc.action,
+                                 "object_ref": exc.object_ref}, status=409)
         except services.NotAllowed as exc:
             return bad(str(exc), 403)
-        except services.ApprovalNeeded as exc:
-            # Same 400 as before; the screen looks for "approval_required" to open the supervisor box.
-            from accounts.permissions import RESTRICTED_ACTIONS
-            return JsonResponse({"ok": False, "error": str(exc), "approval_required": {
-                "action": exc.action, "object_ref": exc.object_ref,
-                "label": RESTRICTED_ACTIONS[exc.action]["label"]}}, status=400)
         except services.SaleError as exc:
             return bad(str(exc), 400)
 
@@ -45,10 +50,17 @@ def _item_json(item):
 
 def cart_payload(sale):
     if sale is None:
-        return {"id": None, "ref": None, "customer": "", "items": [], "count": 0,
-                "subtotal": "0.00", "discount": "0.00", "total": "0.00"}
+        return {"id": None, "ref": None, "customer": "", "customer_pin": "", "items": [], "count": 0,
+                "subtotal": "0.00", "discount": "0.00", "total": "0.00", "vat_included": None}
     items = list(sale.items.select_related("product"))
-    return {"id": sale.pk, "ref": rules.sale_ref(sale.pk), "customer": sale.customer_name,
+    vat = None
+    shop = ShopSettings.load()
+    if shop.vat_registered:
+        _, _, vat_total = tax.summarize(
+            (i.product.tax_class, tax.rate_for(i.product.tax_class, shop.vat_standard_rate), i.line_total) for i in items)
+        vat = str(vat_total)
+    return {"vat_included": vat, "id": sale.pk, "ref": rules.sale_ref(sale.pk), "customer": sale.customer_name,
+            "customer_pin": sale.customer_pin,
             "items": [_item_json(i) for i in items], "count": sum(i.quantity for i in items),
             "subtotal": str(sale.subtotal), "discount": str(sale.discount_total), "total": str(sale.total)}
 
@@ -114,7 +126,7 @@ def cart_price(request, data, shift):
 @post_json
 @_guard
 def cart_customer(request, data, shift):
-    services.set_customer(request.user, shift, data.get("name"))
+    services.set_customer(request.user, shift, data.get("name"), pin=data.get("pin"))
     return _cart(request, shift)
 
 
@@ -159,13 +171,19 @@ def held_resume(request, data, shift):
 def checkout_cash(request, data, shift):
     sale = services.checkout_cash(request.user, shift, data.get("tendered"))
     payment = sale.payments.first()
+    # The sale is saved. Now try to get it signed by KRA; if that cannot happen right now it simply waits.
+    sub = etims.submit(sale.pk)
+    etims.submit_pending(3)
     return JsonResponse({"ok": True, "sale_id": sale.pk, "number": sale.number, "total": str(sale.total),
-                         "change": str(payment.change_given), "cart": cart_payload(None)})
+                         "change": str(payment.change_given), "cart": cart_payload(None),
+                         "etims": sub.status if sub else None, "etims_note": sub.last_error if sub else ""})
 
 
 def _receipt_response(sale, duplicate):
     data, lines = receipt.render(sale, duplicate=duplicate)
-    return JsonResponse({"ok": True, "receipt": data, "lines": lines, "paper_mm": data["paper_mm"]})
+    qr = (data.get("etims") or {}).get("qr_text") or ""
+    return JsonResponse({"ok": True, "receipt": data, "lines": lines, "paper_mm": data["paper_mm"],
+                         "qr_svg": barcodes.qr_svg(qr) if qr else ""})
 
 
 @require_GET
@@ -192,3 +210,83 @@ def shift_summary(request, shift):
     if not (request.user.can("shifts.view_own") or request.user.can("shifts.view_all")):
         return bad("You are not allowed to see shift information.", 403)
     return JsonResponse({"ok": True, "shift": services.shift_summary(shift)})
+
+
+@require_GET
+@login_required_json
+@_guard
+def my_sales(request, shift):
+    """The cashier's own completed sales on this shift (newest first), so a receipt can be found and printed."""
+    if not (request.user.can("sales.view_own") or request.user.can("sales.view_all")):
+        return bad("You are not allowed to see sales.", 403)
+    qs = Sale.objects.filter(shift=shift, status=Sale.COMPLETED)
+    if not request.user.can("sales.view_all"):
+        qs = qs.filter(cashier=request.user)
+    rows = [{"id": x.pk, "number": x.number, "total": str(x.total), "customer": x.customer_name,
+             "time": x.completed_at.isoformat(), "printed": x.printed_at is not None}
+            for x in qs.order_by("-completed_at")[:15]]
+    return JsonResponse({"ok": True, "sales": rows})
+
+
+@require_GET
+@login_required_json
+@_guard
+def pos_config(request, shift):
+    """Everything the sales screen needs at start-up."""
+    shop = ShopSettings.load()
+    try:
+        keys = shortcuts.merged(shop.pos_shortcuts)
+    except shortcuts.ShortcutError:
+        keys = dict(shortcuts.DEFAULTS)         # a bad saved setting must never lock the till
+    user = request.user
+    return JsonResponse({
+        "ok": True, "shop": shop.shop_name, "till": shift.till.name, "till_number": shift.till.number,
+        "cashier": user.display_name, "authorized_by": shift.authorized_by.display_name,
+        "owner": auth_services.is_exempt(user),
+        "shortcuts": keys, "actions": shortcuts.ACTIONS,
+        "can": {"hold": user.can("sales.hold"), "reprint": user.can("receipts.reprint"),
+                "discount": user.can("discount.apply") or auth_services.is_exempt(user),
+                "shift": user.can("shifts.view_own") or user.can("shifts.view_all")},
+        "vat": shop.vat_registered,
+        "etims": etims.enabled(),
+        "payment_methods": [{"code": "CASH", "label": "Cash", "enabled": True},
+                            {"code": "MPESA", "label": "M-PESA (Phase 4)", "enabled": False},
+                            {"code": "CARD", "label": "Card (Phase 4)", "enabled": False}],
+        "approval_minutes": settings.APPROVAL_TOKEN_MINUTES,
+    })
+
+
+@ensure_csrf_cookie
+@require_GET
+def pos_page(request):
+    """The cashier's sales screen. Only reachable by a signed-in cashier with an open shift on this till."""
+    if not request.user.is_authenticated or not request.user.can("sales.make"):
+        return redirect("/app/pos/")
+    till_number = request.session.get("pos_till")
+    if not till_number or not CashierShift.objects.filter(
+            till__number=till_number, cashier=request.user, closed_at__isnull=True).exists():
+        return redirect("/app/pos/")
+    return render(request, "sales/pos.html", {"shop_name": ShopSettings.load().shop_name})
+
+
+def reprint_page(request, sale_id):
+    """Manager/supervisor reprint from the Tills & sales screen. Always a marked, audited duplicate."""
+    from django.http import HttpResponseNotAllowed
+    from core.decorators import perm_required
+
+    @perm_required("receipts.reprint")
+    def inner(request):
+        if request.method != "POST":
+            return HttpResponseNotAllowed(["POST"])
+        try:
+            sale = services.mark_reprint(request.user, sale_id, ip=client_ip(request))
+        except services.SaleError as exc:
+            return bad(str(exc), 400)
+        data, lines = receipt.render(receipt.get_completed(sale.pk), duplicate=True)
+        qr = (data.get("etims") or {}).get("qr_text") or ""
+        mm = 58 if data["paper_mm"] == 58 else 80
+        return render(request, "sales/receipt_print.html", {
+            "number": data["number"], "text": "\n".join(lines), "mm": mm, "inner": mm - 4,
+            "font": 11 if mm == 58 else 10, "qr": barcodes.qr_svg(qr) if qr else ""})
+
+    return inner(request)

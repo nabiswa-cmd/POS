@@ -62,8 +62,9 @@ def request_approval_view(request, data):
     action = data.get("action")
     if action not in RESTRICTED_ACTIONS or action == "open_pos":
         return bad("Unknown action.")
-    if not services.is_required(action):
-        return JsonResponse({"ok": True, "required": False})
+    if not services.needs_approval(request.user, action):     # waived by policy, or the owner is acting
+        return JsonResponse({"ok": True, "required": False,
+                             "owner": services.is_exempt(request.user)})
     try:
         raw, approval = services.grant_approval(
             action=action,

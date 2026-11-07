@@ -1,8 +1,8 @@
+from decimal import Decimal
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
-
-from . import shortcuts
 
 
 class SingletonModel(models.Model):
@@ -55,19 +55,28 @@ class ShopSettings(SingletonModel):
         ],
     )
 
+    vat_registered = models.BooleanField(
+        "VAT registered", default=False,
+        help_text="If on, receipts show the VAT inside each price. Leave off until you are VAT registered with KRA.")
+    vat_standard_rate = models.DecimalField(
+        "Standard VAT rate (%)", max_digits=5, decimal_places=2, default=Decimal("16.00"),
+        help_text="Applies to tax class B. Kenya's standard rate is 16%. Prices always include VAT.")
     pos_shortcuts = models.JSONField(
         default=dict, blank=True,
-        help_text='Optional keyboard shortcut changes for the sales screen, e.g. {"hold": "Alt+H", "discount": "Alt+D"}. '
-                  "Leave {} for the defaults. Actions: " + ", ".join(shortcuts.DEFAULTS) + ".")
+        help_text='Optional key changes for the till, e.g. {"print": "Alt+P"}. Actions: help, search, scan, quantity, '
+                  'hold, retrieve, discount, payment, complete, print, shift, approval, customer.')
 
     class Meta:
         verbose_name_plural = "Shop settings"
 
     def clean(self):
-        super().clean()
-        _merged, errors = shortcuts.merge(self.pos_shortcuts)
-        if errors:
-            raise ValidationError({"pos_shortcuts": errors})
+        from sales import shortcuts
+        try:
+            shortcuts.merged(self.pos_shortcuts)
+        except shortcuts.ShortcutError as exc:
+            raise ValidationError({"pos_shortcuts": str(exc)})
+        if not (Decimal("0") <= self.vat_standard_rate <= Decimal("50")):
+            raise ValidationError({"vat_standard_rate": "Enter a rate between 0 and 50."})
 
     def __str__(self):
         return self.shop_name

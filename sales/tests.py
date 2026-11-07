@@ -177,15 +177,16 @@ class DiscountAndPriceTests(SalesCase):
         self.assertEqual(line.discount_approved_by, self.supervisor)
         self.assertTrue(AuditLog.objects.filter(action="sale.discount_applied", approver=self.supervisor).exists())
 
-    def test_manager_discount_within_limit_needs_no_second_person_but_over_limit_does(self):
+    def test_owner_discount_needs_no_second_person_at_any_size(self):
         mgr_shift = CashierShift.objects.create(till=self.till2, cashier=self.manager,
                                                 authorized_by=self.supervisor, opening_float=D("0"))
         sale, line = services.add_item(self.manager, mgr_shift, code="6001111111111")
         services.apply_discount(self.manager, mgr_shift, line.pk, percent="5")       # 5% = 175
         line.refresh_from_db()
         self.assertEqual(line.discount, D("175.00"))
-        with self.assertRaises(services.SaleError):
-            services.apply_discount(self.manager, mgr_shift, line.pk, percent="20")  # over the limit
+        services.apply_discount(self.manager, mgr_shift, line.pk, percent="20")      # the owner has no limit
+        line.refresh_from_db()
+        self.assertEqual((line.discount, line.discount_approved_by), (D("700.00"), self.manager))
 
     def test_discount_cannot_exceed_line(self):
         sale, line = self.scan()
@@ -421,7 +422,9 @@ class ApiTests(SalesCase):
         item = cart["items"][0]
 
         res = self.post("/api/sales/cart/remove/", {"item_id": item["id"]})        # no approval
-        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.status_code, 409)                                      # "a supervisor must approve"
+        self.assertEqual(res.json()["approval_required"], "remove_item")
+        self.assertEqual(res.json()["object_ref"], item["ref"])
 
         res = self.post("/api/approvals/request/", {"action": "remove_item", "approver_username": "sup",
                                                     "secret": "4321", "reason": "Customer changed mind",

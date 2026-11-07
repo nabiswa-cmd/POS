@@ -52,16 +52,22 @@ def format_receipt(data, paper_mm=80):
 
     if data.get("duplicate"):
         out += _center("*** DUPLICATE RECEIPT ***", width)
-        out += _center(f"Reprint #{data.get('reprint_number', 1)}", width)
+        out += _center(f"COPY - Reprint #{data.get('reprint_number', 1)}", width)
         out.append(rule)
     for line in data.get("header_lines", []):
         out += _center(line, width)
+    etims = data.get("etims")
+    signed = bool(etims and etims.get("status") == "SUBMITTED")
+    # The words TAX INVOICE appear only when KRA's unit has really signed this sale.
+    out += _center("TAX INVOICE" if signed else "RECEIPT", width)
     out.append(rule)
     out.append(_pair("Receipt:", data["number"], width))
     out.append(_pair("Date:", data["date"], width))
     out.append(_pair("Till:", data["till"], width))
     if data.get("customer"):
         out += _wrap(f"Customer: {data['customer']}", width)
+    if data.get("customer_pin"):
+        out += _wrap(f"Customer PIN: {data['customer_pin']}", width)
     if data.get("cashier"):
         out += _wrap(f"Cashier: {data['cashier']}", width)
     if data.get("authorized_by"):
@@ -70,7 +76,8 @@ def format_receipt(data, paper_mm=80):
 
     for item in data["items"]:
         out += _wrap(item["name"], width)
-        out.append(_pair(f"  {item['quantity']} x {_m(item['unit_price'])}", _m(item["gross"]), width))
+        code = f" {item['tax_class']}" if data.get("item_tax_codes") and item.get("tax_class") else ""
+        out.append(_pair(f"  {item['quantity']} x {_m(item['unit_price'])}{code}", _m(item["gross"]), width))
         if Decimal(item["discount"]) > 0:
             out.append(_pair("  Discount", "-" + _m(item["discount"]), width))
     out.append(rule)
@@ -80,6 +87,16 @@ def format_receipt(data, paper_mm=80):
         out.append(_pair("Discount", "-" + _m(data["discount"]), width))
     out.append(_pair("TOTAL PAYABLE", _m(data["total"]), width))
     out.append(rule)
+
+    vat = data.get("vat")
+    if vat:
+        out += _center("PRICES INCLUDE VAT", width)
+        out.append(_pair("Class  Rate   Taxable", "VAT", width))
+        for row in vat["rows"]:
+            label = f"  {row['class']}   {Decimal(row['rate']).normalize():f}%  {_m(row['taxable'])}"
+            out.append(_pair(label, _m(row["tax"]), width))
+        out.append(_pair("TOTAL VAT", _m(vat["tax_total"]), width))
+        out.append(rule)
 
     for pay in data.get("payments", []):
         out.append(_pair(f"Paid by {pay['method']}", _m(pay["amount"]), width))
@@ -91,5 +108,21 @@ def format_receipt(data, paper_mm=80):
     for note in data.get("approval_notes", []):
         out += _wrap(note, width)
     out.append(rule)
+    if etims:
+        if signed:
+            out += _center("KRA eTIMS", width)
+            out.append(_pair("CU invoice no:", f"{etims['scu_receipt_no']}", width))
+            out.append(_pair("Invoice ref:", f"{etims['invoice_no']}", width))
+            if etims.get("scu_id"):
+                out += _wrap(f"SCU ID: {etims['scu_id']}", width)
+            if etims.get("scu_datetime"):
+                out += _wrap(f"SCU time: {etims['scu_datetime']}", width)
+            out += _wrap(f"Receipt signature: {etims['signature']}", width)
+            if etims.get("internal_data"):
+                out += _wrap(f"Internal data: {etims['internal_data']}", width)
+        else:
+            out += _center("eTIMS: awaiting KRA signature", width)
+            out += _center("Not yet a valid tax invoice", width)
+        out.append(rule)
     out += _center(data.get("footer") or "Thank you!", width)
     return out

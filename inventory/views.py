@@ -54,7 +54,7 @@ def stock_history(request, pk):
 def stock_adjust(request, pk):
     product = get_object_or_404(Product, pk=pk)
     form = AdjustForm(request.POST or None)
-    needs_approver = not request.user.is_manager and auth_services.is_required("stock_adjust")
+    needs_approver = auth_services.needs_approval(request.user, "stock_adjust")
     if request.method == "POST" and form.is_valid():
         d = form.cleaned_data
         token = None

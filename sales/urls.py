@@ -17,5 +17,7 @@ urlpatterns = [
     path("checkout/cash/", views.checkout_cash, name="sales-checkout-cash"),
     path("receipt/<int:sale_id>/", views.receipt_original, name="sales-receipt"),
     path("receipt/<int:sale_id>/reprint/", views.receipt_reprint, name="sales-receipt-reprint"),
+    path("mine/", views.my_sales, name="sales-mine"),
+    path("config/", views.pos_config, name="sales-config"),
     path("shift/summary/", views.shift_summary, name="sales-shift-summary"),
 ]

@@ -117,6 +117,20 @@ def is_required(action):
     return True if policy is None else policy.required
 
 
+def is_exempt(user):
+    """The shop owner (an active manager) needs no second person's approval for anything.
+
+    Their restricted actions are still written to the audit log with their name. Everyone else,
+    including supervisors, always follows the approval policy.
+    """
+    return bool(user is not None and getattr(user, "is_manager", False) and getattr(user, "is_active", False))
+
+
+def needs_approval(user, action):
+    """Does THIS user need someone else's approval for this action right now?"""
+    return (not is_exempt(user)) and is_required(action)
+
+
 def grant_approval(*, action, approver_username, secret=None, biometric=None, reason, requester=None,
                    object_ref="", till_number=None, detail=None, ip=None):
     """Authenticate an approver and issue a single-use approval. Returns (raw_token, Approval)."""
@@ -174,8 +188,9 @@ def consume_approval(raw_token, *, action, requester, object_ref=""):
 def require_approval(action, raw_token, *, requester, object_ref=""):
     """Gate for restricted actions. Returns the consumed Approval, or None if policy waives approval.
 
-    Every endpoint that performs a restricted action must call this before acting.
+    Every endpoint that performs a restricted action must call this before acting. The owner (manager)
+    is exempt: nothing is consumed and the caller records the action under the owner's own name.
     """
-    if not is_required(action):
+    if not needs_approval(requester, action):
         return None
     return consume_approval(raw_token, action=action, requester=requester, object_ref=object_ref)

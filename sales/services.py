@@ -20,11 +20,12 @@ from accounts.approval_rules import ApprovalError
 from catalog import services as catalog_services
 from catalog.models import CodeSequence, Packaging, Product
 from core import audit
+from core.models import ShopSettings
 from inventory import movement_rules as mr
 from inventory import services as stock_services
 from tills.models import CashierShift
 
-from . import rules
+from . import etims, rules, tax
 from .models import Payment, Sale, SaleItem
 
 
@@ -37,10 +38,10 @@ class NotAllowed(SaleError):
 
 
 class ApprovalNeeded(SaleError):
-    """The action needs a supervisor/manager approval and none was sent. The sales screen reads
-    `action` and `object_ref`, asks the supervisor to approve, and sends the same request again with the token."""
+    """A supervisor/manager must approve first. The sales screen opens its approval window for `action`
+    and sends the same request again with the token. (The server re-checks the token every time.)"""
 
-    def __init__(self, message, action, object_ref):
+    def __init__(self, action, object_ref, message="A supervisor or manager must approve this."):
         super().__init__(message)
         self.action, self.object_ref = action, object_ref
 
@@ -74,14 +75,35 @@ def _shift_still_open(shift):
 
 
 def _approve(user, action, object_ref, token):
-    """Consume a supervisor/manager approval for a restricted action. Returns the Approval or None
-    when the manager's policy waives approval for this action."""
+    """Consume a supervisor/manager approval for a restricted action. Returns the Approval, or None when
+    nobody else needs to approve (the manager's policy waives it, or the owner is acting)."""
+    if not auth_services.needs_approval(user, action):
+        return None
+    if not token:
+        raise ApprovalNeeded(action, object_ref)
     try:
         return auth_services.require_approval(action, token, requester=user, object_ref=object_ref)
     except ApprovalError as exc:
-        if not token:
-            raise ApprovalNeeded(str(exc), action, object_ref) from exc
         raise SaleError(str(exc)) from exc
+
+
+def _authority(user, approval):
+    """Who is on record as authorizing: the approver, or the owner when the owner acts alone."""
+    if approval:
+        return approval.approver
+    return user if auth_services.is_exempt(user) else None
+
+
+def _why(user, approval, reason, what):
+    """The reason to record for a restricted action. The owner may act without typing one."""
+    if approval:
+        return approval.reason
+    reason = (reason or "").strip()
+    if reason:
+        return reason
+    if auth_services.is_exempt(user):
+        return "Owner action (no approval needed)"
+    raise SaleError(f"A reason is required to {what}.")
 
 
 def _locked_sale(user, shift, *, create=False):
@@ -209,10 +231,11 @@ def set_quantity(user, shift, item_id, quantity, *, approval_token=None):
     item.discount_approved_by = None
     item.save(update_fields=["quantity", "line_total", "discount", "discount_approved_by"])
     _recalc(sale)
-    if approval:
-        audit.record("sale.item_quantity_reduced", actor=user, approver=approval.approver, object_type="sale_item",
-                     object_ref=item.pk, previous={"quantity": old_qty}, new={"quantity": new_qty},
-                     reason=approval.reason, till_number=shift.till.number)
+    if new_qty < old_qty:
+        audit.record("sale.item_quantity_reduced", actor=user, approver=_authority(user, approval),
+                     object_type="sale_item", object_ref=item.pk, previous={"quantity": old_qty},
+                     new={"quantity": new_qty}, reason=_why(user, approval, "", "reduce a quantity"),
+                     till_number=shift.till.number)
     return sale, item
 
 
@@ -224,14 +247,12 @@ def remove_item(user, shift, item_id, *, approval_token=None, reason=""):
     sale = _locked_sale(user, shift)
     item = _item(sale, item_id)
     approval = _approve(user, "remove_item", rules.item_ref(sale.pk, item.pk), approval_token)
-    why = approval.reason if approval else (reason or "").strip()
-    if not why:
-        raise SaleError("A reason is required to remove an item.")
+    why = _why(user, approval, reason, "remove an item")
     snapshot = {"product": item.product_name, "product_id": item.product_id, "quantity": item.quantity,
                 "unit_price": str(item.unit_price), "line_total": str(item.line_total)}
     item.delete()
     _recalc(sale)
-    audit.record("sale.item_removed", actor=user, approver=approval.approver if approval else None,
+    audit.record("sale.item_removed", actor=user, approver=_authority(user, approval),
                  object_type="sale", object_ref=sale.pk, previous=snapshot, reason=why, till_number=shift.till.number)
     return sale
 
@@ -251,26 +272,31 @@ def apply_discount(user, shift, item_id, *, amount=None, percent=None, approval_
         discount = _rule(rules.parse_money, amount, field="Discount", allow_zero=True)
     new_total = _rule(rules.line_total, item.quantity, item.unit_price, discount)   # also rejects discount > gross
 
+    owner = auth_services.is_exempt(user)
     min_price = item.product.min_selling_price
     if item.packaging_id and min_price is not None:
         min_price = rules.money(min_price * item.units_per_sale_unit)
     needs = rules.discount_needs_approval(discount, gross, settings.ORDINARY_DISCOUNT_MAX_PERCENT,
                                           quantity=item.quantity, min_unit_price=min_price)
-    approval = None
-    if discount > 0 and (needs or not user.can("discount.apply")):
+    approval, approver = None, None
+    if owner:
+        # The owner may discount any amount. It is recorded under their own name as the authority.
+        approver = user if (discount > 0 and (needs or not user.can("discount.apply"))) else None
+    elif discount > 0 and (needs or not user.can("discount.apply")):
         if not user.can("discount.apply") and not auth_services.is_required("exceptional_discount"):
             raise NotAllowed("You are not allowed to give discounts.")
         approval = _approve(user, "exceptional_discount", rules.item_ref(sale.pk, item.pk), approval_token)
+        approver = approval.approver if approval else None
     previous = {"discount": str(item.discount)}
     item.discount, item.line_total = discount, new_total
-    item.discount_approved_by = approval.approver if approval else None
+    item.discount_approved_by = approver
     item.save(update_fields=["discount", "line_total", "discount_approved_by"])
     _recalc(sale)
     if discount != Decimal(previous["discount"]):
-        audit.record("sale.discount_applied", actor=user, approver=approval.approver if approval else None,
+        audit.record("sale.discount_applied", actor=user, approver=approver,
                      object_type="sale_item", object_ref=item.pk, previous=previous,
                      new={"discount": str(discount), "percent": str(rules.discount_percent(discount, gross))},
-                     reason=approval.reason if approval else "Within ordinary discount limit",
+                     reason=(approval.reason if approval else "Owner discount" if approver else "Within ordinary discount limit"),
                      till_number=shift.till.number)
     return sale, item
 
@@ -288,27 +314,33 @@ def change_price(user, shift, item_id, new_price, *, approval_token=None):
     approval = None
     if not user.can("products.change_price"):
         approval = _approve(user, "price_change", rules.item_ref(sale.pk, item.pk), approval_token)
+    approver = approval.approver if approval else (user if auth_services.is_exempt(user) and price != item.unit_price else None)
     previous = {"unit_price": str(item.unit_price), "discount": str(item.discount)}
     item.unit_price, item.discount = price, Decimal("0.00")
     item.discount_approved_by = None
     item.line_total = rules.line_total(item.quantity, price, 0)
-    item.price_approved_by = approval.approver if approval else None
+    item.price_approved_by = approver
     item.save(update_fields=["unit_price", "discount", "discount_approved_by", "line_total", "price_approved_by"])
     _recalc(sale)
-    audit.record("sale.price_changed", actor=user, approver=approval.approver if approval else None,
+    audit.record("sale.price_changed", actor=user, approver=approver,
                  object_type="sale_item", object_ref=item.pk, previous=previous, new={"unit_price": str(price)},
-                 reason=approval.reason if approval else "Changed by a user with price permission",
+                 reason=approval.reason if approval else "Changed by a user with price permission (owner)" if approver else "Changed by a user with price permission",
                  till_number=shift.till.number)
     return sale, item
 
 
 @transaction.atomic
-def set_customer(user, shift, name):
+def set_customer(user, shift, name, pin=None):
+    """Customer name (typed) and, optionally, their KRA PIN for a tax invoice a business can claim VAT on."""
     _need(user, "sales.make")
     sale = _locked_sale(user, shift, create=True)
     cleaned = " ".join("".join(ch for ch in str(name or "") if ch.isprintable()).split())[:120]
     sale.customer_name = cleaned
-    sale.save(update_fields=["customer_name"])
+    fields = ["customer_name"]
+    if pin is not None:
+        sale.customer_pin = _rule(tax.clean_kra_pin, pin)
+        fields.append("customer_pin")
+    sale.save(update_fields=fields)
     return sale
 
 
@@ -364,16 +396,14 @@ def void_sale(user, shift, *, approval_token=None, reason=""):
     if not sale.items.exists():
         return None                               # nothing to void
     approval = _approve(user, "void_sale", rules.sale_ref(sale.pk), approval_token)
-    why = approval.reason if approval else (reason or "").strip()
-    if not why:
-        raise SaleError("A reason is required to void a sale.")
+    why = _why(user, approval, reason, "void a sale")
     summary = [{"product": i.product_name, "quantity": i.quantity, "line_total": str(i.line_total)}
                for i in sale.items.all()]
     sale.status, sale.voided_at, sale.voided_by = Sale.VOIDED, timezone.now(), user
-    sale.void_approved_by = approval.approver if approval else None
+    sale.void_approved_by = _authority(user, approval)
     sale.void_reason = why[:250]
     sale.save(update_fields=["status", "voided_at", "voided_by", "void_approved_by", "void_reason"])
-    audit.record("sale.voided", actor=user, approver=approval.approver if approval else None, object_type="sale",
+    audit.record("sale.voided", actor=user, approver=_authority(user, approval), object_type="sale",
                  object_ref=sale.pk, previous={"items": summary, "total": str(sale.total)}, reason=why,
                  till_number=shift.till.number)
     return sale
@@ -418,14 +448,31 @@ def checkout_cash(user, shift, tendered):
             line.cost_total = cost
             line.save(update_fields=["cost_total"])      # the sale is still OPEN here, so this is allowed
 
+    # VAT snapshot. Prices already include VAT; we only record how much of each line is tax. If the shop is
+    # not VAT registered every figure stays zero and the receipt shows no VAT at all.
+    shop = ShopSettings.load()
+    vat_on = shop.vat_registered
+    tax_total = Decimal("0.00")
+    for item in items:
+        klass = item.product.tax_class
+        rate = tax.rate_for(klass, shop.vat_standard_rate) if vat_on else Decimal("0")
+        taxable, vat = tax.split_line(item.line_total, rate)
+        item.tax_class, item.tax_rate, item.taxable_amount, item.tax_amount = klass, rate, taxable, vat
+        item.save(update_fields=["tax_class", "tax_rate", "taxable_amount", "tax_amount"])
+        tax_total += vat
+
     now = timezone.now()
     Payment.objects.create(sale=sale, method=Payment.CASH, status=Payment.CONFIRMED, amount=total,
                            tendered=tendered, change_given=change, received_by=user)
     sale.number, sale.status, sale.completed_at = number, Sale.COMPLETED, now
     sale.subtotal, sale.discount_total, sale.total = subtotal, discount, total
-    sale.save(update_fields=["number", "status", "completed_at", "subtotal", "discount_total", "total"])
+    sale.vat_applied, sale.tax_total = vat_on, tax_total
+    sale.save(update_fields=["number", "status", "completed_at", "subtotal", "discount_total", "total",
+                             "vat_applied", "tax_total"])
+    etims.create_submission(sale)       # the invoice number is taken inside this same transaction
     audit.record("sale.completed", actor=user, object_type="sale", object_ref=number,
-                 new={"total": str(total), "method": "CASH", "items": len(items)}, till_number=shift.till.number)
+                 new={"total": str(total), "method": "CASH", "items": len(items), "vat": str(tax_total)},
+                 till_number=shift.till.number)
     return sale
 
 
@@ -466,7 +513,6 @@ def shift_summary(shift):
     """A cashier's running view of their shift. Cash-up and closing arrive in Phase 5."""
     done = Sale.objects.filter(shift=shift, status=Sale.COMPLETED)
     cash = Payment.objects.filter(sale__in=done, method=Payment.CASH).aggregate(t=Sum("amount"))["t"] or Decimal("0.00")
-    sales_total = done.aggregate(t=Sum("total"))["t"] or Decimal("0.00")
-    return {"sales_count": done.count(), "sales_total": str(rules.money(sales_total)),
-            "cash_sales": str(rules.money(cash)), "opening_float": str(rules.money(shift.opening_float)),
-            "cash_in_drawer_expected": str(rules.money(shift.opening_float + cash))}
+    return {"sales_count": done.count(), "sales_total": str(done.aggregate(t=Sum("total"))["t"] or Decimal("0.00")),
+            "cash_sales": str(cash), "opening_float": str(shift.opening_float),
+            "cash_in_drawer_expected": str(shift.opening_float + cash)}

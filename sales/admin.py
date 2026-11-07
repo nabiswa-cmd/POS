@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Payment, Sale, SaleItem
+from .models import EtimsSubmission, Payment, Sale, SaleItem
 
 
 class ReadOnlyMixin:
@@ -19,7 +19,7 @@ class ReadOnlyMixin:
 class ItemInline(ReadOnlyMixin, admin.TabularInline):
     model = SaleItem
     extra = 0
-    fields = ("product_name", "pack_name", "quantity", "unit_price", "discount", "line_total", "cost_total")
+    fields = ("product_name", "pack_name", "quantity", "unit_price", "discount", "line_total", "tax_class", "tax_amount", "cost_total")
 
 
 class PaymentInline(ReadOnlyMixin, admin.TabularInline):
@@ -35,3 +35,10 @@ class SaleAdmin(ReadOnlyMixin, admin.ModelAdmin):
     search_fields = ("number", "customer_name", "cashier__username")
     date_hierarchy = "created_at"
     inlines = [ItemInline, PaymentInline]
+
+
+@admin.register(EtimsSubmission)
+class EtimsAdmin(ReadOnlyMixin, admin.ModelAdmin):
+    list_display = ("invoice_no", "sale", "status", "attempts", "last_attempt_at", "last_error")
+    list_filter = ("status",)
+    search_fields = ("sale__number", "last_error", "signature")

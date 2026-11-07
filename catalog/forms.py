@@ -11,11 +11,13 @@ class ProductForm(forms.ModelForm):
     class Meta:
         model = Product
         fields = ["name", "brand", "category", "description", "sku", "base_unit", "buying_cost", "selling_price",
-                  "wholesale_price", "min_selling_price", "reorder_level", "supplier", "shelf", "image", "active"]
+                  "wholesale_price", "min_selling_price", "tax_class", "etims_item_class_code", "reorder_level", "supplier", "shelf", "image", "active"]
         widgets = {"description": forms.Textarea(attrs={"rows": 2})}
 
     def __init__(self, *args, user, **kwargs):
         super().__init__(*args, **kwargs)
+        if "tax_class" in self.fields:
+            self.fields["tax_class"].required = False      # blank keeps the current class (new products: B)
         self.fields["sku"].required = False
         self.fields["sku"].help_text = "Leave blank to generate one. This code can be scanned at the till."
         for name in ("brand", "category", "supplier", "shelf"):
@@ -26,10 +28,16 @@ class ProductForm(forms.ModelForm):
         if not user.can("products.change_price"):
             for name in ("selling_price", "wholesale_price", "min_selling_price"):
                 self.fields.pop(name, None)
+        if not user.can("products.change_price"):
+            for name in ("tax_class", "etims_item_class_code"):    # tax treatment is a pricing decision
+                self.fields.pop(name, None)
         if not user.can("products.change_cost"):
             self.fields.pop("buying_cost", None)
         if not user.can("products.manage"):
             self.fields.clear()
+
+    def clean_tax_class(self):
+        return self.cleaned_data.get("tax_class") or (self.instance.tax_class if self.instance.pk else "B")
 
     def clean_sku(self):
         value = self.cleaned_data.get("sku") or ""

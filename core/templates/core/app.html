@@ -23,8 +23,9 @@
     <label for="a-secret">Password or PIN</label>
     <input id="a-secret" type="password" autocomplete="off">
     <button type="submit">Authorize POS</button>
+    <button type="button" class="ghost" id="b-owner">I am the owner: sign in directly</button>
     <div class="msg" id="m-authorize" role="alert"></div>
-    <p class="hint">The supervisor signs in only to authorize. The cashier signs in next with their own login.</p>
+    <p class="hint">The owner needs no separate authorization. The supervisor signs in only to authorize. The cashier signs in next with their own login.</p>
   </form>
 
   <!-- POS step 2: cashier login -->
@@ -53,7 +54,8 @@
   <section id="s-ready" hidden>
     <p class="step">Till <span id="r-till"></span> is ready</p>
     <p id="r-who"></p>
-    <p class="hint">The sales screen (scanning, cart, shortcuts, receipts) is built in Phase 3.</p>
+    <p class="hint">Opening the sales screen...</p>
+    <a href="/pos/sell/">Open the sales screen</a>
     <button class="ghost" id="b-logout-pos" type="button">Log out</button>
   </section>
 
@@ -146,11 +148,14 @@
       });
     });
     $("b-logout-pos").addEventListener("click", logout);
+    $("b-owner").addEventListener("click", function () {
+      tillNo = $("a-till").value; $("authorized-note").textContent = "Owner sign-in for till " + tillNo + ": no separate authorization is needed. Only the shop owner (manager) can use this.";
+      show("f-cashier");
+    });
     function needShift() { $("shift-note").textContent = "No open shift on this till yet."; show("f-shift"); }
     function ready(user, till, shift) {
-      location.replace("/pos/sell/");   // the sales screen (Phase 3, second half)
       $("r-till").textContent = till; $("r-who").textContent = "Cashier: " + user.name + " | Float: " + shift.opening_float;
-      show("s-ready");
+      show("s-ready"); location.replace("/pos/sell/");
     }
   } else {
     var NEEDS = { manager: "Manager area", receiving: "Stock receiving" };

@@ -6,9 +6,11 @@ from django.contrib.auth import login
 from django.db import IntegrityError, transaction
 from django.http import JsonResponse
 from django.utils import timezone
+from django.shortcuts import render
 from django.views.decorators.http import require_GET
 
-from accounts import services
+from accounts import approval_rules, services
+from accounts.models import Approval
 from accounts.views import BACKEND, user_payload
 from core import audit
 from core.http import bad, client_ip, login_required_json, post_json
@@ -75,7 +77,7 @@ def cashier_login(request, data):
     """Step 2: the cashier signs in with their own credentials under the authorization."""
     ip = client_ip(request)
     try:
-        user, _method = services.authenticate(
+        user, method = services.authenticate(
             data.get("username"), data.get("secret"), data.get("biometric"), context="cashier", ip=ip)
     except services.AuthError as exc:
         return bad(str(exc), 401)
@@ -93,7 +95,7 @@ def cashier_login(request, data):
 
     if authorization is not None:
         till = authorization.till
-        if authorization.approval.approver_id == user.pk:
+        if authorization.approval.approver_id == user.pk and not services.is_exempt(user):
             return bad("The authorizing supervisor cannot also be the cashier. Ask another supervisor to authorize.", 403)
         with transaction.atomic():
             authorization.cashier = user
@@ -105,6 +107,28 @@ def cashier_login(request, data):
             audit.record("pos.session_opened", actor=user, approver=approval.approver, object_type="till",
                          object_ref=till.number, ip=ip, till_number=till.number)
         authorized_by = approval.approver
+    elif services.is_exempt(user):
+        # The shop owner needs nobody to authorize them. We still write the same records (an approval
+        # that is used up at once, and a POS authorization) so shifts, sales and receipts stay consistent.
+        till = _till_from(data)
+        if till is None:
+            return bad("Choose a valid till.")
+        shift = _open_shift(till)
+        if shift is not None and shift.cashier_id != user.pk:
+            return bad(f"This till already has an open shift for {shift.cashier.display_name}.", 409)
+        now = timezone.now()
+        _raw, token_hash = approval_rules.new_token()
+        with transaction.atomic():
+            approval = Approval.objects.create(
+                action="open_pos", requester=None, approver=user, method=method,
+                reason="Owner opened the POS session", till_number=till.number,
+                token_hash=token_hash, expires_at=now, consumed_at=now)
+            authorization = PosAuthorization.objects.create(
+                till=till, approval=approval, cashier=user, cashier_logged_in_at=now)
+            audit.record("pos.session_opened", actor=user, approver=user, object_type="till",
+                         object_ref=till.number, reason="Owner (no separate authorization needed)",
+                         ip=ip, till_number=till.number)
+        authorized_by = user
     else:
         # Optional manager policy: the same cashier may log back in while their own shift is open.
         till = _till_from(data)
@@ -170,3 +194,32 @@ def shift_state(request):
     shift = _open_shift(till) if till else None
     mine = shift if shift and shift.cashier_id == request.user.pk else None
     return JsonResponse({"ok": True, "till": till_number, "shift": _shift_payload(mine)})
+
+
+# --- Manager / supervisor screen: tills, shifts, recent sales, eTIMS status ------------------------------
+
+def _overview_view(request):
+    from django.db.models import Count, Sum
+
+    from sales import etims
+    from sales.models import EtimsSubmission, Sale
+
+    today = timezone.localdate()
+    tills = []
+    for till in Till.objects.filter(active=True):
+        shift = _open_shift(till)
+        done = Sale.objects.filter(till=till, status=Sale.COMPLETED, completed_at__date=today)
+        agg = done.aggregate(n=Count("id"), t=Sum("total"))
+        tills.append({"till": till, "shift": shift, "count": agg["n"] or 0, "total": agg["t"] or Decimal("0.00")})
+    recent = (Sale.objects.filter(status=Sale.COMPLETED).select_related("till", "cashier", "etims")
+              .order_by("-completed_at")[:30])
+    return render(request, "core/tills_overview.html", {
+        "tills": tills, "recent": recent, "can_reprint": request.user.can("receipts.reprint"),
+        "etims_on": etims.enabled(), "etims_problems": etims.config_problems() if etims.enabled() else [],
+        "etims_counts": etims.counts(), "REJECTED": EtimsSubmission.REJECTED,
+    })
+
+
+from core.decorators import perm_required  # noqa: E402
+
+overview = perm_required("shifts.view_all", "sales.view_all")(_overview_view)

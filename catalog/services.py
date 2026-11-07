@@ -1,6 +1,4 @@
 """Catalogue business rules. Views call these; they enforce permissions and write the audit trail."""
-from decimal import Decimal
-
 from django.db import IntegrityError, transaction
 
 from core import audit
@@ -23,10 +21,7 @@ def can_see_cost(user):
 
 
 def _snapshot(product, fields):
-    """Field values as fixed-decimal text, so 3500 and 3500.00 compare equal and audit entries read the same."""
-    places = {f: (4 if f in COST_FIELDS else 2) for f in fields}
-    return {f: (f"{Decimal(getattr(product, f)):.{places[f]}f}" if getattr(product, f) is not None else None)
-            for f in fields}
+    return {f: (str(getattr(product, f)) if getattr(product, f) is not None else None) for f in fields}
 
 
 def next_sku():
@@ -67,6 +62,7 @@ def update_product(form, user, ip=None):
     old = Product.objects.get(pk=form.instance.pk)
     before_prices, before_costs = _snapshot(old, PRICE_FIELDS), _snapshot(old, COST_FIELDS)
     product = form.save()
+    product.refresh_from_db()          # read back the stored (rounded) values for the audit trail
     after_prices, after_costs = _snapshot(product, PRICE_FIELDS), _snapshot(product, COST_FIELDS)
     # Defence in depth: the form already hides these fields from people without the permission.
     if after_prices != before_prices and not user.can("products.change_price"):

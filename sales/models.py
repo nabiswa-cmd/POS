@@ -25,11 +25,16 @@ class Sale(models.Model):
     authorized_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
                                       related_name="sales_authorized")
     customer_name = models.CharField(max_length=120, blank=True)
+    customer_pin = models.CharField("Customer KRA PIN", max_length=11, blank=True)
     hold_label = models.CharField(max_length=60, blank=True)
 
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     discount_total = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     total = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    # Fixed at checkout. vat_applied records whether the shop was VAT registered when this sale was made,
+    # so changing the setting later never rewrites how an old receipt reads. tax_total is VAT inside total.
+    vat_applied = models.BooleanField(default=False)
+    tax_total = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
 
     created_at = models.DateTimeField(auto_now_add=True)
     held_at = models.DateTimeField(null=True, blank=True)
@@ -94,6 +99,12 @@ class SaleItem(models.Model):
     discount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"),
                                    help_text="Total discount on this line.")
     line_total = models.DecimalField(max_digits=12, decimal_places=2)
+
+    # Tax snapshot, fixed at checkout (all zero when the shop is not VAT registered). Prices include VAT.
+    tax_class = models.CharField(max_length=1, default="B")
+    tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0.00"))
+    taxable_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    tax_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
 
     # Cost basis of the stock sold, fixed when the sale completes (profit never uses today's cost).
     cost_total = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
@@ -163,3 +174,56 @@ class Payment(models.Model):
 
     def __str__(self):
         return f"{self.method} {self.amount} for sale {self.sale_id}"
+
+
+class EtimsSubmission(models.Model):
+    """One sale's journey to KRA eTIMS. The sale itself never changes; this row records the outcome.
+
+    PENDING means KRA has not yet signed the invoice (offline, or the unit was busy). The sale stands and is
+    retried later. Signature fields stay blank until KRA's unit really returns them; once SUBMITTED the row
+    is frozen so a signed invoice can never be altered.
+    """
+
+    PENDING, SUBMITTED, REJECTED = "PENDING", "SUBMITTED", "REJECTED"
+    STATUS = [(PENDING, "Waiting to be sent"), (SUBMITTED, "Signed by KRA"),
+              (REJECTED, "Rejected by KRA: needs attention")]
+
+    sale = models.OneToOneField(Sale, on_delete=models.PROTECT, related_name="etims")
+    # eTIMS wants a plain, gapless whole-number invoice number; the shop's T1-261107-0042 is not one.
+    invoice_no = models.PositiveBigIntegerField(unique=True, editable=False)
+    receipt_type = models.CharField(max_length=1, default="S")          # S = sale (R = credit note, Phase 4)
+    status = models.CharField(max_length=10, choices=STATUS, default=PENDING, db_index=True)
+    attempts = models.PositiveIntegerField(default=0)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=300, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+
+    scu_id = models.CharField(max_length=40, blank=True)
+    scu_receipt_no = models.CharField(max_length=20, blank=True)         # the control unit's own receipt number
+    scu_total_receipt_no = models.CharField(max_length=20, blank=True)
+    scu_datetime = models.CharField(max_length=20, blank=True)
+    internal_data = models.CharField(max_length=200, blank=True)
+    signature = models.CharField(max_length=200, blank=True)
+    qr_text = models.CharField(max_length=400, blank=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"eTIMS #{self.invoice_no} ({self.get_status_display()})"
+
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        obj = super().from_db(db, field_names, values)
+        obj._db_status = obj.__dict__.get("status")
+        return obj
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding and getattr(self, "_db_status", None) == self.SUBMITTED:
+            raise PermissionError("A signed eTIMS invoice cannot be changed.")
+        super().save(*args, **kwargs)
+        self._db_status = self.status
+
+    def delete(self, *args, **kwargs):
+        raise PermissionError("eTIMS records cannot be deleted.")

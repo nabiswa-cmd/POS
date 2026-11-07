@@ -101,7 +101,7 @@ def _approval_for(user, action, object_ref, token):
     The shop owner (manager) is the top authority, so a manager acting alone does not need a second
     person; that is recorded in the audit log. Everyone else needs a valid single-use token.
     """
-    if user.is_manager or not auth_services.is_required(action):
+    if not auth_services.needs_approval(user, action):
         return None
     try:
         return auth_services.consume_approval(token, action=action, requester=user,
@@ -136,10 +136,6 @@ def adjust_stock(*, product_id, movement_type, quantity, user, reason, approval_
 
 # --- Receiving ----------------------------------------------------------------------------------
 
-def _fresh(receiving):
-    return Receiving.objects.get(pk=receiving.pk)
-
-
 def new_receiving(user, **fields):
     if not user.can("stock.receive"):
         raise StockError("You are not allowed to receive stock.")
@@ -150,7 +146,8 @@ def new_receiving(user, **fields):
 def add_receiving_item(receiving, user, *, product, packaging, qty_good, qty_damaged, qty_missing, cost_per_pack):
     if not user.can("stock.receive"):
         raise StockError("You are not allowed to receive stock.")
-    if not _fresh(receiving).editable:   # the caller's copy may be stale: re-read the status from the database
+    receiving.refresh_from_db(fields=["status"])     # another screen may have submitted it meanwhile
+    if not receiving.editable:
         raise StockError("This delivery is already submitted and can no longer be changed.")
     if packaging is not None and packaging.product_id != product.pk:
         raise StockError("That pack size belongs to a different product.")
@@ -167,7 +164,7 @@ def add_receiving_item(receiving, user, *, product, packaging, qty_good, qty_dam
 def remove_receiving_item(receiving, item, user):
     if not user.can("stock.receive"):
         raise StockError("You are not allowed to receive stock.")
-    if not _fresh(receiving).editable or item.receiving_id != receiving.pk:
+    if not receiving.editable or item.receiving_id != receiving.pk:
         raise StockError("This delivery can no longer be changed.")
     item.delete()
 

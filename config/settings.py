@@ -1,5 +1,6 @@
 """Django settings for the Wines & Spirits POS (single shop, 1-2 tills)."""
 import os
+import sys
 from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
@@ -125,6 +126,10 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
+if "test" in sys.argv[1:2]:
+    # Real hashers are deliberately slow; tests create many users, so use a fast one there only.
+    PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
+
 # Idle session timeout: the cookie age is renewed on every request.
 SESSION_COOKIE_AGE = env_int("SESSION_IDLE_MINUTES", 30) * 60
 SESSION_SAVE_EVERY_REQUEST = True
@@ -160,3 +165,18 @@ MEDIA_URL = "media/"
 MEDIA_ROOT = Path(env("WINESPOS_MEDIA_ROOT", str(BASE_DIR / "media")))
 FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 DATA_UPLOAD_MAX_MEMORY_SIZE = 6 * 1024 * 1024
+
+# --- Kenya tax: KRA eTIMS (see README, "VAT and eTIMS") -------------------------------------------
+# Secrets and device details come only from .env. ETIMS_MODE=off means receipts show the VAT breakdown
+# but are NOT tax invoices; nothing is sent to KRA and no KRA data is ever invented.
+ETIMS_MODE = env("ETIMS_MODE", "off").strip().lower()          # off | sandbox | live
+if ETIMS_MODE not in ("off", "sandbox", "live"):
+    raise ImproperlyConfigured("ETIMS_MODE must be off, sandbox or live")
+ETIMS_INTEGRATION = env("ETIMS_INTEGRATION", "vscu").strip().lower()   # vscu (local JAR) | oscu (KRA online)
+ETIMS_BASE_URL = env("ETIMS_BASE_URL", "")                      # e.g. http://127.0.0.1:8088 for a local VSCU
+ETIMS_BRANCH_ID = env("ETIMS_BRANCH_ID", "00")
+ETIMS_DEVICE_SERIAL = env("ETIMS_DEVICE_SERIAL", "")
+ETIMS_COMM_KEY = env("ETIMS_COMM_KEY", "")                      # OSCU communication key (secret)
+ETIMS_TIMEOUT_SECONDS = env_int("ETIMS_TIMEOUT_SECONDS", 8)
+# Where the QR on a signed receipt points. Placeholders: {tin} {bhf} {sign}. Empty = no QR is printed.
+ETIMS_QR_URL_TEMPLATE = env("ETIMS_QR_URL_TEMPLATE", "")

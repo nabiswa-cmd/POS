@@ -1,0 +1,9 @@
+{% load static %}<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Receipt {{ number }}</title>
+<style>@page{size:{{ mm }}mm auto;margin:0}html,body{margin:0;background:#fff;color:#000}
+pre{margin:0;padding:2mm;width:{{ inner }}mm;font:{{ font }}px/1.25 'Courier New',monospace;white-space:pre-wrap}
+svg{display:block;width:32mm;height:32mm;margin:2mm auto}
+.noprint{font:14px system-ui;padding:10px}@media print{.noprint{display:none}}</style></head>
+<body><div class="noprint">Duplicate receipt. <button onclick="window.print()">Print again</button> <button onclick="window.close()">Close</button></div>
+<pre>{{ text }}</pre>{{ qr|safe }}
+<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},200);});</script></body></html>

@@ -173,8 +173,8 @@ DB_ENGINE=sqlite DJANGO_DEBUG=true python manage.py test   # full suite: account
 
 # Phase 3, first half: sales engine (cart, approvals, hold, cash checkout, receipt data)
 
-The second half (cashier screen, shortcuts, approval box, receipt printing, till screens) is described in the next section.
-Everything the screen needs is available as JSON under `/api/sales/`.
+The second half (the cashier screen with F-key shortcuts and approval dialog, receipt printing, till screens) is not built yet.
+Everything the screen needs is already available as JSON under `/api/sales/`.
 
 ## What is new
 
@@ -247,76 +247,100 @@ DB_ENGINE=sqlite DJANGO_DEBUG=true python manage.py test sales
 - A manager acting as cashier still needs a second person to approve restricted actions (the approval rules forbid self-approval).
   Say if you want the shop owner exempt, as in stock adjustments.
 - Payments are cash only. M-PESA, card, bank transfer, split payments and refunds are Phase 4.
-- Not built yet: till closing and cash-up (Phase 5).
+- Not built yet: the sales screen and shortcuts, receipt printing to a thermal printer, till closing and cash-up (Phase 5).
 - Kenyan tax: wines and spirits carry VAT, and KRA eTIMS receipts may be required for your business. This is not in the master
   prompt and is not built; confirm with your accountant before go-live.
 
+
 ---
 
-# Phase 3, second half: cashier screen, shortcuts, printing, till screens
+# Phase 3, second half: the cashier screen, owner rights, VAT and KRA eTIMS
 
-## Upgrading from the first half
+## Decisions you gave me
 
-```
-python manage.py migrate            # one new field: Shop settings > POS shortcuts
-python manage.py collectstatic --noinput
-```
+- **The manager is the owner and is never stopped.** Removing items, lowering quantities, any discount, price changes,
+  voids, stock adjustments and opening the POS need no second person for the owner. It is still all audited: the owner is
+  recorded as both the person acting and the authority (`accounts.services.is_exempt`, one rule used everywhere).
+  Supervisors and cashiers are unchanged. An inactive owner is not exempt.
+- **Owner opens the POS alone.** On the POS shortcut the owner can press "I am the owner: sign in directly" (or authorize
+  themselves). The same records are still written, so shifts and sales stay consistent. The owner cannot take over a till
+  another cashier has open. Receipts do not print "Authorized by" the owner when the owner is the cashier.
+- **VAT and eTIMS are now in** (see below). Confirm the settings with your accountant before go-live.
 
-No new packages. Log in at `/app/pos/` as before; a cashier with an open shift now lands on the sales screen (`/pos/sell/`).
+## What is new
 
-## The sales screen
-
-| Key (default) | Action |
+| Area | Where |
 |---|---|
-| Scanner / type + Enter | Add the item. `3*code` sells 3. An unknown code keeps its text, beeps and says so |
-| F1 | Shortcut guide |
-| F2 | Search by name (Up/Down, Enter adds one) |
-| F3 | Back to the scan box |
-| F4 | Quantity of the selected line (lowering it asks for a supervisor) |
-| F5 / F6 | Hold the sale / retrieve a held sale (held sales are per till) |
-| F7 | Discount on the selected line (percent or amount) |
-| F8 or F9 | Payment box: type the cash received, see the change, **F9 or Enter completes** |
-| F10 | Print the receipt |
-| F11 | Shift summary (float, sales, cash expected in the drawer) |
-| F12 | Supervisor menu: remove item, change price, exceptional discount, void sale (1 to 4) |
-| Delete | Remove the selected line (needs a supervisor) |
-| Alt+C | Customer name for the receipt |
-| Up / Down | Move between lines. Esc closes a box |
+| Cashier sales screen: scan box that keeps focus, cart, totals, change, approval window, search, hold/retrieve, customer, receipt printing | `/pos/sell/`, `sales/templates/sales/pos.html` |
+| Shortcuts F1-F12 + Alt+C, configurable and conflict-checked; Esc, Enter, Tab, Delete, arrows fixed | `sales/shortcuts.py`, Shop settings, "Pos shortcuts" |
+| Approval window: server answers 409 `approval_required`, the screen asks the supervisor, retries with the token | `sales/views.py` `_guard`, `sales.services.ApprovalNeeded` |
+| Tills and sales screen for supervisors/owner: who is on each till, takings, latest sales, duplicate reprint, eTIMS status | `/manage/tills/` |
+| VAT | `sales/tax.py`, Shop settings (VAT registered, rate), product tax class |
+| KRA eTIMS queue | `sales/etims.py`, `sales/etims_rules.py`, `etims_retry` command |
+| Fast test hasher (tests only) so the whole suite runs in seconds | `config/settings.py` |
 
-- **Supervisor approval.** When the server says an action needs approval, the screen opens a box where the supervisor or manager types
-  their own username, PIN or password and a reason. The cashier never sees the credentials. The token is single-use and tied to that exact
-  line, and the same request is sent again. Esc or Cancel changes nothing, and it never skips the approval.
-- **Printing.** The server lays the receipt out as plain text (32 characters for 58 mm paper, 48 for 80 mm). The screen sends it to a hidden
-  frame and prints it, so any Windows printer works. The first print is the original and happens once, automatically after the sale (the
-  tick box in the "Sale complete" box turns this off for this PC). Any later copy needs a supervisor or manager and is headed
-  `*** DUPLICATE RECEIPT ***`.
-- **Manager screens.** `Sales` lists and searches completed and voided sales, shows each sale and lets a supervisor or manager reprint a duplicate.
-  `Tills` shows who is on each till, who authorized the session, the opening float, the sales so far and the held sales.
+## Using the sales screen
 
-## Changing shortcuts
+Shortcuts (defaults): F1 help, F2 search, F3 scan box, F4 quantity, F5 hold, F6 retrieve, F7 discount, F8 payment,
+F9 complete (cash), F10 print receipt, F11 shift summary, F12 supervisor authorization menu, Alt+C customer name/KRA PIN.
+Up/Down choose a cart line, Delete removes it, type `3*code` to scan three. Esc only closes a window; it never approves
+or skips anything, and the server demands the approval regardless of what the screen does.
+To rebind keys, edit Shop settings, "Pos shortcuts", e.g. `{"print": "Alt+P"}`. A bad or clashing setting is rejected on save,
+and if one is ever stored anyway the till falls back to the defaults rather than locking.
 
-Admin > Shop settings > "POS shortcuts", for example `{"hold": "Alt+H", "discount": "Alt+D"}`. Two actions cannot share a key, plain letters
-and digits are refused (they are used when scanning), and keys that Windows or the browser keep (Ctrl+W, Alt+F4 and similar) are refused.
-Saving an invalid change is blocked, and an invalid value already stored falls back to the defaults, so the till never locks up.
+Receipts print through the browser print dialog (any Windows printer; thermal drivers work). Original once, by the
+selling cashier; after that a **duplicate** needs `receipts.reprint`: supervisors and the owner can do it from
+Tills & sales. A cashier whose printer jams must call one of them.
+
+## VAT
+
+- Set **Shop settings: VAT registered** and the standard rate (16%) only once you are VAT registered. Until then receipts show no VAT.
+- Selling prices **include** VAT (as on a shelf). Each line's VAT is price x rate / (100 + rate), rounded per line, and the sale's VAT is
+  the sum of the lines. Adding VAT on top of prices is not supported.
+- Each product has a tax class (A exempt, B standard 16%, C zero-rated, D non-VAT, E special 8%). New products default to **B**.
+  Each sale line stores its class, rate, taxable value and VAT at the time of sale, so changing settings later never rewrites an old receipt.
+- The receipt shows a VAT summary per class and the shop's KRA PIN. A customer's KRA PIN can be typed (Alt+C) for business customers.
+
+## KRA eTIMS
+
+`ETIMS_MODE=off` is the default and means nothing is sent to KRA. Receipts say RECEIPT, never TAX INVOICE.
+When on, every sale gets a gapless whole-number invoice number, is sent to KRA's sales-control unit right after checkout, and
+the receipt prints the signature, SCU id and CU invoice number **only if KRA's unit actually returned them**. If the unit cannot be
+reached the sale stands, the receipt says "awaiting KRA signature", and the sale is retried after the next sales or with
+`python manage.py etims_retry`. A KRA rejection is recorded and not retried blindly; it shows on Tills & sales. A signed record can never be edited.
+
+What is **not** done, and why you must not go live on eTIMS yet:
+1. **Not tested against KRA.** Field names follow KRA's OSCU/VSCU spec v2.0 as I understood it, but a test needs your own KRA PIN, branch ID and device
+   registration. Run in `sandbox`, fix whatever KRA rejects, and check the payload in `sales/etims_rules.py` with your integrator.
+2. **Tax letters.** I used A exempt, B 16%, C zero, D non-VAT, E 8% from the specification. Sources disagree, so confirm the table (`sales/tax.py`)
+   and which class wine, spirits and beer belong in.
+3. **Item registration and stock reporting.** KRA expects products to be registered (and stock movements reported) through eTIMS. Not built.
+   Each product needs its KRA item class code (product form), or the sale stays "waiting" with a clear reason.
+4. **Credit notes for refunds** (receipt type R) belong to Phase 4 with refunds. The message builder already supports the type.
+5. **QR.** The QR is printed only if you set `ETIMS_QR_URL_TEMPLATE` to the form KRA requires. Nothing is guessed.
+6. **VSCU or OSCU, KRA certification and whether your shop must use eTIMS at all** are for your accountant and KRA. The VSCU stops issuing numbers after 24 hours without internet.
+
+## Setup after pulling this
+
+```
+pip install -r requirements.txt
+python manage.py migrate          # core 0003, catalog 0002, sales 0002
+python manage.py harden_db
+```
+Then in the admin: Shop settings (VAT registered, KRA PIN), and for products the tax class.
 
 ## Tests
 
 ```
-python3 -m unittest discover -s tests_pure -t .
-DB_ENGINE=sqlite DJANGO_DEBUG=true python manage.py test sales
+python3 -m unittest discover -s tests_pure -t .       # 71 framework-free tests
+DB_ENGINE=sqlite DJANGO_DEBUG=true python manage.py test   # 241 tests, all passing
 ```
-
-`sales/tests.py` (first half, 45 tests, now run and passing) and `sales/tests_screen.py` (17 tests: pages, approval hand-shake, receipts as
-the screen uses them, manager pages, and a check that every element and endpoint `pos.js` uses exists). The screen was also driven in a real
-browser: scan, unknown code, wrong PIN, approval, Esc on the approval box, hold and retrieve, search, discount, payment, receipt, reprint refusal,
-shift summary and void.
+This time Django was installed, so the full suite and migrations have really been run (all earlier phases included). Running it found and fixed two old bugs:
+a delivery already submitted on another screen could still be edited, and price-change audit entries could record `3800` instead of `3800.00`.
+**Not done:** the sales screen's JavaScript was syntax-checked and its server calls are tested, but I could not drive it in a real browser or with a real scanner/printer. Test it on the till.
 
 ## Known limits
 
-- Cash only (Phase 4 adds M-PESA, card and refunds). The receipt prints through the browser's print dialog; silent printing to a thermal
-  printer on the Windows desktop shell is a Phase 6 setting (Chrome/Edge `--kiosk-printing`).
-- If the printer jams on the original, a supervisor reprints it (marked duplicate). This follows the "original once" rule from the first half.
-- A manager acting as cashier still needs a second person to approve restricted actions.
-- Held sales do not reserve stock; stock is checked again when the sale is completed.
-- F5 (refresh), F11 (full screen) and F12 (developer tools) are claimed by the page; some browsers still keep F11/F12. The Windows
-  desktop shell does not have this problem.
+- Cash only (M-PESA, card, bank, split payments and refunds: Phase 4). F8 shows them as not available rather than pretending.
+- Till closing and cash-up: Phase 5. A cashier can log out; the shift stays open.
+- Search adds the base unit; pack sizes are sold by scanning the pack's code.
