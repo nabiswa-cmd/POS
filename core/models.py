@@ -40,6 +40,10 @@ class ShopSettings(SingletonModel):
     costing_locked = models.BooleanField(
         default=False, help_text="Set automatically after the first sale; the method can then no longer change.",
     )
+    receiving_requires_approval = models.BooleanField(
+        default=False,
+        help_text="If on, deliveries recorded by a receiving clerk wait for a supervisor/manager before stock changes.",
+    )
     pos_open_policy = models.CharField(
         max_length=20, default=POLICY_EVERY_LOGIN,
         choices=[

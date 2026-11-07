@@ -1,0 +1,43 @@
+{% extends "core/base.html" %}{% block title %}{{ product.name }}{% endblock %}
+{% block content %}
+<h1>{{ product.name }} {% if not product.active %}<span class="pill bad">inactive</span>{% endif %}</h1>
+<p class="sub">SKU {{ product.sku }} &middot; Stock: <b>{{ stock_text }}</b> {% if product.is_low %}<span class="pill low">at or below reorder level {{ product.reorder_level }}</span>{% endif %}
+ &middot; Shelf: {{ product.shelf.code|default:"none" }} &middot; Price: KES {{ product.selling_price }}{% if show_cost %} &middot; Avg cost: {{ product.avg_cost }} / {{ product.base_unit }}{% endif %}</p>
+<p class="noprint"><a class="btn ghost" data-back href="/manage/products/">Back to products</a>
+ {% if "labels.print" in perms %}<a class="btn ghost" href="/manage/labels/?product={{ product.pk }}">Print labels</a>{% endif %}
+ {% if "stock.view" in perms %}<a class="btn ghost" href="/manage/stock/{{ product.pk }}/">Stock history</a>{% endif %}
+ {% if "stock.adjust" in perms %}<a class="btn ghost" href="/manage/stock/{{ product.pk }}/adjust/">Adjust stock</a>{% endif %}</p>
+
+<h2>Codes the scanner can read</h2>
+<table><tr><th>Code</th><th>Type</th><th>Applies to</th></tr>
+{% for c in codes %}<tr><td><b>{{ c.code }}</b></td><td>{{ c.get_kind_display }}</td><td>{% if c.packaging %}{{ c.packaging.name }}{% else %}single {{ product.base_unit }}{% endif %}</td></tr>{% endfor %}
+</table>
+{% if code_form %}
+<div class="card noprint"><form method="post" action="{% url 'product-add-code' product.pk %}" class="row">{% csrf_token %}
+  <div style="flex:2"><label for="id_code">Add a barcode (scan it here)</label>{{ code_form.code }}</div>
+  <div>{{ code_form.kind.label_tag }}{{ code_form.kind }}</div><div>{{ code_form.packaging.label_tag }}{{ code_form.packaging }}</div>
+  <div style="flex:0 0 auto"><button type="submit">Add code</button></div></form>
+  <form method="post" action="{% url 'product-generate-code' product.pk %}" class="row" style="margin-top:10px">{% csrf_token %}
+  <div style="flex:2" class="muted">No barcode on the bottle? Generate the shop's own code, then print its label.</div>
+  <div><select name="packaging" aria-label="Pack"><option value="">Single {{ product.base_unit }}</option>{% for p in packagings %}{% if p.active %}<option value="{{ p.pk }}">{{ p.name }}</option>{% endif %}{% endfor %}</select></div>
+  <div style="flex:0 0 auto"><button type="submit" class="ghost">Generate code</button></div></form></div>
+{% endif %}
+
+<h2>Pack sizes</h2>
+<table><tr><th>Name</th><th class="num">{{ product.base_unit|capfirst }}s in pack</th><th class="num">Price</th><th>Status</th><th></th></tr>
+{% for p in packagings %}<tr><td>{{ p.name }}</td><td class="num">{{ p.units_per_pack }}</td><td class="num">{{ p.price }}{% if not p.selling_price %} <span class="muted">(unit x {{ p.units_per_pack }})</span>{% endif %}</td><td>{% if p.active %}<span class="pill ok">active</span>{% else %}<span class="pill bad">off</span>{% endif %}</td>
+<td>{% if code_form %}<form method="post" action="{% url 'product-toggle-packaging' product.pk p.pk %}">{% csrf_token %}<button class="ghost" type="submit">{% if p.active %}Turn off{% else %}Turn on{% endif %}</button></form>{% endif %}</td></tr>
+{% empty %}<tr><td colspan="5" class="muted">Sold singly only. Add a carton, crate or six-pack below if you also sell or receive in packs.</td></tr>{% endfor %}</table>
+{% if pack_form %}<div class="card noprint"><form method="post" action="{% url 'product-add-packaging' product.pk %}" class="row">{% csrf_token %}
+  <div>{{ pack_form.name.label_tag }}{{ pack_form.name }}</div><div>{{ pack_form.units_per_pack.label_tag }}{{ pack_form.units_per_pack }}</div><div>{{ pack_form.selling_price.label_tag }}{{ pack_form.selling_price }}</div>
+  <div style="flex:0 0 auto"><button type="submit">Add pack size</button></div></form>
+  <div class="help">Each product has its own conversion. Selling one {{ product.base_unit }} takes 1 off stock; selling a pack takes the whole pack off.</div></div>{% endif %}
+
+{% if form %}<h2>Edit product</h2>
+<form method="post" enctype="multipart/form-data" class="card" autocomplete="off">{% csrf_token %}{{ form.non_field_errors }}
+  <div class="row">{% for f in form.visible_fields %}<div style="flex:1 1 {% if f.name == 'description' %}100%{% else %}220px{% endif %}">{% if f.field.widget.input_type == "checkbox" %}<label style="color:var(--text)">{{ f }} {{ f.label }}</label>{% else %}<label for="{{ f.id_for_label }}">{{ f.label }}</label>{{ f }}{% endif %}{% if f.help_text %}<div class="help">{{ f.help_text }}</div>{% endif %}{{ f.errors }}</div>{% endfor %}</div>
+  <div class="actions"><button type="submit">Save changes</button></div></form>{% endif %}
+
+{% if movements %}<h2>Recent stock movements</h2><table><tr><th>When</th><th>Type</th><th class="num">Qty</th><th class="num">Balance</th><th>By</th><th>Reference</th></tr>
+{% for m in movements %}<tr><td>{{ m.created_at|date:"d M H:i" }}</td><td>{{ m.get_movement_type_display }}</td><td class="num">{{ m.quantity }}</td><td class="num">{{ m.balance_after }}</td><td>{{ m.user.display_name }}</td><td>{{ m.reference }}</td></tr>{% endfor %}</table>{% endif %}
+{% endblock %}

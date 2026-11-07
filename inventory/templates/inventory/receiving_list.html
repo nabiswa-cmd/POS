@@ -1,0 +1,8 @@
+{% extends "core/base.html" %}{% block title %}Stock receiving{% endblock %}
+{% block content %}<h1>Stock receiving</h1><p class="sub">Deliveries from suppliers. Stock only changes when a delivery is posted.</p>
+{% if can_receive %}<p><a class="btn" href="/manage/receiving/new/" accesskey="n" data-autofocus>New delivery (Alt+N)</a></p>{% endif %}
+<p class="noprint">Show: <a href="?">All</a>{% for k, label in statuses %} &middot; <a href="?status={{ k }}">{{ label }}</a>{% endfor %}</p>
+<table><tr><th>Number</th><th>Date</th><th>Supplier</th><th>Delivery note</th><th>Invoice</th><th>By</th><th>Status</th></tr>
+{% for r in page %}<tr><td><a href="{% url 'receiving-detail' r.pk %}"><b>{{ r.number }}</b></a></td><td>{{ r.created_at|date:"d M Y H:i" }}</td><td>{{ r.supplier|default:"" }}</td><td>{{ r.delivery_note }}</td><td>{{ r.invoice_ref }}</td><td>{{ r.created_by.display_name }}</td>
+<td><span class="pill {% if r.status == 'POSTED' %}ok{% elif r.status == 'REJECTED' %}bad{% elif r.status == 'PENDING' %}low{% endif %}">{{ r.get_status_display }}</span></td></tr>
+{% empty %}<tr><td colspan="7" class="muted">No deliveries yet.</td></tr>{% endfor %}</table>{% endblock %}

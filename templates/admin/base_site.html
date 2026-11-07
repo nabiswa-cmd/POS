@@ -1,0 +1,8 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+{% block extrastyle %}{{ block.super }}
+<link rel="stylesheet" href="{% static 'core/admin-theme.css' %}">
+{% endblock %}
+{% block extrahead %}{{ block.super }}
+<script>try{document.documentElement.setAttribute("data-theme",localStorage.getItem("pos-theme")==="light"?"light":"dark")}catch(e){}</script>
+{% endblock %}

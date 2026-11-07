@@ -1,0 +1,6 @@
+{% extends "core/base.html" %}{% block title %}Suppliers{% endblock %}
+{% block content %}<h1>Suppliers</h1><p class="sub">Optional. A product or a delivery never needs a supplier.</p>
+<p><a class="btn" href="/manage/suppliers/new/" accesskey="n" data-autofocus>New supplier (Alt+N)</a></p>
+<table><tr><th>Name</th><th>Contact</th><th>Phone</th><th>KRA PIN</th><th class="num">Products</th><th></th></tr>
+{% for s in suppliers %}<tr><td><a href="{% url 'supplier-edit' s.pk %}">{{ s.name }}</a></td><td>{{ s.contact_person }}</td><td>{{ s.phone }}</td><td>{{ s.kra_pin }}</td><td class="num">{{ s.n }}</td><td>{% if not s.active %}<span class="pill bad">inactive</span>{% endif %}</td></tr>
+{% empty %}<tr><td colspan="6" class="muted">No suppliers yet.</td></tr>{% endfor %}</table>{% endblock %}

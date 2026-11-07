@@ -1,0 +1,7 @@
+{% extends "core/base.html" %}{% block title %}Adjust stock{% endblock %}
+{% block content %}<h1>Adjust stock: {{ product.name }}</h1><p class="sub">Current stock: <b>{{ stock_text }}</b>. Every adjustment is recorded with who did it, who approved it and why.</p>
+<form method="post" class="card" autocomplete="off">{% csrf_token %}{{ form.non_field_errors }}
+{% for f in form.visible_fields %}{% if f.name != "approver_username" and f.name != "approver_secret" %}<label for="{{ f.id_for_label }}">{{ f.label }}</label>{{ f }}{% if f.help_text %}<div class="help">{{ f.help_text }}</div>{% endif %}{{ f.errors }}{% endif %}{% endfor %}
+{% if needs_approver %}<h2>Supervisor or manager approval</h2><p class="help">The approver types their own details. You never see or enter them.</p>
+<div class="row"><div>{{ form.approver_username.label_tag }}{{ form.approver_username }}</div><div>{{ form.approver_secret.label_tag }}{{ form.approver_secret }}</div></div>{% endif %}
+<div class="actions"><button type="submit">Record adjustment</button><a class="btn ghost" data-back href="{% url 'stock-history' product.pk %}">Cancel</a></div></form>{% endblock %}

@@ -1,0 +1,6 @@
+{% extends "core/base.html" %}{% block title %}Shelves{% endblock %}
+{% block content %}<h1>Shelf management</h1><p class="sub">{{ unassigned }} active product{{ unassigned|pluralize }} not on any shelf.</p>
+{% if can_manage %}<p><a class="btn" href="/manage/shelves/new/" accesskey="n" data-autofocus>New shelf (Alt+N)</a></p>{% endif %}
+<table><tr><th>Code</th><th>Name</th><th class="num">Products</th><th></th></tr>
+{% for s in shelves %}<tr><td><a href="{% url 'shelf-detail' s.pk %}"><b>{{ s.code }}</b></a></td><td>{{ s.name }}</td><td class="num">{{ s.n }}</td><td>{% if not s.active %}<span class="pill bad">inactive</span>{% endif %}</td></tr>
+{% empty %}<tr><td colspan="4" class="muted">No shelves yet.</td></tr>{% endfor %}</table>{% endblock %}

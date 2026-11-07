@@ -1,0 +1,22 @@
+{% extends "core/base.html" %}{% block title %}{{ r.number }}{% endblock %}
+{% block content %}<h1>{{ r.number }} <span class="pill {% if r.status == 'POSTED' %}ok{% elif r.status == 'REJECTED' %}bad{% elif r.status == 'PENDING' %}low{% endif %}">{{ r.get_status_display }}</span></h1>
+<p class="sub">Supplier: {{ r.supplier|default:"none recorded" }} &middot; Delivery note: {{ r.delivery_note|default:"-" }} &middot; Invoice: {{ r.invoice_ref|default:"-" }} &middot; Recorded by {{ r.created_by.display_name }}{% if r.decided_by %} &middot; {% if r.status == "REJECTED" %}Rejected{% else %}Approved{% endif %} by {{ r.decided_by.display_name }}{% endif %}</p>
+{% if r.decision_note %}<div class="msg error">Rejected: {{ r.decision_note }}</div>{% endif %}
+<p class="noprint"><a class="btn ghost" data-back href="/manage/receiving/">All deliveries</a> <a class="btn ghost" href="{% url 'receiving-print' r.pk %}" target="_blank">Print document</a></p>
+<table><tr><th>Product</th><th>Pack</th><th class="num">OK</th><th class="num">Damaged</th><th class="num">Missing</th><th class="num">Units added</th>{% if show_cost %}<th class="num">Cost / pack</th><th class="num">Line</th>{% endif %}{% if can_edit %}<th></th>{% endif %}</tr>
+{% for i in items %}<tr><td>{{ i.product.name }}<div class="muted">{{ i.product.sku }}</div></td><td>{% if i.packaging %}{{ i.packaging.name }} ({{ i.pack_size }}){% else %}single{% endif %}</td><td class="num">{{ i.qty_good }}</td><td class="num">{{ i.qty_damaged }}</td><td class="num">{{ i.qty_missing }}</td><td class="num">{{ i.good_units }}</td>
+{% if show_cost %}<td class="num">{{ i.cost_per_pack }}</td><td class="num">{{ i.line_cost }}</td>{% endif %}
+{% if can_edit %}<td><form method="post">{% csrf_token %}<input type="hidden" name="action" value="remove_item"><input type="hidden" name="item" value="{{ i.pk }}"><button class="ghost" type="submit">Remove</button></form></td>{% endif %}</tr>
+{% empty %}<tr><td colspan="9" class="muted">No products on this delivery yet.</td></tr>{% endfor %}
+{% if show_cost and items %}<tr><td colspan="7" class="num"><b>Total</b></td><td class="num"><b>{{ total }}</b></td>{% if can_edit %}<td></td>{% endif %}</tr>{% endif %}</table>
+{% if can_edit %}<h2>Add a product</h2>
+<form method="post" class="card" autocomplete="off">{% csrf_token %}<input type="hidden" name="action" value="add_item">{{ item_form.non_field_errors }}
+<div class="row"><div style="flex:2">{{ item_form.code.label_tag }}<input type="text" id="id_code" name="code" value="{{ item_form.code.value|default:'' }}" data-autofocus autocomplete="off">{{ item_form.code.errors }}</div>
+<div>{{ item_form.pack.label_tag }}{{ item_form.pack }}{{ item_form.pack.errors }}</div></div>
+<div class="row"><div>{{ item_form.qty_good.label_tag }}{{ item_form.qty_good }}{{ item_form.qty_good.errors }}</div><div>{{ item_form.qty_damaged.label_tag }}{{ item_form.qty_damaged }}</div><div>{{ item_form.qty_missing.label_tag }}{{ item_form.qty_missing }}</div><div>{{ item_form.cost_per_pack.label_tag }}{{ item_form.cost_per_pack }}{{ item_form.cost_per_pack.errors }}</div></div>
+<div class="help">Damaged and missing are recorded but never added to stock. Press Enter to add the line, then scan the next product.</div>
+<div class="actions"><button type="submit">Add line</button></div></form>
+<form method="post" class="actions">{% csrf_token %}<input type="hidden" name="action" value="submit"><button type="submit"{% if not items %} disabled{% endif %}>Finish and submit delivery</button></form>{% endif %}
+{% if can_decide %}<h2>Approval</h2><form method="post" class="card row">{% csrf_token %}<div style="flex:2"><label for="note">Reason (required to reject)</label><input id="note" name="note" type="text"></div>
+<div style="flex:0 0 auto"><button name="action" value="approve" type="submit">Approve and add to stock</button> <button class="danger" name="action" value="reject" type="submit">Reject</button></div></form>{% endif %}
+{% endblock %}

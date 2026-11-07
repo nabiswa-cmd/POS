@@ -7,6 +7,8 @@ movements, refunds ...).
 APPEND_ONLY_TABLES = [
     "core_auditlog",
     "accounts_loginattempt",
+    "inventory_stockmovement",
+    "catalog_shelftransfer",
 ]
 
 FUNCTION_SQL = """

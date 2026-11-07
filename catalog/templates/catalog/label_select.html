@@ -1,0 +1,17 @@
+{% extends "core/base.html" %}{% block title %}Print labels{% endblock %}
+{% block content %}<h1>Shelf, barcode &amp; QR labels</h1><p class="sub">Scan or type product codes (one per line), or print a whole shelf. A product without a barcode needs a generated code first (on its product page).</p>
+<form method="get" action="/manage/labels/print/" class="card" target="_blank">
+  <div class="row"><div style="flex:2"><label for="codes">Codes to print (scan each one, Enter adds a new line)</label><textarea id="codes" name="codes" rows="5" data-autofocus></textarea></div>
+  <div><label for="shelf">Or a whole shelf</label><select id="shelf" name="shelf"><option value="">(use the codes)</option>{% for s in shelves %}<option value="{{ s.pk }}">{{ s.code }} {{ s.name }} ({{ s.n }})</option>{% endfor %}</select></div></div>
+  {% if preselect %}<input type="hidden" name="product" value="{{ preselect }}">{% endif %}
+  <div class="row"><div><label for="size">Label size</label><select id="size" name="size">{% for k, d in sizes %}<option value="{{ k }}"{% if k == default_size %} selected{% endif %}>{{ d }}</option>{% endfor %}</select></div>
+  <div><label for="copies">Copies of each</label><input id="copies" name="copies" type="number" min="1" max="100" value="1"></div></div>
+  <label>On the label</label>
+  <label style="color:var(--text)"><input type="checkbox" name="price" value="1" checked>Price</label>
+  <label style="color:var(--text)"><input type="checkbox" name="barcode" value="1" checked>Barcode</label>
+  <label style="color:var(--text)"><input type="checkbox" name="qr" value="1">QR code</label>
+  <label style="color:var(--text)"><input type="checkbox" name="code" value="1" checked>Code text</label>
+  <label style="color:var(--text)"><input type="checkbox" name="brand" value="1">Brand</label>
+  <label style="color:var(--text)"><input type="checkbox" name="showshelf" value="1">Shelf code</label>
+  <div class="actions"><button type="submit">Preview and print</button></div>
+</form>{% endblock %}

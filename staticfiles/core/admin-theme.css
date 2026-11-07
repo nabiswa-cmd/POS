@@ -1,0 +1,19 @@
+/* Glass skin for the Django admin (managers only). Square corners. */
+@import url("theme.css");
+:root,html[data-theme]{--primary:#A31C1B;--secondary:#171717;--accent:var(--crimson);--primary-fg:#fff;
+  --body-fg:var(--text);--body-bg:transparent;--body-quiet-color:var(--muted);--header-color:var(--text);--header-branding-color:var(--text);
+  --header-bg:var(--glass);--header-link-color:var(--text);--breadcrumbs-fg:var(--muted);--breadcrumbs-link-fg:var(--text);--breadcrumbs-bg:var(--th);
+  --link-fg:var(--link);--link-hover-color:var(--link-hi);--link-selected-fg:var(--link);--hairline-color:var(--line);--border-color:var(--line);
+  --darkened-bg:var(--th);--selected-bg:var(--nav-on);--selected-row:var(--nav-on);
+  --button-fg:#fff;--button-bg:#A31C1B;--button-hover-bg:#c42625;--default-button-bg:#A31C1B;--default-button-hover-bg:#c42625;
+  --close-button-bg:#555;--close-button-hover-bg:#777;--object-tools-fg:#fff;--object-tools-bg:#A31C1B;--object-tools-hover-bg:#c42625;
+  --error-fg:var(--bad)}
+body{font-family:var(--sans)}
+#header{background:var(--glass);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);border-bottom:1px solid var(--line)}
+#branding h1,#site-name a:link,#site-name a:visited{font-family:var(--serif);color:var(--text)}
+.module,#changelist-filter,.results,#content-main .module{background:var(--glass);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);border:1px solid var(--line)}
+.module h2,.module caption,.inline-group h2{background:var(--th);color:var(--text);border:0;border-left:3px solid var(--crimson);text-transform:none;letter-spacing:.04em;padding-left:12px}
+thead th{background:var(--th)}
+input[type=text],input[type=password],input[type=number],input[type=email],input[type=search],select,textarea{background:var(--glass-field);color:var(--text);border:1px solid var(--line)}
+.button,input[type=submit],input[type=button],.submit-row input,a.button{border-radius:0}
+#footer{display:none}

@@ -21,7 +21,8 @@ PERMISSIONS = {
     "products.change_price": "Change product selling prices",
     "stock.view": "View stock levels and history",
     "stock.receive": "Receive stock from suppliers",
-    "stock.adjust": "Adjust stock quantities",
+    "stock.adjust": "Adjust stock quantities (opening stock, damaged, expired, corrections)",
+    "stock.approve_receiving": "Approve or reject deliveries waiting for approval",
     "suppliers.manage": "Manage suppliers",
     "shelves.manage": "Manage shelves and product placement",
     "labels.print": "Print shelf, barcode and QR labels",
@@ -91,7 +92,7 @@ DEFAULT_ROLES = {
         "description": "Controlled administrative access; approves restricted actions.",
         "permissions": [
             "dashboard.view", "reports.sales.view", "products.view", "stock.view",
-            "labels.print", "sales.make", "sales.hold", "sales.view_all", "payments.accept",
+            "stock.approve_receiving", "labels.print", "sales.make", "sales.hold", "sales.view_all", "payments.accept",
             "receipts.reprint", "refunds.request", "shifts.view_all", "shifts.open",
         ] + _SUPERVISOR_APPROVALS,
     },

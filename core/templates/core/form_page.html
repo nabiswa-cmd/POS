@@ -1,0 +1,13 @@
+{% extends "core/base.html" %}{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<h1>{{ title }}</h1>{% if subtitle %}<p class="sub">{{ subtitle }}</p>{% endif %}
+<form method="post" enctype="multipart/form-data" class="card" autocomplete="off">{% csrf_token %}
+  {{ form.non_field_errors }}
+  {% for f in form.visible_fields %}
+    <div>{% if f.field.widget.input_type == "checkbox" %}<label style="color:var(--text)">{{ f }} {{ f.label }}</label>{% else %}<label for="{{ f.id_for_label }}">{{ f.label }}</label>{{ f }}{% endif %}
+    {% if f.help_text %}<div class="help">{{ f.help_text }}</div>{% endif %}{{ f.errors }}</div>
+  {% endfor %}
+  {% for h in form.hidden_fields %}{{ h }}{% endfor %}
+  <div class="actions"><button type="submit">{{ submit|default:"Save" }}</button><a class="btn ghost" data-back href="{{ back }}">Cancel</a></div>
+</form>
+{% endblock %}

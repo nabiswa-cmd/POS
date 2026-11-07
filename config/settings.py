@@ -58,6 +58,8 @@ INSTALLED_APPS = [
     "core",
     "accounts",
     "tills",
+    "catalog",
+    "inventory",
 ]
 
 MIDDLEWARE = [
@@ -77,13 +79,14 @@ WSGI_APPLICATION = "config.wsgi.application"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+        "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "core.context.workspace",
             ],
         },
     },
@@ -107,6 +110,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # --- Auth -----------------------------------------------------------------
 AUTH_USER_MODEL = "accounts.User"
+LOGIN_URL = "/app/manager/"
 
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.PBKDF2PasswordHasher"]
 if env_bool("USE_ARGON2", False):
@@ -147,3 +151,9 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# Uploaded product images live next to the app data, never inside the code folder.
+MEDIA_URL = "media/"
+MEDIA_ROOT = Path(env("WINESPOS_MEDIA_ROOT", str(BASE_DIR / "media")))
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
+DATA_UPLOAD_MAX_MEMORY_SIZE = 6 * 1024 * 1024

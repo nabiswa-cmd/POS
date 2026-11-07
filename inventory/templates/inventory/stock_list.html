@@ -1,0 +1,11 @@
+{% extends "core/base.html" %}{% block title %}Stock{% endblock %}
+{% block content %}<h1>Stock</h1>
+<p class="sub">{{ page.paginator.count }} product{{ page.paginator.count|pluralize }}{% if show_cost %} &middot; Stock value at average cost: <b>KES {{ value|floatformat:2 }}</b>{% endif %}</p>
+<form method="get" class="card row noprint"><div style="flex:3"><label for="q">Search or scan</label><input id="q" type="search" name="q" value="{{ q }}" data-search data-autofocus></div>
+<div style="flex:0 0 auto"><label style="color:var(--text)"><input type="checkbox" name="low" value="1"{% if low_only %} checked{% endif %}>Low stock only</label></div><div style="flex:0 0 auto"><button type="submit">Search</button></div></form>
+<table><tr><th>Product</th><th>Shelf</th><th class="num">In stock</th><th class="num">Reorder at</th>{% if show_cost %}<th class="num">Value</th>{% endif %}<th></th></tr>
+{% for p in page %}<tr><td><a href="{% url 'stock-history' p.pk %}">{{ p.name }}</a><div class="muted">{{ p.sku }}</div></td><td>{{ p.shelf.code|default:"" }}</td><td class="num">{{ p.stock_text }}</td><td class="num">{{ p.reorder_level }}</td>
+{% if show_cost %}<td class="num">{{ p.value|floatformat:2 }}</td>{% endif %}<td>{% if p.is_low %}<span class="pill low">low</span>{% endif %}{% if p.stock_qty < 0 %}<span class="pill bad">negative</span>{% endif %}</td></tr>
+{% empty %}<tr><td colspan="6" class="muted">Nothing to show.</td></tr>{% endfor %}</table>
+<p class="noprint">{% if page.has_previous %}<a href="?page={{ page.previous_page_number }}&q={{ q|urlencode }}{% if low_only %}&low=1{% endif %}">Previous</a> {% endif %}Page {{ page.number }} of {{ page.paginator.num_pages }}{% if page.has_next %} <a href="?page={{ page.next_page_number }}&q={{ q|urlencode }}{% if low_only %}&low=1{% endif %}">Next</a>{% endif %}</p>
+{% endblock %}
