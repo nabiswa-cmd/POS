@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ area_title }} | {{ shop_name }}</title>
+<style>
+  :root { --bg:#10151c; --panel:#18202b; --line:#2a3646; --text:#e8edf3; --muted:#92a0b2; --accent:#e0a526; --bad:#ff6b6b; --ok:#4cc38a; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--bg); color:var(--text);
+         font:16px/1.4 "Segoe UI",system-ui,sans-serif; }
+  main { width:min(440px,92vw); background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:28px; }
+  h1 { margin:0 0 2px; font-size:20px; letter-spacing:.04em; }
+  .shop { color:var(--muted); margin:0 0 20px; }
+  .step { margin:0 0 14px; color:var(--accent); font-weight:600; }
+  label { display:block; margin:12px 0 4px; color:var(--muted); font-size:14px; }
+  input, select { width:100%; padding:11px 12px; font-size:17px; color:var(--text); background:#0e131a;
+                  border:1px solid var(--line); border-radius:8px; }
+  input:focus, select:focus, button:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  button { margin-top:18px; width:100%; padding:12px; font-size:17px; font-weight:600; color:#1a1300;
+           background:var(--accent); border:0; border-radius:8px; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--muted); border:1px solid var(--line); margin-top:10px; }
+  .msg { min-height:22px; margin-top:12px; color:var(--bad); font-size:14px; }
+  .msg.ok { color:var(--ok); }
+  .hint { color:var(--muted); font-size:13px; margin-top:14px; }
+  [hidden] { display:none !important; }
+  ul { padding-left:18px; color:var(--muted); font-size:14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>{{ area_title }}</h1>
+  <p class="shop">{{ shop_name }}</p>
+
+  <!-- POS step 1: supervisor authorization -->
+  <form id="f-authorize" hidden autocomplete="off">
+    <p class="step">Step 1 of 3: Supervisor authorization</p>
+    <label for="a-till">Till</label>
+    <select id="a-till"></select>
+    <label for="a-user">Supervisor / manager username</label>
+    <input id="a-user" autocomplete="off">
+    <label for="a-secret">Password or PIN</label>
+    <input id="a-secret" type="password" autocomplete="off">
+    <button type="submit">Authorize POS</button>
+    <div class="msg" id="m-authorize" role="alert"></div>
+    <p class="hint">The supervisor signs in only to authorize. The cashier signs in next with their own login.</p>
+  </form>
+
+  <!-- POS step 2: cashier login -->
+  <form id="f-cashier" hidden autocomplete="off">
+    <p class="step">Step 2 of 3: Cashier login</p>
+    <p class="hint" id="authorized-note"></p>
+    <label for="c-user">Cashier username</label>
+    <input id="c-user" autocomplete="off">
+    <label for="c-secret">Password or PIN</label>
+    <input id="c-secret" type="password" autocomplete="off">
+    <button type="submit">Log in</button>
+    <div class="msg" id="m-cashier" role="alert"></div>
+  </form>
+
+  <!-- POS step 3: shift -->
+  <form id="f-shift" hidden autocomplete="off">
+    <p class="step">Step 3 of 3: Open your shift</p>
+    <p class="hint" id="shift-note"></p>
+    <label for="s-float">Opening cash float (KES)</label>
+    <input id="s-float" inputmode="decimal" autocomplete="off">
+    <button type="submit">Open shift</button>
+    <div class="msg" id="m-shift" role="alert"></div>
+  </form>
+
+  <!-- POS ready -->
+  <section id="s-ready" hidden>
+    <p class="step">Till <span id="r-till"></span> is ready</p>
+    <p id="r-who"></p>
+    <p class="hint">The sales screen (scanning, cart, shortcuts, receipts) is built in Phase 3.</p>
+    <button class="ghost" id="b-logout-pos" type="button">Log out</button>
+  </section>
+
+  <!-- Manager / receiving login -->
+  <form id="f-login" hidden autocomplete="off">
+    <label for="l-user">Username</label>
+    <input id="l-user" autocomplete="off">
+    <label for="l-secret">Password or PIN</label>
+    <input id="l-secret" type="password" autocomplete="off">
+    <button type="submit">Log in</button>
+    <div class="msg" id="m-login" role="alert"></div>
+  </form>
+
+  <section id="s-home" hidden>
+    <p class="step" id="h-who"></p>
+    <p class="hint" id="h-note"></p>
+    <ul id="h-perms"></ul>
+    <button id="b-admin" type="button" hidden>Open management screens</button>
+    <button class="ghost" id="b-logout" type="button">Log out</button>
+  </section>
+</main>
+
+<script>
+(function () {
+  var MODE = "{{ mode }}";
+  var $ = function (id) { return document.getElementById(id); };
+  var show = function (id) {
+    ["f-authorize","f-cashier","f-shift","s-ready","f-login","s-home"].forEach(function (x) { $(x).hidden = (x !== id); });
+    var first = $(id).querySelector("input:not([type=hidden]), select");
+    if (first) first.focus();
+  };
+  var csrf = function () {
+    var m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : "";
+  };
+  function api(method, url, body) {
+    var opts = { method: method, credentials: "same-origin", headers: { "X-CSRFToken": csrf() } };
+    if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+    return fetch(url, opts).then(function (r) {
+      return r.json().catch(function () { return { ok: false, error: "Unexpected server response." }; });
+    }).catch(function () { return { ok: false, error: "Cannot reach the shop server." }; });
+  }
+  function say(id, text, ok) { var el = $(id); el.textContent = text || ""; el.className = "msg" + (ok ? " ok" : ""); }
+  function submit(formId, msgId, handler) {
+    $(formId).addEventListener("submit", function (e) {
+      e.preventDefault(); say(msgId, "");
+      handler().then(function (res) { if (!res.ok) say(msgId, res.error || "Something went wrong."); });
+    });
+  }
+  function logout() { api("POST", "/api/auth/logout/", {}).then(function () { location.reload(); }); }
+
+  if (MODE === "pos") {
+    var tillNo = null;
+    api("GET", "/api/pos/state/").then(function (s) {
+      var sel = $("a-till");
+      (s.tills || []).forEach(function (t) {
+        var o = document.createElement("option"); o.value = t.number; o.textContent = t.name; sel.appendChild(o);
+      });
+      return api("GET", "/api/auth/me/");
+    }).then(function (me) {
+      if (me.user) { return api("GET", "/api/pos/shift/").then(function (s) {
+        if (s.ok) { tillNo = s.till; return s.shift ? ready(me.user, s.till, s.shift) : needShift(); }
+        show("f-authorize");
+      }); }
+      show("f-authorize");
+    });
+    submit("f-authorize", "m-authorize", function () {
+      return api("POST", "/api/pos/authorize/", { till: $("a-till").value, username: $("a-user").value, secret: $("a-secret").value })
+        .then(function (r) {
+          $("a-secret").value = ""; $("a-user").value = "";
+          if (r.ok) { tillNo = r.till; $("authorized-note").textContent = "Authorized by " + r.authorized_by + " for till " + r.till + "."; show("f-cashier"); }
+          return r;
+        });
+    });
+    submit("f-cashier", "m-cashier", function () {
+      return api("POST", "/api/pos/cashier-login/", { username: $("c-user").value, secret: $("c-secret").value, till: tillNo })
+        .then(function (r) {
+          $("c-secret").value = "";
+          if (!r.ok) return r;
+          tillNo = r.till;
+          if (r.till_busy_with) { say("m-cashier", "This till already has an open shift for " + r.till_busy_with + "."); return { ok: true }; }
+          r.shift ? ready(r.user, r.till, r.shift) : needShift();
+          return r;
+        });
+    });
+    submit("f-shift", "m-shift", function () {
+      return api("POST", "/api/pos/shift/open/", { opening_float: $("s-float").value }).then(function (r) {
+        if (r.ok) { api("GET", "/api/auth/me/").then(function (me) { ready(me.user, tillNo, r.shift); }); }
+        return r;
+      });
+    });
+    $("b-logout-pos").addEventListener("click", logout);
+    function needShift() { $("shift-note").textContent = "No open shift on this till yet."; show("f-shift"); }
+    function ready(user, till, shift) {
+      $("r-till").textContent = till; $("r-who").textContent = "Cashier: " + user.name + " | Float: " + shift.opening_float;
+      show("s-ready");
+    }
+  } else {
+    var NEEDS = { manager: "Manager area", receiving: "Stock receiving" };
+    function home(user) {
+      $("h-who").textContent = "Signed in: " + user.name + (user.role ? " (" + user.role + ")" : "");
+      $("h-note").textContent = NEEDS[MODE] + ". The full screens arrive in later phases. Your access:";
+      var ul = $("h-perms"); ul.innerHTML = "";
+      user.permissions.forEach(function (p) { var li = document.createElement("li"); li.textContent = p; ul.appendChild(li); });
+      $("b-admin").hidden = !(user.is_manager && MODE === "manager");
+      show("s-home");
+    }
+    api("GET", "/api/auth/me/").then(function (me) { if (me.user) home(me.user); else show("f-login"); });
+    submit("f-login", "m-login", function () {
+      return api("POST", "/api/auth/login/", { area: MODE, username: $("l-user").value, secret: $("l-secret").value })
+        .then(function (r) { $("l-secret").value = ""; if (r.ok) home(r.user); return r; });
+    });
+    $("b-admin").addEventListener("click", function () { location.href = "/admin/"; });
+    $("b-logout").addEventListener("click", logout);
+  }
+})();
+</script>
+</body>
+</html>
