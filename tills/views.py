@@ -69,7 +69,8 @@ def authorize(request, data):
     authorization = PosAuthorization.objects.create(till=till, approval=approval)
     request.session["pos_auth_id"] = authorization.pk
     request.session["pos_till"] = till.number
-    return JsonResponse({"ok": True, "till": till.number, "authorized_by": approval.approver.display_name})
+    return JsonResponse({"ok": True, "till": till.number, "authorized_by": approval.approver.display_name,
+                         "owner": services.is_exempt(approval.approver)})
 
 
 @post_json

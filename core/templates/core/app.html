@@ -23,9 +23,8 @@
     <label for="a-secret">Password or PIN</label>
     <input id="a-secret" type="password" autocomplete="off">
     <button type="submit">Authorize POS</button>
-    <button type="button" class="ghost" id="b-owner">I am the owner: sign in directly</button>
     <div class="msg" id="m-authorize" role="alert"></div>
-    <p class="hint">The owner needs no separate authorization. The supervisor signs in only to authorize. The cashier signs in next with their own login.</p>
+    <p class="hint">A supervisor or the owner signs in here to authorize the till. The cashier then signs in with their own login on the next step.</p>
   </form>
 
   <!-- POS step 2: cashier login -->
@@ -123,10 +122,11 @@
       show("f-authorize");
     });
     submit("f-authorize", "m-authorize", function () {
+      var typed = $("a-user").value;
       return api("POST", "/api/pos/authorize/", { till: $("a-till").value, username: $("a-user").value, secret: $("a-secret").value })
         .then(function (r) {
           $("a-secret").value = ""; $("a-user").value = "";
-          if (r.ok) { tillNo = r.till; $("authorized-note").textContent = "Authorized by " + r.authorized_by + " for till " + r.till + "."; show("f-cashier"); }
+          if (r.ok) { tillNo = r.till; $("authorized-note").textContent = "Authorized by " + r.authorized_by + " for till " + r.till + "."; show("f-cashier"); if (r.owner) { $("c-user").value = typed; $("c-secret").focus(); } }
           return r;
         });
     });
@@ -148,10 +148,6 @@
       });
     });
     $("b-logout-pos").addEventListener("click", logout);
-    $("b-owner").addEventListener("click", function () {
-      tillNo = $("a-till").value; $("authorized-note").textContent = "Owner sign-in for till " + tillNo + ": no separate authorization is needed. Only the shop owner (manager) can use this.";
-      show("f-cashier");
-    });
     function needShift() { $("shift-note").textContent = "No open shift on this till yet."; show("f-shift"); }
     function ready(user, till, shift) {
       $("r-till").textContent = till; $("r-who").textContent = "Cashier: " + user.name + " | Float: " + shift.opening_float;

@@ -180,3 +180,21 @@ ETIMS_COMM_KEY = env("ETIMS_COMM_KEY", "")                      # OSCU communica
 ETIMS_TIMEOUT_SECONDS = env_int("ETIMS_TIMEOUT_SECONDS", 8)
 # Where the QR on a signed receipt points. Placeholders: {tin} {bhf} {sign}. Empty = no QR is printed.
 ETIMS_QR_URL_TEMPLATE = env("ETIMS_QR_URL_TEMPLATE", "")
+
+
+# --- M-PESA (Safaricom Daraja). Secrets come only from .env. See README, "Phase 4A". -------------------
+MPESA_ENV = env("MPESA_ENV", "sandbox").strip().lower()
+if MPESA_ENV not in ("sandbox", "live"):
+    raise ImproperlyConfigured("MPESA_ENV must be sandbox or live")
+MPESA = {
+    "ENV": MPESA_ENV,
+    "CONSUMER_KEY": env("MPESA_CONSUMER_KEY", ""),
+    "CONSUMER_SECRET": env("MPESA_CONSUMER_SECRET", ""),
+    "SHORTCODE": env("MPESA_SHORTCODE", ""),            # Till: the STORE number. Paybill: the paybill number.
+    "TILL_NUMBER": env("MPESA_TILL_NUMBER", ""),        # Buy Goods till number (customers pay this)
+    "PASSKEY": env("MPESA_PASSKEY", ""),
+    "ACCOUNT_TYPE": env("MPESA_ACCOUNT_TYPE", "till").strip().lower(),   # till | paybill
+    "CALLBACK_BASE_URL": env("MPESA_CALLBACK_BASE_URL", ""),             # public HTTPS address, no trailing slash
+    "CALLBACK_SECRET": env("MPESA_CALLBACK_SECRET", ""),                 # long random text inside the callback path
+    "TIMEOUT": env_int("MPESA_TIMEOUT_SECONDS", 12),
+}

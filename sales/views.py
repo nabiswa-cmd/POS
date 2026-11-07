@@ -14,7 +14,7 @@ from core.http import bad, client_ip, login_required_json, post_json
 from core.models import ShopSettings
 from tills.models import CashierShift
 
-from . import etims, receipt, rules, services, shortcuts, tax
+from . import daraja, etims, mpesa_rules, mpesa_services, receipt, rules, services, shortcuts, tax
 from .models import Sale
 
 
@@ -250,8 +250,10 @@ def pos_config(request, shift):
         "vat": shop.vat_registered,
         "etims": etims.enabled(),
         "payment_methods": [{"code": "CASH", "label": "Cash", "enabled": True},
-                            {"code": "MPESA", "label": "M-PESA (Phase 4)", "enabled": False},
-                            {"code": "CARD", "label": "Card (Phase 4)", "enabled": False}],
+                            {"code": "MPESA", "label": "M-PESA (Till or phone request)", "enabled": True},
+                            {"code": "CARD", "label": "Card (next update)", "enabled": False},
+                            {"code": "BANK", "label": "Bank transfer (next update)", "enabled": False}],
+        "mpesa": {"stk": daraja.configured(), "till_capture": daraja.callbacks_ready()},
         "approval_minutes": settings.APPROVAL_TOKEN_MINUTES,
     })
 
@@ -290,3 +292,62 @@ def reprint_page(request, sale_id):
             "font": 11 if mm == 58 else 10, "qr": barcodes.qr_svg(qr) if qr else ""})
 
     return inner(request)
+
+
+# --- Phase 4A: M-PESA --------------------------------------------------------------------------------
+
+def _mpesa_row(txn, total):
+    from django.utils import timezone
+    return {"id": txn.pk, "receipt": txn.trans_id, "amount": str(txn.amount), "name": txn.customer_name,
+            "who": mpesa_rules.phone_hint(txn.payer_ref),
+            "time": timezone.localtime(txn.created_at).strftime("%H:%M"),
+            "matches": total is not None and txn.amount == total}
+
+
+@require_GET
+@login_required_json
+@_guard
+def mpesa_recent(request, shift):
+    """Confirmed payments nobody has used yet. Exact matches for the current sale come first."""
+    try:
+        total = mpesa_services._cart_total(request.user, shift)[1]
+    except services.SaleError:
+        total = None
+    rows = mpesa_services.recent_unmatched(request.user, shift)
+    rows.sort(key=lambda t: (total is None or t.amount != total))       # stable: newest first inside each group
+    return JsonResponse({"ok": True, "total": str(total) if total is not None else None,
+                         "payments": [_mpesa_row(t, total) for t in rows]})
+
+
+@login_required_json
+@post_json
+@_guard
+def mpesa_stk_start(request, data, shift):
+    stk = mpesa_services.start_stk(request.user, shift, data.get("phone"))
+    return JsonResponse({"ok": True, "stk_id": stk.pk, "status": stk.status})
+
+
+@require_GET
+@login_required_json
+@_guard
+def mpesa_stk_status(request, stk_id, shift):
+    stk = mpesa_services.stk_status(request.user, shift, stk_id)
+    return JsonResponse({"ok": True, "status": stk.status, "message": stk.result_desc,
+                         "transaction_id": stk.transaction_id})
+
+
+@login_required_json
+@post_json
+@_guard
+def checkout_mpesa(request, data, shift):
+    try:
+        transaction_id = int(data.get("transaction_id"))
+    except (TypeError, ValueError):
+        return bad("Choose a payment first.")
+    sale = mpesa_services.checkout_mpesa(request.user, shift, transaction_id)
+    sub = etims.submit(sale.pk)
+    etims.submit_pending(3)
+    return JsonResponse({"ok": True, "sale_id": sale.pk, "number": sale.number, "total": str(sale.total),
+                         "change": "0.00", "customer": sale.customer_name,
+                         "reference": sale.payments.first().reference, "cart": cart_payload(None),
+                         "etims": sub.status if sub else None, "etims_note": sub.last_error if sub else ""})

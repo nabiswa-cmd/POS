@@ -428,6 +428,22 @@ def checkout_cash(user, shift, tendered):
     tendered = _rule(rules.parse_money, tendered, field="Cash received")
     change = _rule(rules.change_due, total, tendered)
 
+    return finish_sale(user, shift, payment={"method": Payment.CASH, "tendered": tendered, "change_given": change})
+
+
+@transaction.atomic
+def finish_sale(user, shift, *, payment, customer_name=""):
+    """The shared end of every checkout (cash, M-PESA, later card and bank): stock, cost basis, VAT snapshot,
+    the payment record and the gapless sale number, all in ONE transaction. `payment` holds the Payment fields
+    that differ by method (method, reference, tendered, change_given, mpesa_transaction)."""
+    sale = _locked_sale(user, shift)
+    items = list(sale.items.select_related("product"))
+    if not items:
+        raise SaleError("The sale is empty.")
+    subtotal, discount, total = rules.totals((i.quantity, i.unit_price, i.discount) for i in items)
+    if total <= 0:
+        raise SaleError("The total must be more than zero.")
+
     number_seq = CodeSequence.next(f"sale-{shift.till.number}-{timezone.localdate():%Y%m%d}")
     number = rules.sale_number(shift.till.number, timezone.localdate(), number_seq)
 
@@ -462,16 +478,17 @@ def checkout_cash(user, shift, tendered):
         tax_total += vat
 
     now = timezone.now()
-    Payment.objects.create(sale=sale, method=Payment.CASH, status=Payment.CONFIRMED, amount=total,
-                           tendered=tendered, change_given=change, received_by=user)
+    Payment.objects.create(sale=sale, status=Payment.CONFIRMED, amount=total, received_by=user, **payment)
+    if customer_name:
+        sale.customer_name = customer_name[:120]
     sale.number, sale.status, sale.completed_at = number, Sale.COMPLETED, now
     sale.subtotal, sale.discount_total, sale.total = subtotal, discount, total
     sale.vat_applied, sale.tax_total = vat_on, tax_total
     sale.save(update_fields=["number", "status", "completed_at", "subtotal", "discount_total", "total",
-                             "vat_applied", "tax_total"])
+                             "vat_applied", "tax_total", "customer_name"])
     etims.create_submission(sale)       # the invoice number is taken inside this same transaction
     audit.record("sale.completed", actor=user, object_type="sale", object_ref=number,
-                 new={"total": str(total), "method": "CASH", "items": len(items), "vat": str(tax_total)},
+                 new={"total": str(total), "method": payment["method"], "items": len(items), "vat": str(tax_total)},
                  till_number=shift.till.number)
     return sale
 
@@ -510,9 +527,20 @@ def mark_reprint(user, sale_id, ip=None):
 # --- shift summary (F11) -------------------------------------------------------------------------
 
 def shift_summary(shift):
-    """A cashier's running view of their shift. Cash-up and closing arrive in Phase 5."""
+    """A cashier's running view of their shift. Cash-up and closing arrive in Phase 5.
+    Only CASH counts towards the drawer: M-PESA and other electronic money never does."""
     done = Sale.objects.filter(shift=shift, status=Sale.COMPLETED)
-    cash = Payment.objects.filter(sale__in=done, method=Payment.CASH).aggregate(t=Sum("amount"))["t"] or Decimal("0.00")
+
+    def paid(method):
+        return Payment.objects.filter(sale__in=done, method=method).aggregate(t=Sum("amount"))["t"] or Decimal("0.00")
+
+    cash, mpesa = paid(Payment.CASH), paid(Payment.MPESA)
+    other = paid(Payment.CARD) + paid(Payment.BANK)
     return {"sales_count": done.count(), "sales_total": str(done.aggregate(t=Sum("total"))["t"] or Decimal("0.00")),
-            "cash_sales": str(cash), "opening_float": str(shift.opening_float),
-            "cash_in_drawer_expected": str(shift.opening_float + cash)}
+            "cash_sales": str(cash), "mpesa_sales": str(mpesa), "other_sales": str(other),
+            "opening_float": str(shift.opening_float), "cash_in_drawer_expected": str(shift.opening_float + cash)}
+
+
+def cart_total(sale):
+    """The amount payable for a cart, worked out from its lines (never trusted from the screen)."""
+    return rules.totals((i.quantity, i.unit_price, i.discount) for i in sale.items.all())[2]

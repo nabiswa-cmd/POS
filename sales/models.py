@@ -152,8 +152,8 @@ class SaleItem(models.Model):
 class Payment(models.Model):
     """What the customer paid. Phase 3 records cash only; Phase 4 adds M-PESA, card, bank and split payments."""
 
-    CASH = "CASH"
-    METHODS = [(CASH, "Cash")]
+    CASH, MPESA, CARD, BANK = "CASH", "MPESA", "CARD", "BANK"
+    METHODS = [(CASH, "Cash"), (MPESA, "M-PESA"), (CARD, "Card"), (BANK, "Bank transfer")]
     CONFIRMED = "CONFIRMED"
     STATUSES = [(CONFIRMED, "Confirmed")]
 
@@ -165,6 +165,9 @@ class Payment(models.Model):
                                    help_text="Cash handed over by the customer.")
     change_given = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     reference = models.CharField(max_length=60, blank=True)
+    # Phase 4A: the confirmed M-PESA payment behind this row. One-to-one: a receipt code can pay only one sale.
+    mpesa_transaction = models.OneToOneField("sales.MpesaTransaction", null=True, blank=True,
+                                             on_delete=models.PROTECT, related_name="payment")
     received_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -227,3 +230,85 @@ class EtimsSubmission(models.Model):
 
     def delete(self, *args, **kwargs):
         raise PermissionError("eTIMS records cannot be deleted.")
+
+
+class MpesaTransaction(models.Model):
+    """One confirmed M-PESA payment, keyed by Safaricom's receipt code. The unique code is what makes callbacks
+    idempotent: Safaricom may deliver the same message many times and only one row can ever exist.
+    Rows are history: the amount and code cannot change, and nothing is deleted."""
+
+    C2B, STK = "C2B", "STK"
+    SOURCES = [(C2B, "Paid to the Till / Paybill"), (STK, "STK push")]
+    UNMATCHED, MATCHED = "UNMATCHED", "MATCHED"
+    STATUSES = [(UNMATCHED, "Received, not yet used on a sale"), (MATCHED, "Used on a sale")]
+
+    trans_id = models.CharField("M-PESA receipt code", max_length=14, unique=True)
+    source = models.CharField(max_length=3, choices=SOURCES)
+    status = models.CharField(max_length=10, choices=STATUSES, default=UNMATCHED, db_index=True)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    # Only what Safaricom sent. Blank when it did not; the cashier may type a name on the sale instead.
+    customer_name = models.CharField(max_length=120, blank=True)
+    payer_ref = models.CharField(max_length=80, blank=True, help_text="Phone (STK) or Safaricom's hashed number (till).")
+    shortcode = models.CharField(max_length=12, blank=True)
+    bill_ref = models.CharField(max_length=60, blank=True)
+    trans_time = models.CharField(max_length=14, blank=True)
+    raw = models.JSONField(default=dict, blank=True)
+    sale = models.ForeignKey(Sale, null=True, blank=True, on_delete=models.PROTECT, related_name="mpesa_transactions")
+    matched_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    matched_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        constraints = [models.CheckConstraint(condition=Q(amount__gt=0), name="mpesa_amount_positive")]
+
+    def __str__(self):
+        return f"{self.trans_id} KES {self.amount}"
+
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        obj = super().from_db(db, field_names, values)
+        obj._orig = (obj.__dict__.get("trans_id"), obj.__dict__.get("amount"))
+        return obj
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding and getattr(self, "_orig", None) and (self.trans_id, self.amount) != self._orig:
+            raise PermissionError("An M-PESA receipt code and amount cannot be changed.")
+        super().save(*args, **kwargs)
+        self._orig = (self.trans_id, self.amount)
+
+    def delete(self, *args, **kwargs):
+        raise PermissionError("M-PESA payment records cannot be deleted.")
+
+
+class MpesaStkRequest(models.Model):
+    """A payment prompt sent to a customer's phone. It only ever becomes CONFIRMED from Safaricom's callback."""
+
+    PENDING, PROCESSING, CONFIRMED, FAILED, EXPIRED = "PENDING", "PROCESSING", "CONFIRMED", "FAILED", "EXPIRED"
+    STATUSES = [(PENDING, "Not sent yet"), (PROCESSING, "Waiting for the customer"), (CONFIRMED, "Paid"),
+                (FAILED, "Failed or cancelled"), (EXPIRED, "No answer")]
+    OPEN_STATES = (PENDING, PROCESSING)
+
+    sale = models.ForeignKey(Sale, on_delete=models.PROTECT, related_name="stk_requests")
+    cashier = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    shift = models.ForeignKey("tills.CashierShift", on_delete=models.PROTECT, related_name="+")
+    phone = models.CharField(max_length=12)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    merchant_request_id = models.CharField(max_length=60, blank=True)
+    checkout_request_id = models.CharField(max_length=80, unique=True, null=True, blank=True)
+    status = models.CharField(max_length=10, choices=STATUSES, default=PENDING, db_index=True)
+    result_code = models.IntegerField(null=True, blank=True)
+    result_desc = models.CharField(max_length=200, blank=True)
+    transaction = models.ForeignKey(MpesaTransaction, null=True, blank=True, on_delete=models.PROTECT, related_name="stk_requests")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return f"STK {self.amount} to {self.phone[-3:]} ({self.get_status_display()})"
+
+    def delete(self, *args, **kwargs):
+        raise PermissionError("Payment requests cannot be deleted.")

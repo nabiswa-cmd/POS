@@ -394,12 +394,99 @@
 
   /* ---------- payment and completion ---------- */
   function payment() {
-    var d = openDialog('<h2>Payment method</h2><ul class="opts">' + S.cfg.payment_methods.map(function (m) {
-      return '<li class="' + (m.enabled ? "on" : "off") + '"><span>' + esc(m.label) + "</span><span>" + (m.enabled ? "selected" : "not available yet") + "</span></li>";
-    }).join("") + '</ul><p class="note" style="margin-top:10px">Cash is the only method in this version. M-PESA, card and bank payments arrive in Phase 4. F9 completes the sale as cash.</p>' +
-      '<div class="btns"><button id="py-ok" data-first type="button">OK (Enter)</button></div>');
-    $("py-ok").onclick = function () { closeDialog(d); };
-    d.onKey = function (e) { if (e.key === "Enter") { e.preventDefault(); closeDialog(d); return true; } return false; };
+    var c = S.cart; if (!c || !items().length) { say("The sale is empty. Scan a product first.", "err"); return; }
+    var ms = S.cfg.payment_methods;
+    var d = openDialog('<h2>Payment method</h2><ul class="opts">' + ms.map(function (m, i) {
+      return '<li class="' + (m.enabled ? "on" : "off") + '"><span>' + (i + 1) + ". " + esc(m.label) + "</span><span>" + (m.enabled ? "press " + (i + 1) : "not available yet") + "</span></li>";
+    }).join("") + '</ul><div class="btns"><button class="ghost" id="py-no" type="button">Back (Esc)</button><button id="py-ok" data-first type="button">Cash (Enter)</button></div>');
+    function pick(i) { var m = ms[i]; if (!m || !m.enabled) return; closeDialog(d); if (m.code === "MPESA") mpesa(); else complete(); }
+    $("py-ok").onclick = function () { pick(0); }; $("py-no").onclick = function () { closeDialog(d); };
+    d.onKey = function (e) {
+      if (e.key === "Enter") { e.preventDefault(); pick(0); return true; }
+      if (/^[1-9]$/.test(e.key)) { e.preventDefault(); pick(Number(e.key) - 1); return true; }
+      return false;
+    };
+  }
+  function mpesaDone(r) {
+    setCart(r.cart); S.sel = -1; S.lastSale = r.sale_id;
+    var note = "Sale " + r.number + " complete. Paid by M-PESA " + r.reference + (r.customer ? " (" + r.customer + ")" : "") + ".";
+    if (r.etims === "PENDING") note += " eTIMS signature pending (will retry).";
+    else if (r.etims === "REJECTED") note += " eTIMS REJECTED: tell the manager. " + (r.etims_note || "");
+    say(note, r.etims === "REJECTED" ? "err" : "ok");
+    printSale(r.sale_id, false);
+  }
+  function mpesa() {
+    var total = Number(S.cart.total), rows = [], idx = 0, poller = null, stkTimer = null, mcfg = S.cfg.mpesa || {};
+    var d = openDialog('<h2>M-PESA payment</h2><div class="grandlbl">Total payable (KES)</div><div class="grand" style="text-align:left">' + fmt(total) + "</div>" +
+      '<p class="note">Customer paid to the Till? It shows below within a few seconds. Choose it and press Enter. Only payments confirmed by Safaricom appear here.</p>' +
+      (mcfg.till_capture ? "" : '<p class="err">M-PESA capture is not set up on this shop yet. Ask the manager.</p>') +
+      '<ul class="opts" id="mp-list"></ul>' +
+      "<label>Or send a payment request to the customer's phone</label>" +
+      '<input id="mp-phone" inputmode="tel" autocomplete="off" placeholder="0712 345 678"' + (mcfg.stk ? "" : " disabled") + ">" +
+      '<div class="note" id="mp-stk">' + (mcfg.stk ? "" : "Phone requests are not set up. The customer can still pay the Till.") + "</div>" +
+      '<div class="err" id="mp-err"></div>' +
+      '<div class="btns"><button class="ghost" id="mp-no" type="button">Back (Esc)</button><button id="mp-ok" data-first type="button">Use selected payment (Enter)</button></div>');
+    function alive() { return S.stack.indexOf(d) >= 0; }
+    function paint() {
+      var ul = $("mp-list"); if (!ul) return;
+      if (!rows.length) { ul.innerHTML = '<li class="off"><span>Waiting for a payment of ' + fmt(total) + "...</span><span></span></li>"; return; }
+      ul.innerHTML = rows.map(function (p, i) {
+        var label = (p.name ? esc(p.name) : "Name not provided") + (p.who ? " " + esc(p.who) : "") + " | " + esc(p.receipt) + " | " + esc(p.time);
+        var right = fmt(Number(p.amount)) + (p.matches ? "" : " (sale is " + fmt(total) + ")");
+        return '<li class="' + (p.matches ? "on" : "off") + '"' + (i === idx ? ' style="outline:2px solid var(--crimson)"' : "") + "><span>" + label + "</span><span>" + right + "</span></li>";
+      }).join("");
+    }
+    function poll() {
+      api("GET", "/api/sales/mpesa/recent/").then(function (r) {
+        if (!r.ok || !alive()) return;
+        rows = r.payments || [];
+        var first = -1; rows.forEach(function (p, i) { if (first < 0 && p.matches) first = i; });
+        if (idx >= rows.length || (rows[idx] && !rows[idx].matches && first >= 0)) idx = first >= 0 ? first : 0;
+        paint();
+      });
+    }
+    function apply(id) {
+      if (S.busy) return; S.busy = true;
+      api("POST", "/api/sales/checkout/mpesa/", { transaction_id: id }).then(function (r) {
+        S.busy = false;
+        if (!r.ok) { var er = $("mp-err"); if (er) er.textContent = r.error || "Could not complete the sale."; if (alive()) poll(); return; }
+        if (alive()) closeDialog(d);
+        mpesaDone(r);
+      });
+    }
+    function sendStk() {
+      var phone = $("mp-phone").value.trim(); if (!phone) return;
+      $("mp-err").textContent = ""; $("mp-stk").textContent = "Sending request...";
+      api("POST", "/api/sales/mpesa/stk/", { phone: phone }).then(function (r) {
+        if (!alive()) return;
+        if (!r.ok) { $("mp-stk").textContent = ""; $("mp-err").textContent = r.error || "Could not send the request."; return; }
+        $("mp-stk").textContent = "Request sent. Ask the customer to enter their M-PESA PIN...";
+        clearInterval(stkTimer);
+        stkTimer = setInterval(function () {
+          api("GET", "/api/sales/mpesa/stk/" + r.stk_id + "/").then(function (s) {
+            if (!alive() || !s.ok) return;
+            if (s.status === "CONFIRMED" && s.transaction_id) { clearInterval(stkTimer); apply(s.transaction_id); }
+            else if (s.status === "FAILED" || s.status === "EXPIRED") {
+              clearInterval(stkTimer); $("mp-stk").textContent = "";
+              $("mp-err").textContent = (s.status === "EXPIRED" ? "The customer did not answer. " : "") + (s.message || "The payment did not go through.");
+            }
+          });
+        }, 2500);
+      });
+    }
+    d.onClose = function () { clearInterval(poller); clearInterval(stkTimer); };
+    poller = setInterval(poll, 3000); poll(); paint();
+    $("mp-no").onclick = function () { closeDialog(d); };
+    $("mp-ok").onclick = function () {
+      if (rows[idx] && rows[idx].matches) apply(rows[idx].id);
+      else $("mp-err").textContent = "No payment of KES " + fmt(total) + " has arrived yet.";
+    };
+    d.onKey = function (e) {
+      if (e.key === "ArrowDown") { e.preventDefault(); idx = Math.max(0, Math.min(rows.length - 1, idx + 1)); paint(); return true; }
+      if (e.key === "ArrowUp") { e.preventDefault(); idx = Math.max(0, idx - 1); paint(); return true; }
+      if (e.key === "Enter") { e.preventDefault(); if (document.activeElement === $("mp-phone")) sendStk(); else $("mp-ok").onclick(); return true; }
+      return false;
+    };
   }
   function complete() {
     var c = S.cart; if (!c || !items().length) { say("The sale is empty. Scan a product first.", "err"); return; }

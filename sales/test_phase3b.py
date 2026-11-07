@@ -361,7 +361,8 @@ class SalesScreenTests(SalesCase):
         data = self.client.get("/api/sales/config/").json()
         self.assertEqual((data["shortcuts"]["help"], data["shortcuts"]["complete"], data["owner"]), ("F1", "F9", False))
         self.assertEqual(data["authorized_by"], self.supervisor.display_name)
-        self.assertFalse(data["payment_methods"][1]["enabled"])           # M-PESA is Phase 4: not faked
+        self.assertTrue(data["payment_methods"][1]["enabled"])            # M-PESA: Phase 4A
+        self.assertFalse(data["payment_methods"][2]["enabled"])           # card: next update, not faked
 
     def test_a_bad_saved_shortcut_setting_never_locks_the_till(self):
         ShopSettings.objects.filter(pk=1).update(pos_shortcuts={"print": "F2"})   # clashes with search
