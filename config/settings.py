@@ -60,6 +60,7 @@ INSTALLED_APPS = [
     "tills",
     "catalog",
     "inventory",
+    "sales",
 ]
 
 MIDDLEWARE = [
@@ -142,6 +143,8 @@ LOCKOUT_MAX_ATTEMPTS = env_int("LOCKOUT_MAX_ATTEMPTS", 5)
 LOCKOUT_MINUTES = env_int("LOCKOUT_MINUTES", 5)
 BIOMETRIC_ENABLED = env_bool("BIOMETRIC_ENABLED", False)
 DESKTOP_SHELL_SECRET = env("DESKTOP_SHELL_SECRET", "")
+# Discounts up to this share of a line need no approval for staff allowed to give discounts.
+ORDINARY_DISCOUNT_MAX_PERCENT = env_int("ORDINARY_DISCOUNT_MAX_PERCENT", 5)
 
 # --- Locale ---------------------------------------------------------------
 LANGUAGE_CODE = "en-ke"

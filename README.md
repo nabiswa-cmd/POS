@@ -41,7 +41,7 @@ copy .env.example .env            then edit .env (set DJANGO_SECRET_KEY and DB_P
 # create the database and user in PostgreSQL once:
 #   CREATE USER winespos WITH PASSWORD '...';  CREATE DATABASE winespos OWNER winespos;
 
-python manage.py makemigrations accounts core tills catalog inventory
+python manage.py makemigrations accounts core tills catalog inventory sales
 python manage.py migrate
 python manage.py harden_db
 python manage.py setup_shop --shop-name "Your Shop" --manager-username owner
@@ -167,3 +167,86 @@ DB_ENGINE=sqlite DJANGO_DEBUG=true python manage.py test   # full suite: account
   to a label printer and silent printing arrive with printer configuration in Phase 6.
 - Not in Phase 2 yet: stock-taking sessions, returns to supplier as a document, stock-value report page (the figure shows on the Stock screen),
   fingerprint approval on these screens, and selling (Phase 3 uses `post_movement` with type `SALE`, one product at a time in ascending id order).
+
+
+---
+
+# Phase 3, first half: sales engine (cart, approvals, hold, cash checkout, receipt data)
+
+The second half (the cashier screen with F-key shortcuts and approval dialog, receipt printing, till screens) is not built yet.
+Everything the screen needs is already available as JSON under `/api/sales/`.
+
+## What is new
+
+| Area | Where |
+|---|---|
+| Sale, SaleItem, Payment (cash only for now) | `sales/models.py` |
+| Money, discount-limit, change and cost-allocation maths (framework-free) | `sales/rules.py` |
+| Cart: scan or pick, merge repeat scans, pack sales, quantity, discount, price change, customer name, hold, resume, void | `sales/services.py` |
+| Cash checkout: stock, cost basis, payment and sale number in one transaction | `sales.services.checkout_cash` |
+| Receipt data and 58 mm / 80 mm text layout, duplicates clearly marked | `sales/receipt.py`, `sales/receipt_text.py` |
+| JSON endpoints for the sales screen | `sales/views.py`, `sales/urls.py` |
+| Completed sales cannot be changed (model guard and PostgreSQL trigger) | `sales/models.py`, `core/db_hardening.py` |
+
+## Upgrading from Phase 2
+
+```
+python manage.py makemigrations sales
+python manage.py migrate
+python manage.py harden_db          # adds the completed-sale protection
+```
+
+No new packages. New optional setting `ORDINARY_DISCOUNT_MAX_PERCENT` (default 5, see `.env.example`).
+
+## Endpoints (all need a signed-in cashier with an open shift)
+
+| Call | Purpose |
+|---|---|
+| `GET  /api/sales/cart/` | The sale in progress (lines, subtotal, discount, total). Each line carries `ref`, the text an approval is bound to |
+| `POST /api/sales/cart/add/` `{code}` or `{product_id, packaging_id}`, `quantity` | Scan or pick |
+| `POST /api/sales/cart/quantity/` `{item_id, quantity, approval_token?}` | Raise freely; lowering needs approval |
+| `POST /api/sales/cart/remove/` `{item_id, approval_token, reason?}` | Needs supervisor/manager approval (`remove_item`) |
+| `POST /api/sales/cart/discount/` `{item_id, amount or percent, approval_token?}` | Within the ordinary limit for staff allowed to discount; otherwise `exceptional_discount` approval |
+| `POST /api/sales/cart/price/` `{item_id, price, approval_token?}` | `price_change` approval |
+| `POST /api/sales/cart/customer/` `{name}` | Typed customer name (M-PESA names come in Phase 4) |
+| `POST /api/sales/cart/hold/` `{label?}`, `GET /api/sales/held/`, `POST /api/sales/held/resume/` `{sale_id}` | Hold and retrieve |
+| `POST /api/sales/cart/void/` `{approval_token, reason?}` | Cancel before payment (`void_sale` approval); the record is kept |
+| `POST /api/sales/checkout/cash/` `{tendered}` | Complete as a cash sale |
+| `GET  /api/sales/receipt/<id>/` | Original receipt, once, for the cashier who made the sale |
+| `POST /api/sales/receipt/<id>/reprint/` | Marked duplicate; needs `receipts.reprint`; audited |
+| `GET  /api/sales/shift/summary/` | Running shift figures (F11) |
+
+Approval flow for the screen: call `POST /api/approvals/request/` with `object_ref` set to the line's `ref`
+(or the cart's `ref` for a void), let the supervisor type their own PIN, then send the returned `token` with the action.
+
+## Rules enforced on the server
+
+- A cashier cannot remove or reduce a scanned item without a single-use approval from someone else, bound to that exact line.
+  Nobody approves their own action, and the approver needs the matching `approve.*` permission.
+- Stock is checked when scanning (so the cashier is warned early) and again, under the row lock, at checkout. If two tills hold
+  the last bottle, the first checkout wins and the second is refused with nothing saved.
+- The sale number is taken inside the checkout transaction, so completed sales have no gaps (T1-261107-0042: till, date, running number).
+- Each line keeps the price charged, the catalogue price, its discount, who approved either, and the cost of the stock sold.
+  Later profit reports use that cost, never today's buying cost.
+- Completed and voided sales, their lines and payments cannot be edited or deleted. Only the print counters on the sale can move.
+- The receipt prints the cashier and, separately, "Authorized by" (the supervisor who authorized the session). Approvers of
+  discounts and price changes are listed under the totals. Reprints are headed `*** DUPLICATE RECEIPT ***`.
+- Original receipt: once, by the selling cashier. If the printer jams, a supervisor reprints it (marked duplicate).
+
+## Tests
+
+```
+python3 -m unittest discover -s tests_pure -t .           # 58 framework-free tests, including Phase 3 maths and receipt layout
+DB_ENGINE=sqlite DJANGO_DEBUG=true python manage.py test sales
+```
+
+## Known limits of this half
+
+- Written without a Django install, like Phases 1 and 2: the framework-free tests pass, but `sales/tests.py` and the migration
+  have not been run. Run `makemigrations sales` and the sales tests first and send me any failures.
+- A manager acting as cashier still needs a second person to approve restricted actions (the approval rules forbid self-approval).
+  Say if you want the shop owner exempt, as in stock adjustments.
+- Payments are cash only. M-PESA, card, bank transfer, split payments and refunds are Phase 4.
+- Not built yet: the sales screen and shortcuts, receipt printing to a thermal printer, till closing and cash-up (Phase 5).
+- Kenyan tax: wines and spirits carry VAT, and KRA eTIMS receipts may be required for your business. This is not in the master
+  prompt and is not built; confirm with your accountant before go-live.
