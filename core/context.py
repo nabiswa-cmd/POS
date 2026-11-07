@@ -4,6 +4,8 @@ NAV = [
     ("Products", "/manage/products/", ("products.view",)),
     ("Stock", "/manage/stock/", ("stock.view",)),
     ("Receiving", "/manage/receiving/", ("stock.receive", "stock.approve_receiving")),
+    ("Sales", "/manage/sales/", ("sales.view_all",)),
+    ("Tills", "/manage/tills/", ("shifts.view_all",)),
     ("Shelves", "/manage/shelves/", ("shelves.manage", "products.view")),
     ("Labels", "/manage/labels/", ("labels.print",)),
     ("Suppliers", "/manage/suppliers/", ("suppliers.manage",)),

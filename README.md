@@ -173,8 +173,8 @@ DB_ENGINE=sqlite DJANGO_DEBUG=true python manage.py test   # full suite: account
 
 # Phase 3, first half: sales engine (cart, approvals, hold, cash checkout, receipt data)
 
-The second half (the cashier screen with F-key shortcuts and approval dialog, receipt printing, till screens) is not built yet.
-Everything the screen needs is already available as JSON under `/api/sales/`.
+The second half (cashier screen, shortcuts, approval box, receipt printing, till screens) is described in the next section.
+Everything the screen needs is available as JSON under `/api/sales/`.
 
 ## What is new
 
@@ -247,6 +247,76 @@ DB_ENGINE=sqlite DJANGO_DEBUG=true python manage.py test sales
 - A manager acting as cashier still needs a second person to approve restricted actions (the approval rules forbid self-approval).
   Say if you want the shop owner exempt, as in stock adjustments.
 - Payments are cash only. M-PESA, card, bank transfer, split payments and refunds are Phase 4.
-- Not built yet: the sales screen and shortcuts, receipt printing to a thermal printer, till closing and cash-up (Phase 5).
+- Not built yet: till closing and cash-up (Phase 5).
 - Kenyan tax: wines and spirits carry VAT, and KRA eTIMS receipts may be required for your business. This is not in the master
   prompt and is not built; confirm with your accountant before go-live.
+
+---
+
+# Phase 3, second half: cashier screen, shortcuts, printing, till screens
+
+## Upgrading from the first half
+
+```
+python manage.py migrate            # one new field: Shop settings > POS shortcuts
+python manage.py collectstatic --noinput
+```
+
+No new packages. Log in at `/app/pos/` as before; a cashier with an open shift now lands on the sales screen (`/pos/sell/`).
+
+## The sales screen
+
+| Key (default) | Action |
+|---|---|
+| Scanner / type + Enter | Add the item. `3*code` sells 3. An unknown code keeps its text, beeps and says so |
+| F1 | Shortcut guide |
+| F2 | Search by name (Up/Down, Enter adds one) |
+| F3 | Back to the scan box |
+| F4 | Quantity of the selected line (lowering it asks for a supervisor) |
+| F5 / F6 | Hold the sale / retrieve a held sale (held sales are per till) |
+| F7 | Discount on the selected line (percent or amount) |
+| F8 or F9 | Payment box: type the cash received, see the change, **F9 or Enter completes** |
+| F10 | Print the receipt |
+| F11 | Shift summary (float, sales, cash expected in the drawer) |
+| F12 | Supervisor menu: remove item, change price, exceptional discount, void sale (1 to 4) |
+| Delete | Remove the selected line (needs a supervisor) |
+| Alt+C | Customer name for the receipt |
+| Up / Down | Move between lines. Esc closes a box |
+
+- **Supervisor approval.** When the server says an action needs approval, the screen opens a box where the supervisor or manager types
+  their own username, PIN or password and a reason. The cashier never sees the credentials. The token is single-use and tied to that exact
+  line, and the same request is sent again. Esc or Cancel changes nothing, and it never skips the approval.
+- **Printing.** The server lays the receipt out as plain text (32 characters for 58 mm paper, 48 for 80 mm). The screen sends it to a hidden
+  frame and prints it, so any Windows printer works. The first print is the original and happens once, automatically after the sale (the
+  tick box in the "Sale complete" box turns this off for this PC). Any later copy needs a supervisor or manager and is headed
+  `*** DUPLICATE RECEIPT ***`.
+- **Manager screens.** `Sales` lists and searches completed and voided sales, shows each sale and lets a supervisor or manager reprint a duplicate.
+  `Tills` shows who is on each till, who authorized the session, the opening float, the sales so far and the held sales.
+
+## Changing shortcuts
+
+Admin > Shop settings > "POS shortcuts", for example `{"hold": "Alt+H", "discount": "Alt+D"}`. Two actions cannot share a key, plain letters
+and digits are refused (they are used when scanning), and keys that Windows or the browser keep (Ctrl+W, Alt+F4 and similar) are refused.
+Saving an invalid change is blocked, and an invalid value already stored falls back to the defaults, so the till never locks up.
+
+## Tests
+
+```
+python3 -m unittest discover -s tests_pure -t .
+DB_ENGINE=sqlite DJANGO_DEBUG=true python manage.py test sales
+```
+
+`sales/tests.py` (first half, 45 tests, now run and passing) and `sales/tests_screen.py` (17 tests: pages, approval hand-shake, receipts as
+the screen uses them, manager pages, and a check that every element and endpoint `pos.js` uses exists). The screen was also driven in a real
+browser: scan, unknown code, wrong PIN, approval, Esc on the approval box, hold and retrieve, search, discount, payment, receipt, reprint refusal,
+shift summary and void.
+
+## Known limits
+
+- Cash only (Phase 4 adds M-PESA, card and refunds). The receipt prints through the browser's print dialog; silent printing to a thermal
+  printer on the Windows desktop shell is a Phase 6 setting (Chrome/Edge `--kiosk-printing`).
+- If the printer jams on the original, a supervisor reprints it (marked duplicate). This follows the "original once" rule from the first half.
+- A manager acting as cashier still needs a second person to approve restricted actions.
+- Held sales do not reserve stock; stock is checked again when the sale is completed.
+- F5 (refresh), F11 (full screen) and F12 (developer tools) are claimed by the page; some browsers still keep F11/F12. The Windows
+  desktop shell does not have this problem.

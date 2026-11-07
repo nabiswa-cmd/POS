@@ -36,6 +36,15 @@ class NotAllowed(SaleError):
     """The user lacks a permission (shown as 403 by the views)."""
 
 
+class ApprovalNeeded(SaleError):
+    """The action needs a supervisor/manager approval and none was sent. The sales screen reads
+    `action` and `object_ref`, asks the supervisor to approve, and sends the same request again with the token."""
+
+    def __init__(self, message, action, object_ref):
+        super().__init__(message)
+        self.action, self.object_ref = action, object_ref
+
+
 # --- helpers ------------------------------------------------------------------------------------
 
 def _need(user, code, message=None):
@@ -70,6 +79,8 @@ def _approve(user, action, object_ref, token):
     try:
         return auth_services.require_approval(action, token, requester=user, object_ref=object_ref)
     except ApprovalError as exc:
+        if not token:
+            raise ApprovalNeeded(str(exc), action, object_ref) from exc
         raise SaleError(str(exc)) from exc
 
 
@@ -455,6 +466,7 @@ def shift_summary(shift):
     """A cashier's running view of their shift. Cash-up and closing arrive in Phase 5."""
     done = Sale.objects.filter(shift=shift, status=Sale.COMPLETED)
     cash = Payment.objects.filter(sale__in=done, method=Payment.CASH).aggregate(t=Sum("amount"))["t"] or Decimal("0.00")
-    return {"sales_count": done.count(), "sales_total": str(done.aggregate(t=Sum("total"))["t"] or Decimal("0.00")),
-            "cash_sales": str(cash), "opening_float": str(shift.opening_float),
-            "cash_in_drawer_expected": str(shift.opening_float + cash)}
+    sales_total = done.aggregate(t=Sum("total"))["t"] or Decimal("0.00")
+    return {"sales_count": done.count(), "sales_total": str(rules.money(sales_total)),
+            "cash_sales": str(rules.money(cash)), "opening_float": str(rules.money(shift.opening_float)),
+            "cash_in_drawer_expected": str(rules.money(shift.opening_float + cash))}

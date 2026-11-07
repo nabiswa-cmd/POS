@@ -148,6 +148,7 @@
     $("b-logout-pos").addEventListener("click", logout);
     function needShift() { $("shift-note").textContent = "No open shift on this till yet."; show("f-shift"); }
     function ready(user, till, shift) {
+      location.replace("/pos/sell/");   // the sales screen (Phase 3, second half)
       $("r-till").textContent = till; $("r-who").textContent = "Cashier: " + user.name + " | Float: " + shift.opening_float;
       show("s-ready");
     }

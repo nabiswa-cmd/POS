@@ -1,5 +1,8 @@
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
+
+from . import shortcuts
 
 
 class SingletonModel(models.Model):
@@ -52,8 +55,19 @@ class ShopSettings(SingletonModel):
         ],
     )
 
+    pos_shortcuts = models.JSONField(
+        default=dict, blank=True,
+        help_text='Optional keyboard shortcut changes for the sales screen, e.g. {"hold": "Alt+H", "discount": "Alt+D"}. '
+                  "Leave {} for the defaults. Actions: " + ", ".join(shortcuts.DEFAULTS) + ".")
+
     class Meta:
         verbose_name_plural = "Shop settings"
+
+    def clean(self):
+        super().clean()
+        _merged, errors = shortcuts.merge(self.pos_shortcuts)
+        if errors:
+            raise ValidationError({"pos_shortcuts": errors})
 
     def __str__(self):
         return self.shop_name

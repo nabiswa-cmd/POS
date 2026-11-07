@@ -1032,7 +1032,7 @@ Work in phases and maintain a working project after each phase.
 - Cart.
 - Keyboard shortcuts.
 - Supervisor authorization.
-- Till management.
+- Till management. 
 - Receipt printing.
 
 ## Phase 4: Payments and refunds
@@ -1132,3 +1132,8 @@ Before writing large amounts of code, first present:
 Wait for approval of the architecture before proceeding to large-scale implementation.
 
 The final goal is a professional, dependable Kenyan wines and spirits POS that can be installed on a shop desktop, operated with a keyboard and barcode scanner, used by different staff according to their permissions, and managed by the owner without needing a complicated multi-branch ERP system.
+
+
+
+
+python -m desktop.launcher --mode pos --allow-quit

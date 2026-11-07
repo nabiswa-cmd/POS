@@ -12,6 +12,7 @@ urlpatterns = [
     path("api/", include("accounts.urls")),
     path("api/pos/", include("tills.urls")),
     path("api/sales/", include("sales.urls")),
+    path("", include("sales.page_urls")),
     path("", include("catalog.urls")),
     path("", include("inventory.urls")),
     # Product images: only for signed-in staff (not a public folder).

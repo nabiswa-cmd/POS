@@ -1,0 +1,177 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ area_title }} | {{ shop_name }}</title>
+<link rel="stylesheet" href="{% static 'core/theme.css' %}">
+<script src="{% static 'core/theme.js' %}"></script>
+</head>
+<body class="auth">
+<button type="button" class="theme-toggle floating" data-theme-toggle title="Switch light / dark mode"><svg class="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg><svg class="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/></svg><span class="t-label">Dark</span></button>
+<main class="auth">
+  <h1>{{ area_title }}</h1>
+  <p class="shop">{{ shop_name }}</p>
+
+  <!-- POS step 1: supervisor authorization -->
+  <form id="f-authorize" hidden autocomplete="off">
+    <p class="step">Step 1 of 3: Supervisor authorization</p>
+    <label for="a-till">Till</label>
+    <select id="a-till"></select>
+    <label for="a-user">Supervisor / manager username</label>
+    <input id="a-user" autocomplete="off">
+    <label for="a-secret">Password or PIN</label>
+    <input id="a-secret" type="password" autocomplete="off">
+    <button type="submit">Authorize POS</button>
+    <div class="msg" id="m-authorize" role="alert"></div>
+    <p class="hint">The supervisor signs in only to authorize. The cashier signs in next with their own login.</p>
+  </form>
+
+  <!-- POS step 2: cashier login -->
+  <form id="f-cashier" hidden autocomplete="off">
+    <p class="step">Step 2 of 3: Cashier login</p>
+    <p class="hint" id="authorized-note"></p>
+    <label for="c-user">Cashier username</label>
+    <input id="c-user" autocomplete="off">
+    <label for="c-secret">Password or PIN</label>
+    <input id="c-secret" type="password" autocomplete="off">
+    <button type="submit">Log in</button>
+    <div class="msg" id="m-cashier" role="alert"></div>
+  </form>
+
+  <!-- POS step 3: shift -->
+  <form id="f-shift" hidden autocomplete="off">
+    <p class="step">Step 3 of 3: Open your shift</p>
+    <p class="hint" id="shift-note"></p>
+    <label for="s-float">Opening cash float (KES)</label>
+    <input id="s-float" inputmode="decimal" autocomplete="off">
+    <button type="submit">Open shift</button>
+    <div class="msg" id="m-shift" role="alert"></div>
+  </form>
+
+  <!-- POS ready -->
+  <section id="s-ready" hidden>
+    <p class="step">Till <span id="r-till"></span> is ready</p>
+    <p id="r-who"></p>
+    <p class="hint">The sales screen (scanning, cart, shortcuts, receipts) is built in Phase 3.</p>
+    <button class="ghost" id="b-logout-pos" type="button">Log out</button>
+  </section>
+
+  <!-- Manager / receiving login -->
+  <form id="f-login" hidden autocomplete="off">
+    <label for="l-user">Username</label>
+    <input id="l-user" autocomplete="off">
+    <label for="l-secret">Password or PIN</label>
+    <input id="l-secret" type="password" autocomplete="off">
+    <button type="submit">Log in</button>
+    <div class="msg" id="m-login" role="alert"></div>
+  </form>
+
+  <section id="s-home" hidden>
+    <p class="step" id="h-who"></p>
+    <p class="hint" id="h-note"></p>
+    <ul id="h-perms"></ul>
+    <button id="b-admin" type="button" hidden>Open management screens</button>
+    <button class="ghost" id="b-logout" type="button">Log out</button>
+  </section>
+</main>
+
+<script>
+(function () {
+  var MODE = "{{ mode }}";
+  var $ = function (id) { return document.getElementById(id); };
+  var show = function (id) {
+    ["f-authorize","f-cashier","f-shift","s-ready","f-login","s-home"].forEach(function (x) { $(x).hidden = (x !== id); });
+    var first = $(id).querySelector("input:not([type=hidden]), select");
+    if (first) first.focus();
+  };
+  var csrf = function () {
+    var m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : "";
+  };
+  function api(method, url, body) {
+    var opts = { method: method, credentials: "same-origin", headers: { "X-CSRFToken": csrf() } };
+    if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+    return fetch(url, opts).then(function (r) {
+      return r.json().catch(function () { return { ok: false, error: "Unexpected server response." }; });
+    }).catch(function () { return { ok: false, error: "Cannot reach the shop server." }; });
+  }
+  function say(id, text, ok) { var el = $(id); el.textContent = text || ""; el.className = "msg" + (ok ? " ok" : ""); }
+  function submit(formId, msgId, handler) {
+    $(formId).addEventListener("submit", function (e) {
+      e.preventDefault(); say(msgId, "");
+      handler().then(function (res) { if (!res.ok) say(msgId, res.error || "Something went wrong."); });
+    });
+  }
+  function logout() { api("POST", "/api/auth/logout/", {}).then(function () { location.reload(); }); }
+
+  if (MODE === "pos") {
+    var tillNo = null;
+    api("GET", "/api/pos/state/").then(function (s) {
+      var sel = $("a-till");
+      (s.tills || []).forEach(function (t) {
+        var o = document.createElement("option"); o.value = t.number; o.textContent = t.name; sel.appendChild(o);
+      });
+      return api("GET", "/api/auth/me/");
+    }).then(function (me) {
+      if (me.user) { return api("GET", "/api/pos/shift/").then(function (s) {
+        if (s.ok) { tillNo = s.till; return s.shift ? ready(me.user, s.till, s.shift) : needShift(); }
+        show("f-authorize");
+      }); }
+      show("f-authorize");
+    });
+    submit("f-authorize", "m-authorize", function () {
+      return api("POST", "/api/pos/authorize/", { till: $("a-till").value, username: $("a-user").value, secret: $("a-secret").value })
+        .then(function (r) {
+          $("a-secret").value = ""; $("a-user").value = "";
+          if (r.ok) { tillNo = r.till; $("authorized-note").textContent = "Authorized by " + r.authorized_by + " for till " + r.till + "."; show("f-cashier"); }
+          return r;
+        });
+    });
+    submit("f-cashier", "m-cashier", function () {
+      return api("POST", "/api/pos/cashier-login/", { username: $("c-user").value, secret: $("c-secret").value, till: tillNo })
+        .then(function (r) {
+          $("c-secret").value = "";
+          if (!r.ok) return r;
+          tillNo = r.till;
+          if (r.till_busy_with) { say("m-cashier", "This till already has an open shift for " + r.till_busy_with + "."); return { ok: true }; }
+          r.shift ? ready(r.user, r.till, r.shift) : needShift();
+          return r;
+        });
+    });
+    submit("f-shift", "m-shift", function () {
+      return api("POST", "/api/pos/shift/open/", { opening_float: $("s-float").value }).then(function (r) {
+        if (r.ok) { api("GET", "/api/auth/me/").then(function (me) { ready(me.user, tillNo, r.shift); }); }
+        return r;
+      });
+    });
+    $("b-logout-pos").addEventListener("click", logout);
+    function needShift() { $("shift-note").textContent = "No open shift on this till yet."; show("f-shift"); }
+    function ready(user, till, shift) {
+      $("r-till").textContent = till; $("r-who").textContent = "Cashier: " + user.name + " | Float: " + shift.opening_float;
+      show("s-ready");
+    }
+  } else {
+    var NEEDS = { manager: "Manager area", receiving: "Stock receiving" };
+    function home(user) {
+      if (MODE === "manager") { location.replace("/manage/"); return; }
+      if (MODE === "receiving") { location.replace("/manage/receiving/"); return; }
+      $("h-who").textContent = "Signed in: " + user.name + (user.role ? " (" + user.role + ")" : "");
+      $("h-note").textContent = NEEDS[MODE] + ". The full screens arrive in later phases. Your access:";
+      var ul = $("h-perms"); ul.innerHTML = "";
+      user.permissions.forEach(function (p) { var li = document.createElement("li"); li.textContent = p; ul.appendChild(li); });
+      $("b-admin").hidden = !(user.is_manager && MODE === "manager");
+      show("s-home");
+    }
+    api("GET", "/api/auth/me/").then(function (me) { if (me.user) home(me.user); else show("f-login"); });
+    submit("f-login", "m-login", function () {
+      return api("POST", "/api/auth/login/", { area: MODE, username: $("l-user").value, secret: $("l-secret").value })
+        .then(function (r) { $("l-secret").value = ""; if (r.ok) home(r.user); return r; });
+    });
+    $("b-admin").addEventListener("click", function () { location.href = "/admin/"; });
+    $("b-logout").addEventListener("click", logout);
+  }
+})();
+</script>
+</body>
+</html>

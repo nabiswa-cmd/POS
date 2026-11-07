@@ -20,6 +20,12 @@ def _guard(view):
             return view(request, *args, shift=shift, **kwargs)
         except services.NotAllowed as exc:
             return bad(str(exc), 403)
+        except services.ApprovalNeeded as exc:
+            # Same 400 as before; the screen looks for "approval_required" to open the supervisor box.
+            from accounts.permissions import RESTRICTED_ACTIONS
+            return JsonResponse({"ok": False, "error": str(exc), "approval_required": {
+                "action": exc.action, "object_ref": exc.object_ref,
+                "label": RESTRICTED_ACTIONS[exc.action]["label"]}}, status=400)
         except services.SaleError as exc:
             return bad(str(exc), 400)
 

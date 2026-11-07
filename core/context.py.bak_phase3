@@ -1,0 +1,20 @@
+"""Template context for the manager/receiving workspace: navigation filtered by permission."""
+
+NAV = [
+    ("Products", "/manage/products/", ("products.view",)),
+    ("Stock", "/manage/stock/", ("stock.view",)),
+    ("Receiving", "/manage/receiving/", ("stock.receive", "stock.approve_receiving")),
+    ("Shelves", "/manage/shelves/", ("shelves.manage", "products.view")),
+    ("Labels", "/manage/labels/", ("labels.print",)),
+    ("Suppliers", "/manage/suppliers/", ("suppliers.manage",)),
+    ("Categories & brands", "/manage/lists/", ("products.manage",)),
+]
+
+
+def workspace(request):
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        return {}
+    perms = user.permission_codes() if user.is_active else set()
+    nav = [{"label": label, "url": url, "on": request.path.startswith(url)} for label, url, needed in NAV if any(p in perms for p in needed)]
+    return {"nav": nav, "perms": perms, "staff_name": user.display_name}

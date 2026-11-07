@@ -1,4 +1,6 @@
 """Catalogue business rules. Views call these; they enforce permissions and write the audit trail."""
+from decimal import Decimal
+
 from django.db import IntegrityError, transaction
 
 from core import audit
@@ -21,7 +23,10 @@ def can_see_cost(user):
 
 
 def _snapshot(product, fields):
-    return {f: (str(getattr(product, f)) if getattr(product, f) is not None else None) for f in fields}
+    """Field values as fixed-decimal text, so 3500 and 3500.00 compare equal and audit entries read the same."""
+    places = {f: (4 if f in COST_FIELDS else 2) for f in fields}
+    return {f: (f"{Decimal(getattr(product, f)):.{places[f]}f}" if getattr(product, f) is not None else None)
+            for f in fields}
 
 
 def next_sku():

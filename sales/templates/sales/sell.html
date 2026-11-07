@@ -1,0 +1,157 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Till {{ till.number }} | {{ shop_name }}</title>
+<link rel="stylesheet" href="{% static 'core/theme.css' %}">
+<link rel="stylesheet" href="{% static 'sales/pos.css' %}">
+<script src="{% static 'core/theme.js' %}"></script>
+</head>
+<body class="pos">
+<header>
+  <span class="brand">{{ shop_name }}</span>
+  <span class="meta">Till <b>{{ till.number }}</b></span>
+  <span class="meta">Cashier: <b>{{ cashier }}</b></span>
+  <span class="meta">Authorized by: <b>{{ authorized_by }}</b></span>
+  <span class="who"><span id="clock" class="muted"></span>
+    <button type="button" class="theme-toggle" data-theme-toggle title="Switch light / dark mode"><svg class="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg><svg class="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/></svg><span class="t-label">Dark</span></button>
+    <button type="button" class="ghost" id="b-logout" style="margin-left:8px;padding:8px 12px">Log out</button></span>
+</header>
+
+<div class="layout">
+  <section class="left" aria-label="Current sale">
+    <div class="scanrow">
+      <input id="scan" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Scan or type a product code"
+             placeholder="Scan barcode or type code, then Enter  (3*code sells 3)">
+      <button type="button" class="ghost search-btn" data-act="search">Search by name</button>
+    </div>
+    <div id="last" class="card" style="margin:0" aria-live="polite"><span class="hint">Scan the first item to start a sale.</span></div>
+    <div class="cartwrap">
+      <table id="cart" aria-label="Items in this sale"><thead><tr><th>#</th><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Discount</th><th class="num">Total</th></tr></thead><tbody id="lines"></tbody></table>
+      <div id="empty">Nothing scanned yet.</div>
+    </div>
+  </section>
+
+  <aside class="right">
+    <div class="card totals" style="margin:0">
+      <div class="ln"><span>Items</span><b id="t-items">0</b></div>
+      <div class="ln"><span>Subtotal</span><b id="t-sub">0.00</b></div>
+      <div class="ln"><span>Discount</span><b id="t-disc">0.00</b></div>
+      <div class="grand"><div class="lbl">Total payable (KES)</div><div class="num" id="t-total">0.00</div></div>
+    </div>
+    <div class="card side" style="margin:0"><span class="k">Customer <kbd>{{ keymap.customer }}</kbd></span><b id="cust">-</b></div>
+    <div class="card side" style="margin:0"><span class="k">Held sales <kbd>{{ keymap.retrieve }}</kbd></span><b id="held">0</b></div>
+    <div class="keys">
+      <button type="button" class="primary" data-act="complete">Complete sale <kbd>{{ keymap.complete }}</kbd></button>
+      <button type="button" class="ghost" data-act="hold">Hold <kbd>{{ keymap.hold }}</kbd></button>
+      <button type="button" class="ghost" data-act="retrieve">Retrieve <kbd>{{ keymap.retrieve }}</kbd></button>
+      <button type="button" class="ghost" data-act="discount">Discount <kbd>{{ keymap.discount }}</kbd></button>
+      <button type="button" class="ghost" data-act="quantity">Quantity <kbd>{{ keymap.quantity }}</kbd></button>
+      <button type="button" class="ghost" data-act="shift">Shift <kbd>{{ keymap.shift }}</kbd></button>
+      <button type="button" class="ghost" data-act="supervisor">Supervisor <kbd>{{ keymap.supervisor }}</kbd></button>
+      <button type="button" class="ghost" data-act="print">Print <kbd>{{ keymap.print }}</kbd></button>
+      <button type="button" class="ghost" data-act="help">Help <kbd>{{ keymap.help }}</kbd></button>
+    </div>
+  </aside>
+</div>
+
+<div class="fkeys" aria-hidden="true">{% for key, label in key_labels %}<span><b>{{ key }}</b> {{ label }}</span>{% endfor %}</div>
+<div id="flash" role="alert" hidden></div>
+
+<!-- Help -->
+<dialog id="d-help" tabindex="-1" class="wide" aria-labelledby="h-help"><h3 id="h-help">Keyboard guide</h3>
+  <p class="sub">Everything on this screen works from the keyboard and the scanner.</p>
+  <ul class="keys-list">{% for key, label in key_labels %}<li><span>{{ label }}</span><kbd>{{ key }}</kbd></li>{% endfor %}
+    <li><span>Sell several at once</span><kbd>3*code</kbd></li><li><span>Move between lines</span><kbd>Up / Down</kbd></li>
+    <li><span>Close a box</span><kbd>Esc</kbd></li><li><span>Confirm</span><kbd>Enter</kbd></li></ul>
+  <p class="sub" style="margin-top:14px">Esc only closes a box. It never skips a supervisor approval: removing an item, lowering a quantity, voiding a sale and large discounts are checked by the server.</p>
+</dialog>
+
+<!-- Search -->
+<dialog id="d-search" class="wide" aria-labelledby="h-search"><h3 id="h-search">Search product</h3>
+  <p class="sub">Type part of the name, brand or code. Up / Down to choose, Enter to add one.</p>
+  <input id="q" type="text" autocomplete="off" aria-label="Search text"><div class="err" id="e-search"></div>
+  <table><tbody id="results"></tbody></table>
+</dialog>
+
+<!-- Quantity -->
+<dialog id="d-qty" aria-labelledby="h-qty"><form method="dialog" id="f-qty"><h3 id="h-qty">Change quantity</h3><p class="sub" id="s-qty"></p>
+  <input id="i-qty" inputmode="numeric" autocomplete="off" aria-label="New quantity"><div class="err" id="e-qty"></div>
+  <p class="sub">Lowering a quantity removes scanned items, so a supervisor must approve it.</p>
+  <div class="actions"><button type="submit">Set quantity</button><button type="button" class="ghost" data-close>Cancel</button></div></form></dialog>
+
+<!-- Discount -->
+<dialog id="d-disc" aria-labelledby="h-disc"><form method="dialog" id="f-disc"><h3 id="h-disc">Discount</h3><p class="sub" id="s-disc"></p>
+  <div class="row"><div><label for="i-dmode">Type</label><select id="i-dmode"><option value="PERCENT">Percent of line</option><option value="AMOUNT">Amount (KES)</option></select></div>
+  <div><label for="i-dval">Value</label><input id="i-dval" inputmode="decimal" autocomplete="off"></div></div><div class="err" id="e-disc"></div>
+  <p class="sub">Enter 0 to remove a discount. Discounts above the shop limit need a supervisor.</p>
+  <div class="actions"><button type="submit">Apply</button><button type="button" class="ghost" data-close>Cancel</button></div></form></dialog>
+
+<!-- Price -->
+<dialog id="d-price" aria-labelledby="h-price"><form method="dialog" id="f-price"><h3 id="h-price">Change price</h3><p class="sub" id="s-price"></p>
+  <input id="i-price" inputmode="decimal" autocomplete="off" aria-label="New unit price"><div class="err" id="e-price"></div>
+  <div class="actions"><button type="submit">Set price</button><button type="button" class="ghost" data-close>Cancel</button></div></form></dialog>
+
+<!-- Customer -->
+<dialog id="d-cust" aria-labelledby="h-cust"><form method="dialog" id="f-cust"><h3 id="h-cust">Customer name</h3>
+  <p class="sub">Optional. Printed on the receipt. Leave empty to clear.</p>
+  <input id="i-cust" maxlength="120" autocomplete="off" aria-label="Customer name"><div class="err" id="e-cust"></div>
+  <div class="actions"><button type="submit">Save</button><button type="button" class="ghost" data-close>Cancel</button></div></form></dialog>
+
+<!-- Hold -->
+<dialog id="d-hold" aria-labelledby="h-hold"><form method="dialog" id="f-hold"><h3 id="h-hold">Hold this sale</h3>
+  <p class="sub">Park it while you serve someone else. Retrieve it with <kbd>{{ keymap.retrieve }}</kbd>. Stock is not reserved while a sale is held.</p>
+  <input id="i-hold" maxlength="60" autocomplete="off" placeholder="Label, e.g. the customer's name" aria-label="Label for the held sale"><div class="err" id="e-hold"></div>
+  <div class="actions"><button type="submit">Hold sale</button><button type="button" class="ghost" data-close>Cancel</button></div></form></dialog>
+
+<!-- Retrieve -->
+<dialog id="d-held" tabindex="-1" class="wide" aria-labelledby="h-held"><h3 id="h-held">Held sales</h3>
+  <p class="sub">Up / Down to choose, Enter to bring it back to this till.</p><div class="err" id="e-held"></div>
+  <table><tbody id="held-rows"></tbody></table></dialog>
+
+<!-- Payment -->
+<dialog id="d-pay" aria-labelledby="h-pay"><form method="dialog" id="f-pay"><h3 id="h-pay">Payment</h3>
+  <div class="bigchange"><small>Total payable (KES)</small><span id="p-total">0.00</span></div>
+  <div class="row"><div><label for="i-method">Method</label><select id="i-method"><option value="CASH">Cash</option><option value="MPESA" disabled>M-PESA (next phase)</option></select></div>
+  <div><label for="i-paid">Cash received (KES)</label><input id="i-paid" inputmode="decimal" autocomplete="off"></div></div>
+  <div class="bigchange"><small>Change to give</small><span id="p-change">0.00</span></div><div class="err" id="e-pay"></div>
+  <div class="actions"><button type="submit" id="b-pay">Complete sale (Enter)</button><button type="button" class="ghost" data-close>Back</button></div></form></dialog>
+
+<!-- Done -->
+<dialog id="d-done" aria-labelledby="h-done"><h3 id="h-done">Sale complete</h3><p class="sub" id="s-done"></p>
+  <div class="bigchange"><small>Change to give (KES)</small><span id="done-change">0.00</span></div>
+  <p class="sub" id="done-print"></p>
+  <label style="display:flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0"><input type="checkbox" id="c-auto"> Print the receipt automatically</label>
+  <div class="actions"><button type="button" id="b-new" autofocus>New sale (Enter)</button><button type="button" class="ghost" id="b-print-done">Print receipt ({{ keymap.print }})</button></div></dialog>
+
+<!-- Shift -->
+<dialog id="d-shift" tabindex="-1" class="wide" aria-labelledby="h-shift"><h3 id="h-shift">Shift summary</h3>
+  <p class="sub" id="s-shift">Cashier {{ cashier }} | Till {{ till.number }} | session authorized by {{ authorized_by }}</p><div id="shift-stats"></div>
+  <div class="err" id="e-shift"></div></dialog>
+
+<!-- Supervisor menu -->
+<dialog id="d-super" tabindex="-1" aria-labelledby="h-super"><h3 id="h-super">Supervisor authorization</h3>
+  <p class="sub">Choose what needs approval. The supervisor types their own username and PIN or password; you never see them.</p>
+  <div class="menu">
+    <button type="button" data-sup="remove">1 &nbsp; Remove the selected item</button>
+    <button type="button" data-sup="price">2 &nbsp; Change the price of the selected item</button>
+    <button type="button" data-sup="discount">3 &nbsp; Exceptional discount on the selected item</button>
+    <button type="button" data-sup="void">4 &nbsp; Void the whole sale</button></div>
+  <div class="actions"><button type="button" class="ghost" data-close>Close</button></div></dialog>
+
+<!-- Approval -->
+<dialog id="d-appr" aria-labelledby="h-appr"><form method="dialog" id="f-appr"><h3 id="h-appr">Supervisor approval</h3><p class="sub" id="s-appr"></p>
+  <label for="a-user">Supervisor or manager username</label><input id="a-user" autocomplete="off">
+  <label for="a-secret">Password or PIN</label><input id="a-secret" type="password" autocomplete="off">
+  <label for="a-reason">Reason</label><input id="a-reason" autocomplete="off" list="reasons">
+  <datalist id="reasons"><option value="Customer changed their mind"><option value="Scanned by mistake"><option value="Wrong quantity"><option value="Damaged bottle"><option value="Regular customer discount"><option value="Price correction"></datalist>
+  <div class="err" id="e-appr"></div>
+  <div class="actions"><button type="submit">Approve</button><button type="button" class="ghost" data-close>Cancel</button></div></form></dialog>
+
+{{ keymap|json_script:"keymap" }}
+{{ caps|json_script:"caps" }}
+<script src="{% static 'sales/print.js' %}"></script>
+<script src="{% static 'sales/pos.js' %}"></script>
+</body>
+</html>

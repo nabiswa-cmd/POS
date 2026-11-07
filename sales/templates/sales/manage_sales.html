@@ -1,0 +1,6 @@
+{% extends "core/base.html" %}{% block title %}Sales{% endblock %}
+{% block content %}<h1>Sales</h1><p class="sub">Completed and voided sales, newest first. They can never be edited or deleted.</p>
+<form method="get" class="row" style="margin-bottom:14px"><div><label for="q">Receipt number or customer</label><input id="q" name="q" value="{{ q }}" data-autofocus></div><div style="flex:0 0 auto"><button type="submit">Search</button></div></form>
+<table><tr><th>Receipt</th><th>Date and time</th><th>Till</th><th>Cashier</th><th>Customer</th><th>Status</th><th class="num">Discount</th><th class="num">Total</th></tr>
+{% for s in sales %}<tr><td><a href="{% url 'manage-sale-detail' s.pk %}"><b>{{ s.number|default:"(voided)" }}</b></a></td><td>{{ s.completed_at|default:s.voided_at|date:"d M Y H:i" }}</td><td>{{ s.till.number }}</td><td>{{ s.cashier.display_name }}</td><td>{{ s.customer_name }}</td><td>{% if s.status == "VOIDED" %}<span class="pill bad">voided</span>{% else %}<span class="pill ok">completed</span>{% endif %}</td><td class="num">{{ s.discount_total }}</td><td class="num">{{ s.total }}</td></tr>
+{% empty %}<tr><td colspan="8" class="muted">No sales yet.</td></tr>{% endfor %}</table>{% endblock %}

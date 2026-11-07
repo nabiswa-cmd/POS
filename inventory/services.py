@@ -136,6 +136,10 @@ def adjust_stock(*, product_id, movement_type, quantity, user, reason, approval_
 
 # --- Receiving ----------------------------------------------------------------------------------
 
+def _fresh(receiving):
+    return Receiving.objects.get(pk=receiving.pk)
+
+
 def new_receiving(user, **fields):
     if not user.can("stock.receive"):
         raise StockError("You are not allowed to receive stock.")
@@ -146,7 +150,7 @@ def new_receiving(user, **fields):
 def add_receiving_item(receiving, user, *, product, packaging, qty_good, qty_damaged, qty_missing, cost_per_pack):
     if not user.can("stock.receive"):
         raise StockError("You are not allowed to receive stock.")
-    if not receiving.editable:
+    if not _fresh(receiving).editable:   # the caller's copy may be stale: re-read the status from the database
         raise StockError("This delivery is already submitted and can no longer be changed.")
     if packaging is not None and packaging.product_id != product.pk:
         raise StockError("That pack size belongs to a different product.")
@@ -163,7 +167,7 @@ def add_receiving_item(receiving, user, *, product, packaging, qty_good, qty_dam
 def remove_receiving_item(receiving, item, user):
     if not user.can("stock.receive"):
         raise StockError("You are not allowed to receive stock.")
-    if not receiving.editable or item.receiving_id != receiving.pk:
+    if not _fresh(receiving).editable or item.receiving_id != receiving.pk:
         raise StockError("This delivery can no longer be changed.")
     item.delete()
 
