@@ -9,6 +9,9 @@ NAV = [
     ("Tills & sales", "/manage/tills/", ("shifts.view_all", "sales.view_all")),
     ("Reconciliation", "/manage/reconciliation/", ("shifts.view_all", "payments.reconcile")),
     ("Refunds", "/manage/refunds/", ("shifts.view_all", "approve.refund")),
+    ("Cash-ups", "/manage/cashups/", ("shifts.view_all",)),
+    ("Expenses", "/manage/expenses/", ("expenses.manage",)),
+    ("Profit & reports", "/manage/reports/", ("reports.financial.view",)),
     ("Suppliers", "/manage/suppliers/", ("suppliers.manage",)),
     ("Categories & brands", "/manage/lists/", ("products.manage",)),
 ]

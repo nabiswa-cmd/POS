@@ -1,5 +1,5 @@
 {% extends "core/base.html" %}{% block title %}Tills{% endblock %}
-{% block content %}<h1>Tills</h1><p class="sub">Who is on each till right now. Closing a shift and cash-up arrive in Phase 5.</p>
+{% block content %}<h1>Tills</h1><p class="sub">Who is on each till right now. Closing a shift and counting the drawer is under Cash-ups.</p>
 <table><tr><th>Till</th><th>Status</th><th>Cashier</th><th>Session authorized by</th><th>Open since</th><th class="num">Opening float</th><th class="num">Sales</th><th class="num">Sales total</th><th class="num">Held</th></tr>
 {% for r in rows %}<tr><td><b>{{ r.till.name }}</b>{% if not r.till.active %} <span class="pill bad">inactive</span>{% endif %}</td>
 {% if r.shift %}<td><span class="pill ok">open</span></td><td>{{ r.shift.cashier.display_name }}</td><td>{{ r.shift.authorized_by.display_name }}</td><td>{{ r.shift.opened_at|date:"d M H:i" }}</td><td class="num">{{ r.shift.opening_float }}</td><td class="num">{{ r.sales_count }}</td><td class="num">{{ r.sales_total }}</td>

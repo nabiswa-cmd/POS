@@ -1,0 +1,30 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Close shift | POS</title>
+<link rel="stylesheet" href="{% static 'core/theme.css' %}">
+<script src="{% static 'core/theme.js' %}"></script>
+</head>
+<body>
+<main style="max-width:640px;margin:24px auto;padding:0 16px">
+<h1>Close shift and count cash</h1>
+<p class="sub">{{ shift.till }} &middot; {{ shift.cashier.display_name }} &middot; opened {{ shift.opened_at|date:"d M H:i" }} &middot; float KES {{ shift.opening_float }}</p>
+<p class="muted">Count everything that is in the drawer, including the float: notes and coins only. M-PESA, card and bank money are not in the drawer, so do not count them. You will see how the count compares once you press Close.</p>
+{% if error %}<div class="toast error" role="alert">{{ error }}</div>{% endif %}
+<form method="post" action="{% url 'pos-cashup' %}" autocomplete="off">
+  {% csrf_token %}
+  {% include "tills/_count_fields.html" %}
+  <label for="reason">Reason, if the count does not match (at least {{ min_reason }} characters)</label>
+  <input id="reason" name="reason" value="{{ reason }}" maxlength="250">
+  <p style="margin-top:16px">
+    <button type="submit">Close shift</button>
+    <a class="btn ghost" href="{% url 'pos-sell' %}" data-back>Back to sales</a>
+  </p>
+</form>
+<p class="muted">A sale in progress or on hold must be completed or voided first. Closing signs you out.</p>
+</main>
+<script>document.querySelector(".cu-q").focus();</script>
+</body>
+</html>

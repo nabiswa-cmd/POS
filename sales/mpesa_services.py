@@ -11,6 +11,7 @@
 """
 from datetime import timedelta
 
+from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -91,6 +92,52 @@ def record_stk_callback(payload):
     return stk
 
 
+def record_status_result(payload):
+    """Safaricom's answer to a name lookup. Fills a MISSING name only; never overwrites one, never touches the amount."""
+    p = rules.parse_status_result(payload)
+    txn = MpesaTransaction.objects.filter(trans_id=p["trans_id"]).first() if p["trans_id"] else None
+    if txn is None:
+        return None
+    if not p["ok"]:
+        audit.record("mpesa.name_lookup_failed", object_type="mpesa", object_ref=txn.trans_id, reason=p["desc"])
+    elif p["customer_name"] and not txn.customer_name:
+        _enrich(txn, p["customer_name"])
+        audit.record("mpesa.name_looked_up", object_type="mpesa", object_ref=txn.trans_id, new={"name_found": True})
+    return txn
+
+
+NAME_LOOKUP_AFTER = timedelta(seconds=20)      # let the till's own message (which can carry the name) arrive first
+NAME_LOOKUP_TRIES = 2
+
+
+def lookup_missing_names(limit=3):
+    """Ask Safaricom for the name of unused payments that have none. Throttled, bounded and best effort: it never raises,
+    so the till is never slowed or broken by it. Returns how many requests Safaricom accepted."""
+    try:
+        if not daraja.lookup_ready() or not cache.add("mpesa-name-lookup-lock", 1, 15):
+            return 0
+        now = timezone.now()
+        rows = (MpesaTransaction.objects.filter(status=MpesaTransaction.UNMATCHED, customer_name="",
+                                                name_lookup_attempts__lt=NAME_LOOKUP_TRIES,
+                                                created_at__lte=now - NAME_LOOKUP_AFTER,
+                                                created_at__gte=now - timedelta(minutes=RECENT_MINUTES * 2)
+                                                ).order_by("created_at")[:limit])
+        sent = 0
+        for txn in rows:
+            if txn.name_lookup_at and now - txn.name_lookup_at < timedelta(seconds=60):
+                continue
+            txn.name_lookup_attempts += 1
+            txn.name_lookup_at = now
+            txn.save(update_fields=["name_lookup_attempts", "name_lookup_at", "updated_at"])
+            try:
+                sent += bool(daraja.transaction_status(txn.trans_id))
+            except daraja.DarajaError:
+                pass
+        return sent
+    except Exception:                                                   # noqa: BLE001
+        return 0
+
+
 # --- cashier actions ------------------------------------------------------------------------------
 
 def _cart_total(user, shift):
@@ -164,6 +211,7 @@ def stk_status(user, shift, stk_id):
 def recent_unmatched(user, shift, total=None):
     """Confirmed payments that no sale has used yet (newest first). With `total`, only exact matches."""
     sales_services._need(user, "payments.accept", "You are not allowed to accept payments.")
+    lookup_missing_names()
     since = timezone.now() - timedelta(minutes=RECENT_MINUTES)
     qs = MpesaTransaction.objects.filter(status=MpesaTransaction.UNMATCHED, created_at__gte=since).order_by("-created_at")
     if total is not None:

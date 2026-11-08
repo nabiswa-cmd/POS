@@ -131,6 +131,45 @@ END;
 $$ LANGUAGE plpgsql;
 """
 
+# A cash-up is the record of a counted drawer: never deleted, and the only thing that may change is the one-time
+# "superseded" mark written when a shift is reopened (after that the row is frozen). An expense is never deleted and
+# only the one-time void mark may be written.
+CASHUP_SQL = """
+CREATE OR REPLACE FUNCTION winespos_protect_cashup() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'Cash-ups cannot be deleted';
+    END IF;
+    IF OLD.superseded_at IS NOT NULL THEN
+        RAISE EXCEPTION 'A superseded cash-up cannot be modified';
+    END IF;
+    IF (to_jsonb(NEW) - 'superseded_at' - 'superseded_by_id' - 'supersede_reason') IS DISTINCT FROM
+       (to_jsonb(OLD) - 'superseded_at' - 'superseded_by_id' - 'supersede_reason') THEN
+        RAISE EXCEPTION 'A cash-up cannot be edited';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+"""
+
+EXPENSE_SQL = """
+CREATE OR REPLACE FUNCTION winespos_protect_expense() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'Expenses cannot be deleted. Void the entry instead';
+    END IF;
+    IF OLD.voided_at IS NOT NULL THEN
+        RAISE EXCEPTION 'A voided expense cannot be modified';
+    END IF;
+    IF (to_jsonb(NEW) - 'voided_at' - 'voided_by_id' - 'void_reason') IS DISTINCT FROM
+       (to_jsonb(OLD) - 'voided_at' - 'voided_by_id' - 'void_reason') THEN
+        RAISE EXCEPTION 'An expense cannot be edited. Void it and enter it again';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+"""
+
 
 def apply(connection):
     """Install triggers. Returns the list of tables protected (empty if unsupported)."""
@@ -168,7 +207,17 @@ def apply(connection):
             cursor.execute(f'DROP TRIGGER IF EXISTS winespos_signed ON "{table}"')
             cursor.execute(f'CREATE TRIGGER winespos_signed BEFORE UPDATE OR DELETE ON "{table}" '
                            "FOR EACH ROW EXECUTE FUNCTION winespos_protect_signed()")
+        cursor.execute(CASHUP_SQL)
+        cursor.execute('DROP TRIGGER IF EXISTS winespos_cashup ON "tills_cashup"')
+        cursor.execute('CREATE TRIGGER winespos_cashup BEFORE UPDATE OR DELETE ON "tills_cashup" '
+                       "FOR EACH ROW EXECUTE FUNCTION winespos_protect_cashup()")
+        cursor.execute(EXPENSE_SQL)
+        cursor.execute('DROP TRIGGER IF EXISTS winespos_expense ON "accounting_expense"')
+        cursor.execute('CREATE TRIGGER winespos_expense BEFORE UPDATE OR DELETE ON "accounting_expense" '
+                       "FOR EACH ROW EXECUTE FUNCTION winespos_protect_expense()")
     return (list(APPEND_ONLY_TABLES) + ["sales_sale (completed rows)"] + FINAL_SALE_CHILD_TABLES
             + ["sales_refund (never deleted; finished rows frozen)", "sales_refunditem"]
             + [f"{t} (signed rows frozen)" for t in SIGNED_TABLES]
+            + ["tills_cashup (never deleted; only the reopen mark can be written)",
+               "accounting_expense (never deleted; only the void mark can be written)"]
             + ["sales_mpesatransaction (never deleted; code and amount frozen; used payments locked)"])

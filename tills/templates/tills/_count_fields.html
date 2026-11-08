@@ -1,0 +1,31 @@
+{# The note-and-coin grid. The total shown is only a convenience: the server counts again from the pieces. #}
+<table class="rl" style="max-width:420px">
+  <tr><th>Note / coin</th><th class="num">Pieces</th><th class="num">KES</th></tr>
+  {% for g in grid %}<tr>
+    <td>{{ g.denom }}</td>
+    <td class="num"><input class="cu-q" name="c_{{ g.denom }}" data-d="{{ g.denom }}" inputmode="numeric" autocomplete="off" value="{{ g.value }}" style="width:90px;text-align:right" aria-label="Pieces of {{ g.denom }}"></td>
+    <td class="num"><span class="cu-v">0.00</span></td>
+  </tr>{% endfor %}
+  <tr><td><b>Total counted</b></td><td></td><td class="num"><b id="cu-total">0.00</b></td></tr>
+</table>
+<script>
+(function () {
+  var qs = document.querySelectorAll(".cu-q");
+  function paint() {
+    var t = 0;
+    qs.forEach(function (el) {
+      var n = /^\d+$/.test(el.value.trim()) ? parseInt(el.value, 10) : 0, v = n * parseInt(el.getAttribute("data-d"), 10);
+      el.parentNode.nextElementSibling.firstChild.textContent = v.toLocaleString("en-KE", { minimumFractionDigits: 2 });
+      t += v;
+    });
+    document.getElementById("cu-total").textContent = t.toLocaleString("en-KE", { minimumFractionDigits: 2 });
+  }
+  qs.forEach(function (el, i) {
+    el.addEventListener("input", paint);
+    el.addEventListener("keydown", function (e) {           // Enter moves down the list, so counting needs no mouse
+      if (e.key === "Enter" && i < qs.length - 1) { e.preventDefault(); qs[i + 1].focus(); qs[i + 1].select(); }
+    });
+  });
+  paint();
+})();
+</script>

@@ -403,7 +403,7 @@ def format_receipt(data):
 def mark_printed(user, refund_id):
     """First print is the original; every later print is a marked duplicate. Returns (refund, duplicate)."""
     sales_services._need(user, "refunds.request", "You are not allowed to print refunds.")
-    refund = Refund.objects.select_for_update().select_related("sale", "till", "requested_by", "approved_by").filter(pk=refund_id).first()
+    refund = Refund.objects.select_for_update(of=("self",)).select_related("sale", "till", "requested_by", "approved_by").filter(pk=refund_id).first()
     if refund is None:
         raise SaleError("Refund not found.")
     if refund.status in (Refund.REQUESTED, Refund.REJECTED, Refund.CANCELLED):

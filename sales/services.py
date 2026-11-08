@@ -535,27 +535,17 @@ def mark_reprint(user, sale_id, ip=None):
 # --- shift summary (F11) -------------------------------------------------------------------------
 
 def shift_summary(shift):
-    """A cashier's running view of their shift. Cash-up and closing arrive in Phase 5.
+    """A cashier's running view of their shift (F11). The figures come from tills.cashup.snapshot, the same
+    numbers the cash-up uses when the shift is closed, so the two can never disagree.
     Only CASH counts towards the drawer: M-PESA and other electronic money never does."""
-    done = Sale.objects.filter(shift=shift, status=Sale.COMPLETED)
-
-    def paid(method):
-        return rules.money(Payment.objects.filter(sale__in=done, method=method).aggregate(t=Sum("amount"))["t"] or 0)
-
-    cash, mpesa = paid(Payment.CASH), paid(Payment.MPESA)
-    other = paid(Payment.CARD) + paid(Payment.BANK)
-    # Refunds (see sales.refunds): only cash really handed back from THIS drawer reduces expected cash.
-    from .models import Refund
-    def refunded(**flt):
-        return rules.money(Refund.objects.filter(**flt).aggregate(t=Sum("total"))["t"] or 0)
-    cash_refunds = refunded(paid_shift=shift, status=Refund.PAID, method=Refund.CASH)
-    mpesa_refunds_paid = refunded(shift=shift, status=Refund.PAID, method=Refund.MPESA)
-    refunds_waiting = refunded(shift=shift, status__in=(Refund.REQUESTED, Refund.APPROVED))
-    return {"sales_count": done.count(), "sales_total": str(rules.money(done.aggregate(t=Sum("total"))["t"] or 0)),
-            "cash_sales": str(cash), "mpesa_sales": str(mpesa), "other_sales": str(other),
-            "cash_refunds": str(cash_refunds), "mpesa_refunds_paid": str(mpesa_refunds_paid),
-            "refunds_waiting": str(refunds_waiting),
-            "opening_float": str(shift.opening_float), "cash_in_drawer_expected": str(shift.opening_float + cash - cash_refunds)}
+    from tills import cashup
+    snap = cashup.snapshot(shift)
+    return {"sales_count": snap["sales_count"], "sales_total": str(snap["sales_total"]),
+            "cash_sales": str(snap["cash_sales"]), "mpesa_sales": str(snap["mpesa_sales"]),
+            "other_sales": str(snap["other_sales"]),
+            "cash_refunds": str(snap["cash_refunds"]), "mpesa_refunds_paid": str(snap["mpesa_refunds_paid"]),
+            "refunds_waiting": str(snap["refunds_waiting"]), "cash_paid_out": str(snap["cash_paid_out"]),
+            "opening_float": str(shift.opening_float), "cash_in_drawer_expected": str(snap["expected_cash"])}
 
 
 def cart_total(sale):

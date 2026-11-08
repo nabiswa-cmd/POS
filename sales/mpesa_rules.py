@@ -196,3 +196,29 @@ def relay_record_ok(rec):
     """A record from the online server is usable only if it is shaped like one we exported."""
     return (isinstance(rec, dict) and isinstance(rec.get("id"), int) and not isinstance(rec.get("id"), bool)
             and rec.get("kind") in ("c2b", "stk") and isinstance(rec.get("payload"), dict))
+
+
+def parse_status_result(payload):
+    """Safaricom's answer to a Transaction Status query -> {"ok", "trans_id", "customer_name", "desc"}.
+
+    The payer is the DEBIT party, written like "2547****1234 - JOHN DOE". Only the part after " - " is a name and it is
+    kept only if clean_name accepts it, so a masked phone or a hash is never stored as a name. No name in the answer
+    means the name stays blank: nothing is guessed. Raises MpesaError for anything that is not such a result."""
+    try:
+        res = payload["Result"]
+        code = int(res["ResultCode"])
+    except (KeyError, TypeError, ValueError):
+        raise MpesaError("Not a transaction status result.")
+    raw = res.get("ResultParameters") or {}
+    items = raw.get("ResultParameter", []) if isinstance(raw, dict) else []
+    if isinstance(items, dict):
+        items = [items]
+    params = {it["Key"]: it.get("Value") for it in items or [] if isinstance(it, dict) and "Key" in it}
+    receipt = str(params.get("ReceiptNo") or "").strip().upper()
+    out = {"ok": code == 0, "trans_id": receipt if re.fullmatch(r"[A-Z0-9]{8,14}", receipt) else "",
+           "customer_name": "", "desc": str(res.get("ResultDesc") or "")[:200]}
+    if code == 0:
+        parts = re.split(r"\s+-\s+", str(params.get("DebitPartyName") or "").strip(), maxsplit=1)
+        if len(parts) == 2:
+            out["customer_name"] = clean_name(parts[1])
+    return out

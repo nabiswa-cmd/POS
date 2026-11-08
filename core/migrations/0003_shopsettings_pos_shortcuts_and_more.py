@@ -11,10 +11,16 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='shopsettings',
-            name='pos_shortcuts',
-            field=models.JSONField(blank=True, default=dict, help_text='Optional key changes for the till, e.g. {"print": "Alt+P"}. Actions: help, search, scan, quantity, hold, retrieve, discount, payment, complete, print, shift, approval, customer.'),
+        # The sibling 0003 migration already adds this column; twice fails on PostgreSQL. Here: Django's state only.
+        migrations.SeparateDatabaseAndState(
+            state_operations=[
+            migrations.AddField(
+                model_name='shopsettings',
+                name='pos_shortcuts',
+                field=models.JSONField(blank=True, default=dict, help_text='Optional key changes for the till, e.g. {"print": "Alt+P"}. Actions: help, search, scan, quantity, hold, retrieve, discount, payment, complete, print, shift, approval, customer.'),
+            ),
+            ],
+            database_operations=[],
         ),
         migrations.AddField(
             model_name='shopsettings',

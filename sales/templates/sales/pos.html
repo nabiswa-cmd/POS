@@ -623,9 +623,14 @@
       var s = r.shift;
       var d = openDialog("<h2>Shift summary</h2>" + '<div class="keys"><span>Sales made</span><b>' + s.sales_count + "</b><span>Sales total</span><b>" + fmt(s.sales_total) +
         "</b><span>Cash sales</span><b>" + fmt(s.cash_sales) + "</b><span>M-PESA sales</span><b>" + fmt(s.mpesa_sales) + "</b><span>Opening float</span><b>" + fmt(s.opening_float) + "</b><span>Expected cash in drawer</span><b>" + fmt(s.cash_in_drawer_expected) +
-        '</b></div><p class="note" style="margin-top:10px">Closing the till and cash-up arrive in Phase 5.</p><div class="btns"><button id="ss-ok" data-first type="button">Close (Enter)</button></div>');
+        '</b></div><p class="note" style="margin-top:10px">End of your shift? Close it to count the drawer. Complete or void any sale in progress first.</p><div class="btns"><button class="ghost" id="ss-close" type="button">Close shift and count cash (C)</button><button id="ss-ok" data-first type="button">Close window (Enter)</button></div>');
       $("ss-ok").onclick = function () { closeDialog(d); };
-      d.onKey = function (e) { if (e.key === "Enter") { e.preventDefault(); closeDialog(d); return true; } return false; };
+      $("ss-close").onclick = function () { location.href = "/pos/cashup/"; };
+      d.onKey = function (e) {
+        if (e.key === "Enter") { e.preventDefault(); closeDialog(d); return true; }
+        if (e.key === "c" || e.key === "C") { e.preventDefault(); location.href = "/pos/cashup/"; return true; }
+        return false;
+      };
     });
   }
   function help() {

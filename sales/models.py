@@ -312,6 +312,9 @@ class MpesaTransaction(models.Model):
     resolution_reason = models.CharField(max_length=250, blank=True)
     resolved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
     resolved_at = models.DateTimeField(null=True, blank=True)
+    # Name lookup: how often Safaricom was asked for a missing name.
+    name_lookup_attempts = models.PositiveSmallIntegerField(default=0)
+    name_lookup_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 

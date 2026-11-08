@@ -14,7 +14,7 @@ from core.http import bad, client_ip, login_required_json, post_json
 from core.models import ShopSettings
 from tills.models import CashierShift
 
-from . import daraja, etims, mpesa_rules, mpesa_services, receipt, refunds, rules, services, shortcuts, tax
+from . import cashup, daraja, etims, mpesa_rules, mpesa_services, receipt, refunds, rules, services, shortcuts, tax
 from .models import Sale
 
 
@@ -476,3 +476,14 @@ def refund_receipt(request, refund_id, data, shift):
     qr = (info.get("etims") or {}).get("qr_text") or ""
     return JsonResponse({"ok": True, "lines": refunds.format_receipt(info), "paper_mm": info["paper_mm"],
                          "qr_svg": barcodes.qr_svg(qr) if qr else "", "duplicate": duplicate})
+
+
+@login_required_json
+@post_json
+@_guard
+def shift_close(request, data, shift):
+    """Cash-up: {"counted": "12500.00", "note": "..."}. Final. The screen then returns to the POS login."""
+    closed, summary = cashup.close_shift(request.user, shift, data.get("counted"), data.get("note"))
+    request.session.pop("pos_till", None)
+    return JsonResponse({"ok": True, "expected": str(closed.expected_cash), "counted": str(closed.counted_cash),
+                         "variance": str(closed.variance), "summary": summary})

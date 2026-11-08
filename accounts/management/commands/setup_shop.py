@@ -11,6 +11,7 @@ from django.db import transaction
 from accounts.models import ApprovalPolicy, Role, RolePermission
 from accounts.permissions import DEFAULT_ROLES, RESTRICTED_ACTIONS
 from core.models import ReceiptSettings, ShopSettings
+from accounting.services import ensure_default_categories
 from tills.models import Till
 
 
@@ -40,6 +41,8 @@ class Command(BaseCommand):
                         [RolePermission(role=role, code=code) for code in spec["permissions"]])
         for action in RESTRICTED_ACTIONS:
             ApprovalPolicy.objects.get_or_create(action=action, defaults={"required": True})
+
+        ensure_default_categories()
 
         count = opts["tills"] or settings.MAX_TILLS
         if not 1 <= count <= settings.MAX_TILLS:

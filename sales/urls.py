@@ -33,5 +33,6 @@ urlpatterns = [
     path("refund/<int:refund_id>/receipt/", views.refund_receipt, name="sales-refund-receipt"),
     path("mine/", views.my_sales, name="sales-mine"),
     path("config/", views.pos_config, name="sales-config"),
+    path("shift/close/", views.shift_close, name="sales-shift-close"),
     path("shift/summary/", views.shift_summary, name="sales-shift-summary"),
 ]

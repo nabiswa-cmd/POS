@@ -124,6 +124,29 @@ def stk_query(checkout_request_id):
 def register_c2b_urls():
     """One-off: tell Safaricom where to send till/paybill payments. Run the command on the server that is public."""
     c = cfg()
-    body = {"ShortCode": c["SHORTCODE"], "ResponseType": "Completed",
+    body = {"ShortCode": c["TILL_NUMBER"] or c["SHORTCODE"], "ResponseType": "Completed",
             "ConfirmationURL": callback_url("c2b/confirm"), "ValidationURL": callback_url("c2b/validate")}
     return _call("POST", "/mpesa/c2b/v2/registerurl", body, _auth())
+
+
+def lookup_ready():
+    """Name lookup needs a Daraja initiator with its pre-encrypted credential and the public callback address.
+    Without them it is simply off (names still come from the till message)."""
+    c = cfg()
+    return bool(c.get("CONSUMER_KEY") and c.get("CONSUMER_SECRET") and (c.get("SHORTCODE") or c.get("TILL_NUMBER"))
+                and c.get("INITIATOR_NAME") and c.get("SECURITY_CREDENTIAL") and callbacks_ready())
+
+
+def transaction_status(receipt):
+    """Ask Safaricom about one payment. The answer is NOT returned here: Safaricom posts it a few seconds later to
+    /api/pay/txstatus/result/<secret>/ (mpesa_views.status_result). True when Safaricom accepted the request."""
+    c = cfg()
+    till = c["ACCOUNT_TYPE"] == "till"
+    body = {"Initiator": c["INITIATOR_NAME"], "SecurityCredential": c["SECURITY_CREDENTIAL"],
+            "CommandID": "TransactionStatusQuery", "TransactionID": receipt,
+            "PartyA": (c["TILL_NUMBER"] or c["SHORTCODE"]) if till else c["SHORTCODE"],
+            "IdentifierType": "2" if till else "4",             # 2 = till number, 4 = organisation shortcode
+            "ResultURL": callback_url("txstatus/result"), "QueueTimeOutURL": callback_url("txstatus/timeout"),
+            "Remarks": "Customer name", "Occasion": ""}
+    res = _call("POST", "/mpesa/transactionstatus/v1/query", body, _auth())
+    return str(res.get("ResponseCode")) == "0"

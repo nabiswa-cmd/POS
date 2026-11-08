@@ -40,6 +40,7 @@ PERMISSIONS = {
     "shifts.view_own": "View own shift information",
     "shifts.view_all": "View all till shifts and cash-ups",
     "shifts.open": "Open a till shift",
+    "shifts.close_any": "Close another cashier's till shift (count the drawer for them, with a reason)",
     # Money
     "expenses.manage": "Record and manage expenses",
     # Approval rights (see RESTRICTED_ACTIONS)
@@ -94,7 +95,7 @@ DEFAULT_ROLES = {
         "permissions": [
             "dashboard.view", "reports.sales.view", "products.view", "stock.view",
             "stock.approve_receiving", "labels.print", "sales.make", "sales.hold", "sales.view_all", "payments.accept",
-            "receipts.reprint", "refunds.request", "shifts.view_all", "shifts.open",
+            "receipts.reprint", "refunds.request", "shifts.view_all", "shifts.open", "shifts.close_any",
         ] + _SUPERVISOR_APPROVALS,
     },
     "Cashier": {

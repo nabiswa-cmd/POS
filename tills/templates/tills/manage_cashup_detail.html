@@ -1,0 +1,70 @@
+{% extends "core/base.html" %}{% block title %}Cash-up{% endblock %}
+{% block content %}
+<h1>{{ shift.till }}, {{ shift.opened_at|date:"d M Y" }}</h1>
+<p class="sub">Cashier {{ shift.cashier.display_name }} &middot; opened {{ shift.opened_at|date:"H:i" }} by authority of {{ shift.authorized_by.display_name }} &middot; float KES {{ shift.opening_float }}
+&middot; {% if shift.closed_at %}closed {{ shift.closed_at|date:"d M H:i" }}{% else %}<b>still open</b>{% endif %}</p>
+<p><a href="{% url 'cashups' %}" data-back>&larr; All cash-ups</a></p>
+
+{% if c %}
+<h2>Result</h2>
+<table style="max-width:560px">
+<tr><td>Opening float</td><td class="num">{{ c.opening_float }}</td></tr>
+<tr><td>Cash sales</td><td class="num">+ {{ c.cash_sales }}</td></tr>
+<tr><td>Cash refunds handed back</td><td class="num">- {{ c.cash_refunds }}</td></tr>
+<tr><td>Cash paid out (expenses)</td><td class="num">- {{ c.cash_paid_out }}</td></tr>
+<tr><td><b>Expected in drawer</b></td><td class="num"><b>{{ c.expected_cash }}</b></td></tr>
+<tr><td><b>Counted</b></td><td class="num"><b>{{ c.counted_cash }}</b></td></tr>
+<tr><td><b>Difference</b></td><td class="num"><b>{% if c.variance == 0 %}Balanced{% elif c.variance > 0 %}Over {{ c.variance }}{% else %}Short {{ c.variance|cut:"-" }}{% endif %}</b></td></tr>
+</table>
+{% if c.reason %}<p>Reason given: {{ c.reason }}</p>{% endif %}
+<p class="muted">Counted by {{ c.closed_by.display_name }} at {{ c.closed_at|date:"d M H:i" }}.</p>
+<h2>Not in the drawer</h2>
+<table style="max-width:560px">
+<tr><td>M-PESA sales</td><td class="num">{{ c.mpesa_sales }}</td></tr>
+<tr><td>M-PESA refunds paid back</td><td class="num">{{ c.mpesa_refunds_paid }}</td></tr>
+<tr><td>Card and bank sales</td><td class="num">{{ c.other_sales }}</td></tr>
+<tr><td>All sales on the shift ({{ c.sales_count }})</td><td class="num">{{ c.sales_total }}</td></tr>
+</table>
+<h2>Notes and coins counted</h2>
+<table style="max-width:420px"><tr><th>Note / coin</th><th class="num">Pieces</th><th class="num">KES</th></tr>
+{% for l in lines %}<tr><td>{{ l.denom }}</td><td class="num">{{ l.pieces }}</td><td class="num">{{ l.value }}</td></tr>{% empty %}<tr><td colspan="3" class="muted">Nothing counted.</td></tr>{% endfor %}</table>
+<p><a class="btn ghost" href="{% url 'cashup-slip' shift.pk %}">Print slip</a></p>
+
+{% if can_reopen %}
+<h2>Counted wrongly?</h2>
+<form method="post">{% csrf_token %}<input type="hidden" name="action" value="reopen">
+  <p class="muted">Reopening keeps the earlier count on record (marked superseded) and the shift has to be counted again. Say why.</p>
+  <label for="rr">Reason (at least {{ min_reason }} characters)</label><input id="rr" name="reason" maxlength="250" required>
+  <p><button type="submit" class="danger">Reopen shift</button></p>
+</form>
+{% endif %}
+{% else %}
+<h2>Right now</h2>
+<table style="max-width:560px">
+<tr><td>Opening float</td><td class="num">{{ live.opening_float }}</td></tr>
+<tr><td>Cash sales</td><td class="num">+ {{ live.cash_sales }}</td></tr>
+<tr><td>Cash refunds handed back</td><td class="num">- {{ live.cash_refunds }}</td></tr>
+<tr><td>Cash paid out (expenses)</td><td class="num">- {{ live.cash_paid_out }}</td></tr>
+<tr><td><b>Should be in drawer</b></td><td class="num"><b>{{ live.expected_cash }}</b></td></tr>
+<tr><td class="muted">M-PESA sales (not in drawer)</td><td class="num muted">{{ live.mpesa_sales }}</td></tr>
+</table>
+{% if can_close_any %}
+<h2>Close this shift</h2>
+<form method="post" autocomplete="off">{% csrf_token %}<input type="hidden" name="action" value="close">
+  <p class="muted">Count the drawer, notes and coins only, including the float.{% if shift.cashier_id != request.user.pk %} You are counting for {{ shift.cashier.display_name }}: a reason is required.{% endif %}</p>
+  {% include "tills/_count_fields.html" %}
+  <label for="rc">Reason (needed if the count does not match{% if shift.cashier_id != request.user.pk %}, and always when closing for someone else{% endif %}; at least {{ min_reason }} characters)</label>
+  <input id="rc" name="reason" maxlength="250">
+  <p><button type="submit">Close shift</button></p>
+</form>
+{% else %}<p class="muted">The cashier closes their own shift at the till. Closing someone else's needs the close-any-shift permission.</p>{% endif %}
+{% endif %}
+
+{% if payouts %}<h2>Cash paid out of this drawer</h2>
+<table style="max-width:560px"><tr><th>Category</th><th>What for</th><th class="num">KES</th></tr>
+{% for p in payouts %}<tr><td>{{ p.category.name }}</td><td>{{ p.description }}{% if p.is_void %} <span class="pill bad">voided</span>{% endif %}</td><td class="num">{{ p.amount }}</td></tr>{% endfor %}</table>{% endif %}
+
+{% if history %}<h2>Earlier counts (superseded)</h2>
+<table><tr><th>Counted</th><th class="num">Expected</th><th class="num">Counted</th><th class="num">Difference</th><th>Reopened by</th><th>Why</th></tr>
+{% for h in history %}<tr><td>{{ h.closed_at|date:"d M H:i" }}</td><td class="num">{{ h.expected_cash }}</td><td class="num">{{ h.counted_cash }}</td><td class="num">{{ h.variance }}</td><td>{{ h.superseded_by.display_name }}</td><td>{{ h.supersede_reason }}</td></tr>{% endfor %}</table>{% endif %}
+{% endblock %}

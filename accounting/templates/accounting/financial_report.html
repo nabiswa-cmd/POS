@@ -1,0 +1,65 @@
+{% extends "core/base.html" %}{% block title %}Profit and reports{% endblock %}
+{% block content %}
+{% with f=r.f %}
+<h1>Profit and reports</h1>
+<p class="sub">Profit is worked out from what the stock that was sold actually cost (frozen on every sale), never from selling prices alone. Voided expenses are left out. Days are shop days.</p>
+
+<form method="get" class="row" style="margin-bottom:10px">
+  <div><label for="from">From</label><input id="from" type="date" name="from" value="{{ day_from|date:'Y-m-d' }}"></div>
+  <div><label for="to">To</label><input id="to" type="date" name="to" value="{{ day_to|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}"></div>
+  <div style="flex:0 0 auto"><button type="submit">Show</button></div>
+</form>
+<p>{% for label, a, b in presets %}<a class="btn ghost" href="?from={{ a|date:'Y-m-d' }}&amp;to={{ b|date:'Y-m-d' }}">{{ label }}</a> {% endfor %}</p>
+
+{% if f.unknown_cost_lines %}<div class="toast error" role="alert">{{ f.unknown_cost_lines }} sold line(s) have no recorded cost, so cost of goods and profit are wrong for this period. Tell whoever maintains the system.</div>{% endif %}
+
+<div class="grid">
+  <div class="tile"><b>Net sales</b><span class="muted">KES {{ f.net_sales }}<br>{{ f.sales_count }} sale{{ f.sales_count|pluralize }}</span></div>
+  <div class="tile"><b>Gross profit</b><span class="muted">KES {{ f.gross_profit }}{% if f.gross_margin != None %}<br>{{ f.gross_margin }}% of net sales{% endif %}</span></div>
+  <div class="tile"><b>Expenses</b><span class="muted">KES {{ f.expenses }}</span></div>
+  <div class="tile"><b>Net profit</b><span class="muted">KES {{ f.net_profit }}{% if f.net_margin != None %}<br>{{ f.net_margin }}% of net sales{% endif %}</span></div>
+</div>
+
+<h2>Profit and loss, {{ day_from|date:"d M" }} to {{ day_to|date:"d M Y" }}</h2>
+<table style="max-width:640px">
+<tr><td>Sales (including VAT)</td><td class="num">{{ f.sales_gross }}</td></tr>
+<tr><td class="muted">less VAT in sales</td><td class="num muted">- {{ f.sales_vat }}</td></tr>
+<tr><td>Refunds (including VAT)</td><td class="num">- {{ f.refunds_gross }}</td></tr>
+<tr><td class="muted">add back VAT in refunds</td><td class="num muted">+ {{ f.refunds_vat }}</td></tr>
+<tr><td><b>Net sales</b></td><td class="num"><b>{{ f.net_sales }}</b></td></tr>
+<tr><td>Cost of goods sold</td><td class="num">- {{ f.cogs }}</td></tr>
+<tr><td class="muted">refunded goods put back on the shelf (at cost)</td><td class="num muted">+ {{ f.cogs_returned }}</td></tr>
+<tr><td><b>Gross profit</b></td><td class="num"><b>{{ f.gross_profit }}</b></td></tr>
+<tr><td>Stock losses (damaged, expired, adjustments)</td><td class="num">- {{ f.stock_losses }}</td></tr>
+<tr><td>Expenses</td><td class="num">- {{ f.expenses }}</td></tr>
+<tr><td>Till cash differences (over +, short -)</td><td class="num">{{ f.till_difference }}</td></tr>
+<tr><td><b>Net profit</b></td><td class="num"><b>{{ f.net_profit }}</b></td></tr>
+</table>
+<p class="muted">Stock bought in the period: KES {{ f.stock_bought }} (cash spent on stock; it becomes a cost only when the goods are sold, so it is not subtracted above).</p>
+
+<h2>Money taken in</h2>
+<table style="max-width:640px">
+<tr><td>Cash</td><td class="num">{{ r.collections.cash }}</td></tr>
+<tr><td>M-PESA</td><td class="num">{{ r.collections.mpesa }}</td></tr>
+<tr><td>Card and bank transfer</td><td class="num">{{ r.collections.card_bank }}</td></tr>
+<tr><td class="muted">Refunds paid back in cash</td><td class="num muted">- {{ r.collections.refunds_cash }}</td></tr>
+<tr><td class="muted">Refunds paid back by M-PESA</td><td class="num muted">- {{ r.collections.refunds_mpesa }}</td></tr>
+</table>
+
+{% if r.expense_categories %}<h2>Expenses by category</h2>
+<table style="max-width:640px">{% for name, amount in r.expense_categories %}<tr><td>{{ name }}</td><td class="num">{{ amount }}</td></tr>{% endfor %}</table>{% endif %}
+
+<h2>By product</h2>
+<p><a class="btn ghost" href="?from={{ day_from|date:'Y-m-d' }}&amp;to={{ day_to|date:'Y-m-d' }}&amp;csv=products">Download (CSV)</a>
+<a class="btn ghost" href="?from={{ day_from|date:'Y-m-d' }}&amp;to={{ day_to|date:'Y-m-d' }}&amp;csv=summary">Summary (CSV)</a></p>
+<table><tr><th>Product</th><th class="num">Units</th><th class="num">Net sales</th><th class="num">Cost</th><th class="num">Gross profit</th><th class="num">Margin</th></tr>
+{% for p in r.products %}<tr><td>{{ p.name }}</td><td class="num">{{ p.units }}</td><td class="num">{{ p.sales }}</td><td class="num">{{ p.cost }}</td><td class="num">{{ p.profit }}</td><td class="num">{% if p.margin != None %}{{ p.margin }}%{% else %}-{% endif %}</td></tr>
+{% empty %}<tr><td colspan="6" class="muted">No sales in this period.</td></tr>{% endfor %}</table>
+
+<h2>By day</h2>
+{% if r.days %}<p><a class="btn ghost" href="?from={{ day_from|date:'Y-m-d' }}&amp;to={{ day_to|date:'Y-m-d' }}&amp;csv=days">Download (CSV)</a></p>
+<table><tr><th>Day</th><th class="num">Net sales</th><th class="num">Cost</th><th class="num">Gross profit</th><th class="num">Losses</th><th class="num">Expenses</th><th class="num">Till diff.</th><th class="num">Net profit</th></tr>
+{% for d in r.days %}<tr><td>{{ d.day_from|date:"D d M" }}</td><td class="num">{{ d.net_sales }}</td><td class="num">{{ d.net_cogs }}</td><td class="num">{{ d.gross_profit }}</td><td class="num">{{ d.stock_losses }}</td><td class="num">{{ d.expenses }}</td><td class="num">{{ d.till_difference }}</td><td class="num"><b>{{ d.net_profit }}</b></td></tr>{% endfor %}</table>
+{% else %}<p class="muted">The day-by-day table is shown for ranges of up to {{ r.day_table_limit }} days that contain activity.</p>{% endif %}
+{% endwith %}
+{% endblock %}

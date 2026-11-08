@@ -63,6 +63,25 @@ def stk_result(request, secret):
     return JsonResponse(ACK)
 
 
+@csrf_exempt
+@require_POST
+def status_result(request, secret):
+    """Safaricom's answer to a customer-name lookup."""
+    _check(secret)
+    try:
+        svc.record_status_result(_payload(request))
+    except rules.MpesaError:
+        return JsonResponse({"ResultCode": 1, "ResultDesc": "Rejected"}, status=400)
+    return JsonResponse(ACK)
+
+
+@csrf_exempt
+@require_POST
+def status_timeout(request, secret):
+    _check(secret)
+    return JsonResponse(ACK)          # the lookup did not happen; the name stays blank
+
+
 @require_GET
 def relay_feed(request, secret):
     """The shop PC asks for recent payments. Needs the secret in the address AND the relay token; 404 otherwise

@@ -85,7 +85,7 @@ environment, never from source. Two tills: set `WINESPOS_BIND=0.0.0.0` on the se
 - The manager UI is the Django admin for now; the custom dashboard and screens come in later phases.
 - Full-screen kiosk lock in the POS window blocks closing and navigation inside the app but cannot stop Windows-level
   shortcuts such as Alt+Tab; Phase 6 adds a Windows kiosk/assigned-access guide.
-- Till closing and cash-up are Phase 5. Shifts can currently be opened only.
+- Till closing and cash-up: built in Phase 5A (see PHASE5A_NOTES.md).
 
 ---
 
@@ -247,7 +247,7 @@ DB_ENGINE=sqlite DJANGO_DEBUG=true python manage.py test sales
 - A manager acting as cashier still needs a second person to approve restricted actions (the approval rules forbid self-approval).
   Say if you want the shop owner exempt, as in stock adjustments.
 - Payments are cash only. M-PESA, card, bank transfer, split payments and refunds are Phase 4.
-- Not built yet: the sales screen and shortcuts, receipt printing to a thermal printer, till closing and cash-up (Phase 5).
+- Not built yet: the sales screen and shortcuts, receipt printing to a thermal printer, (till closing and cash-up are now in Phase 5A).
 - Kenyan tax: wines and spirits carry VAT, and KRA eTIMS receipts may be required for your business. This is not in the master
   prompt and is not built; confirm with your accountant before go-live.
 
@@ -342,5 +342,17 @@ a delivery already submitted on another screen could still be edited, and price-
 ## Known limits
 
 - Cash only (M-PESA, card, bank, split payments and refunds: Phase 4). F8 shows them as not available rather than pretending.
-- Till closing and cash-up: Phase 5. A cashier can log out; the shift stays open.
+- Till closing and cash-up: Phase 5A. Closing signs the cashier out; just logging out leaves the shift open.
 - Search adds the base unit; pack sizes are sold by scanning the pack's code.
+
+
+---
+
+# Phase 5A: till cash-up and expenses
+
+See `PHASE5A_NOTES.md`. New screens: `/manage/cashups/`, `/manage/expenses/`, and the cashier's `/pos/cashup/` (F11, then C). Run `migrate`, `harden_db`, `setup_shop`.
+
+
+# Phase 5B: profit and financial reports
+
+See `PHASE5B_NOTES.md`. New screen `/manage/reports/` (cost of goods, gross profit, net profit, by product / day, CSV). No migration needed.
