@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import EtimsSubmission, Payment, Sale, SaleItem
+from .models import EtimsCreditNote, EtimsSubmission, Payment, Refund, RefundItem, Sale, SaleItem
 
 
 class ReadOnlyMixin:
@@ -42,3 +42,24 @@ class EtimsAdmin(ReadOnlyMixin, admin.ModelAdmin):
     list_display = ("invoice_no", "sale", "status", "attempts", "last_attempt_at", "last_error")
     list_filter = ("status",)
     search_fields = ("sale__number", "last_error", "signature")
+
+
+class RefundItemInline(ReadOnlyMixin, admin.TabularInline):
+    model = RefundItem
+    extra = 0
+    fields = ("product_name", "quantity", "amount", "tax_amount", "restock", "restocked")
+
+
+@admin.register(Refund)
+class RefundAdmin(ReadOnlyMixin, admin.ModelAdmin):
+    list_display = ("number", "sale", "status", "method", "total", "requested_by", "approved_by", "paid_by", "requested_at")
+    list_filter = ("status", "method")
+    search_fields = ("number", "sale__number", "pay_reference", "reason")
+    inlines = [RefundItemInline]
+
+
+@admin.register(EtimsCreditNote)
+class EtimsCreditNoteAdmin(ReadOnlyMixin, admin.ModelAdmin):
+    list_display = ("invoice_no", "original_invoice_no", "refund", "status", "attempts", "last_attempt_at", "last_error")
+    list_filter = ("status",)
+    search_fields = ("refund__number", "refund__sale__number", "last_error", "signature")

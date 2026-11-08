@@ -56,6 +56,60 @@ $$ LANGUAGE plpgsql;
 """
 FINAL_SALE_CHILD_TABLES = ["sales_saleitem", "sales_payment"]
 
+# Refunds are history too. A refund is never deleted; once PAID, REJECTED or CANCELLED nothing but its print
+# counter may change; and the sale, amount, method and number of any refund never change. Refund lines can only
+# have their resaleable flags set while the refund is still open (that is when stock is returned).
+# A KRA-signed document is evidence: never deleted, and once SUBMITTED not changed (sales invoices and credit notes).
+SIGNED_SQL = """
+CREATE OR REPLACE FUNCTION winespos_protect_signed() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'eTIMS records cannot be deleted';
+    END IF;
+    IF OLD.status = 'SUBMITTED' THEN
+        RAISE EXCEPTION 'A signed eTIMS document cannot be modified';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+"""
+SIGNED_TABLES = ["sales_etimssubmission", "sales_etimscreditnote"]
+
+REFUND_SQL = """
+CREATE OR REPLACE FUNCTION winespos_protect_refund() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'Refunds cannot be deleted';
+    END IF;
+    IF NEW.sale_id <> OLD.sale_id OR NEW.total <> OLD.total OR NEW.method <> OLD.method OR NEW.number <> OLD.number THEN
+        RAISE EXCEPTION 'The sale, amount, method and number of a refund cannot be changed';
+    END IF;
+    IF OLD.status IN ('PAID', 'REJECTED', 'CANCELLED') THEN
+        IF (to_jsonb(NEW) - 'print_count') IS DISTINCT FROM (to_jsonb(OLD) - 'print_count') THEN
+            RAISE EXCEPTION 'A finished refund cannot be modified';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION winespos_protect_refund_item() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'Refund lines cannot be deleted';
+    END IF;
+    IF (to_jsonb(NEW) - 'restock' - 'restocked') IS DISTINCT FROM (to_jsonb(OLD) - 'restock' - 'restocked') THEN
+        RAISE EXCEPTION 'Refund lines cannot be changed';
+    END IF;
+    IF (NEW.restock <> OLD.restock OR NEW.restocked <> OLD.restocked) AND
+       EXISTS (SELECT 1 FROM sales_refund WHERE id = OLD.refund_id AND status IN ('PAID', 'REJECTED', 'CANCELLED')) THEN
+        RAISE EXCEPTION 'Refund lines of a finished refund cannot be changed';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+"""
+
 
 def apply(connection):
     """Install triggers. Returns the list of tables protected (empty if unsupported)."""
@@ -77,4 +131,18 @@ def apply(connection):
             cursor.execute(f'DROP TRIGGER IF EXISTS winespos_final_sale ON "{table}"')
             cursor.execute(f'CREATE TRIGGER winespos_final_sale BEFORE INSERT OR UPDATE OR DELETE ON "{table}" '
                            "FOR EACH ROW EXECUTE FUNCTION winespos_protect_final_sale_child()")
-    return list(APPEND_ONLY_TABLES) + ["sales_sale (completed rows)"] + FINAL_SALE_CHILD_TABLES
+        cursor.execute(REFUND_SQL)
+        cursor.execute('DROP TRIGGER IF EXISTS winespos_refund ON "sales_refund"')
+        cursor.execute('CREATE TRIGGER winespos_refund BEFORE UPDATE OR DELETE ON "sales_refund" '
+                       "FOR EACH ROW EXECUTE FUNCTION winespos_protect_refund()")
+        cursor.execute('DROP TRIGGER IF EXISTS winespos_refund_item ON "sales_refunditem"')
+        cursor.execute('CREATE TRIGGER winespos_refund_item BEFORE UPDATE OR DELETE ON "sales_refunditem" '
+                       "FOR EACH ROW EXECUTE FUNCTION winespos_protect_refund_item()")
+        cursor.execute(SIGNED_SQL)
+        for table in SIGNED_TABLES:
+            cursor.execute(f'DROP TRIGGER IF EXISTS winespos_signed ON "{table}"')
+            cursor.execute(f'CREATE TRIGGER winespos_signed BEFORE UPDATE OR DELETE ON "{table}" '
+                           "FOR EACH ROW EXECUTE FUNCTION winespos_protect_signed()")
+    return (list(APPEND_ONLY_TABLES) + ["sales_sale (completed rows)"] + FINAL_SALE_CHILD_TABLES
+            + ["sales_refund (never deleted; finished rows frozen)", "sales_refunditem"]
+            + [f"{t} (signed rows frozen)" for t in SIGNED_TABLES])

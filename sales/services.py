@@ -432,10 +432,12 @@ def checkout_cash(user, shift, tendered):
 
 
 @transaction.atomic
-def finish_sale(user, shift, *, payment, customer_name=""):
-    """The shared end of every checkout (cash, M-PESA, later card and bank): stock, cost basis, VAT snapshot,
-    the payment record and the gapless sale number, all in ONE transaction. `payment` holds the Payment fields
-    that differ by method (method, reference, tendered, change_given, mpesa_transaction)."""
+def finish_sale(user, shift, *, payment=None, payments=None, customer_name=""):
+    """The shared end of every checkout (cash, M-PESA, split, later card and bank): stock, cost basis, VAT
+    snapshot, the payment records and the gapless sale number, all in ONE transaction.
+    `payment` = one method paying the whole total (the Payment fields that differ: method, reference, tendered,
+    change_given, mpesa_transaction). `payments` = a list of such dicts, each with its own `amount`, for a sale
+    paid in parts; their amounts must add up to the total exactly."""
     sale = _locked_sale(user, shift)
     items = list(sale.items.select_related("product"))
     if not items:
@@ -478,7 +480,12 @@ def finish_sale(user, shift, *, payment, customer_name=""):
         tax_total += vat
 
     now = timezone.now()
-    Payment.objects.create(sale=sale, status=Payment.CONFIRMED, amount=total, received_by=user, **payment)
+    if payments is None:
+        payments = [dict(payment, amount=total)]
+    if rules.money(sum((p["amount"] for p in payments), Decimal("0.00"))) != total:
+        raise SaleError("The payments do not add up to the sale total.")
+    for part in payments:
+        Payment.objects.create(sale=sale, status=Payment.CONFIRMED, received_by=user, **part)
     if customer_name:
         sale.customer_name = customer_name[:120]
     sale.number, sale.status, sale.completed_at = number, Sale.COMPLETED, now
@@ -488,7 +495,8 @@ def finish_sale(user, shift, *, payment, customer_name=""):
                              "vat_applied", "tax_total", "customer_name"])
     etims.create_submission(sale)       # the invoice number is taken inside this same transaction
     audit.record("sale.completed", actor=user, object_type="sale", object_ref=number,
-                 new={"total": str(total), "method": payment["method"], "items": len(items), "vat": str(tax_total)},
+                 new={"total": str(total), "method": "+".join(dict.fromkeys(p["method"] for p in payments)),
+                      "items": len(items), "vat": str(tax_total)},
                  till_number=shift.till.number)
     return sale
 
@@ -532,13 +540,22 @@ def shift_summary(shift):
     done = Sale.objects.filter(shift=shift, status=Sale.COMPLETED)
 
     def paid(method):
-        return Payment.objects.filter(sale__in=done, method=method).aggregate(t=Sum("amount"))["t"] or Decimal("0.00")
+        return rules.money(Payment.objects.filter(sale__in=done, method=method).aggregate(t=Sum("amount"))["t"] or 0)
 
     cash, mpesa = paid(Payment.CASH), paid(Payment.MPESA)
     other = paid(Payment.CARD) + paid(Payment.BANK)
-    return {"sales_count": done.count(), "sales_total": str(done.aggregate(t=Sum("total"))["t"] or Decimal("0.00")),
+    # Refunds (see sales.refunds): only cash really handed back from THIS drawer reduces expected cash.
+    from .models import Refund
+    def refunded(**flt):
+        return rules.money(Refund.objects.filter(**flt).aggregate(t=Sum("total"))["t"] or 0)
+    cash_refunds = refunded(paid_shift=shift, status=Refund.PAID, method=Refund.CASH)
+    mpesa_refunds_paid = refunded(shift=shift, status=Refund.PAID, method=Refund.MPESA)
+    refunds_waiting = refunded(shift=shift, status__in=(Refund.REQUESTED, Refund.APPROVED))
+    return {"sales_count": done.count(), "sales_total": str(rules.money(done.aggregate(t=Sum("total"))["t"] or 0)),
             "cash_sales": str(cash), "mpesa_sales": str(mpesa), "other_sales": str(other),
-            "opening_float": str(shift.opening_float), "cash_in_drawer_expected": str(shift.opening_float + cash)}
+            "cash_refunds": str(cash_refunds), "mpesa_refunds_paid": str(mpesa_refunds_paid),
+            "refunds_waiting": str(refunds_waiting),
+            "opening_float": str(shift.opening_float), "cash_in_drawer_expected": str(shift.opening_float + cash - cash_refunds)}
 
 
 def cart_total(sale):

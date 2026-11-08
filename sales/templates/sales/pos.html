@@ -40,6 +40,7 @@
   .dlg .note{color:var(--muted);font-size:13px;margin:0 0 8px}
   .dlg .err{color:var(--bad);font-size:14px;min-height:20px;margin-top:8px}
   .dlg .btns{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
+  table.rl{width:100%;border-collapse:collapse;margin:8px 0} table.rl th,table.rl td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line)}
   .opts{list-style:none;margin:0;padding:0;border:1px solid var(--line)}
   .opts li{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:12px}
   .opts li:last-child{border-bottom:0} .opts li.on{background:var(--nav-on);box-shadow:inset 3px 0 0 var(--crimson)}
@@ -198,7 +199,7 @@
   /* ---------- approval window ----------
      When the server says a supervisor must approve (HTTP 409), ask for the approver's own login, get a
      single-use token, and send the SAME request again with it. Closing this window just cancels. */
-  var ACTION_LABEL = { remove_item: "Remove item from sale", void_sale: "Void the sale", price_change: "Change price",
+  var ACTION_LABEL = { refund: "Approve a refund", remove_item: "Remove item from sale", void_sale: "Void the sale", price_change: "Change price",
                        exceptional_discount: "Exceptional discount" };
   function askApproval(action, ref, detail) {
     return new Promise(function (resolve) {
@@ -392,72 +393,140 @@
     };
   }
 
-  /* ---------- payment and completion ---------- */
+  /* ---------- payment and completion ----------
+     ONE checkout for every way of paying: cash only, M-PESA only, or both on the same sale.
+     What is already paid (M-PESA payments chosen, cash taken) is kept here in S.tender, in cents. Nothing is
+     sent to the server until the balance is zero; then ONE request completes the sale and the server checks
+     every figure again. If the cart changes, the part payments are cleared. */
+  function cents(x) { return Math.round(Number(x) * 100); }
+  function money(c) { return fmt(c / 100); }
+  function tender() {
+    var tot = cents(S.cart.total);
+    if (S.tender && S.tender.total !== tot) { S.tenderReset = S.tender.mpesa.length > 0 || S.tender.cashC > 0; S.tender = null; }
+    if (!S.tender) S.tender = { total: tot, mpesa: [], cashC: 0 };
+    return S.tender;
+  }
+  function leftC() {
+    var t = tender(), paid = t.cashC;
+    t.mpesa.forEach(function (p) { paid += p.c; });
+    return t.total - paid;
+  }
   function payment() {
     var c = S.cart; if (!c || !items().length) { say("The sale is empty. Scan a product first.", "err"); return; }
-    var ms = S.cfg.payment_methods;
-    var d = openDialog('<h2>Payment method</h2><ul class="opts">' + ms.map(function (m, i) {
+    var t = tender(), ms = S.cfg.payment_methods, staged = t.mpesa.length > 0 || t.cashC > 0, info = "";
+    if (S.tenderReset) { info = '<p class="err">The sale changed, so the part payments were cleared. Start again.</p>'; S.tenderReset = false; }
+    if (staged) {
+      info += '<ul class="opts" style="margin-bottom:10px">' +
+        t.mpesa.map(function (p) { return "<li><span>M-PESA " + esc(p.receipt || "") + "</span><span>" + money(p.c) + "</span></li>"; }).join("") +
+        (t.cashC ? "<li><span>Cash taken</span><span>" + money(t.cashC) + "</span></li>" : "") +
+        '<li class="on"><span><b>Still to pay</b></span><span><b>' + money(leftC()) + "</b></span></li></ul>";
+    } else {
+      info += '<p class="note">Paying with both cash and M-PESA? Choose one first. What is left comes back to this list.</p>';
+    }
+    var d = openDialog('<h2>Payment method</h2><div class="grandlbl">Total payable (KES)</div><div class="grand" style="text-align:left">' + money(t.total) + "</div>" + info +
+      '<ul class="opts">' + ms.map(function (m, i) {
       return '<li class="' + (m.enabled ? "on" : "off") + '"><span>' + (i + 1) + ". " + esc(m.label) + "</span><span>" + (m.enabled ? "press " + (i + 1) : "not available yet") + "</span></li>";
-    }).join("") + '</ul><div class="btns"><button class="ghost" id="py-no" type="button">Back (Esc)</button><button id="py-ok" data-first type="button">Cash (Enter)</button></div>');
+    }).join("") + '</ul><div class="btns">' + (staged ? '<button class="ghost" id="py-clr" type="button">Start over (C)</button>' : "") +
+      '<button class="ghost" id="py-no" type="button">Back (Esc)</button><button id="py-ok" data-first type="button">Cash (Enter)</button></div>');
     function pick(i) { var m = ms[i]; if (!m || !m.enabled) return; closeDialog(d); if (m.code === "MPESA") mpesa(); else complete(); }
+    function clear() { S.tender = null; closeDialog(d); payment(); }
     $("py-ok").onclick = function () { pick(0); }; $("py-no").onclick = function () { closeDialog(d); };
+    if ($("py-clr")) $("py-clr").onclick = clear;
     d.onKey = function (e) {
       if (e.key === "Enter") { e.preventDefault(); pick(0); return true; }
+      if (staged && (e.key === "c" || e.key === "C")) { e.preventDefault(); clear(); return true; }
       if (/^[1-9]$/.test(e.key)) { e.preventDefault(); pick(Number(e.key) - 1); return true; }
       return false;
     };
   }
-  function mpesaDone(r) {
-    setCart(r.cart); S.sel = -1; S.lastSale = r.sale_id;
-    var note = "Sale " + r.number + " complete. Paid by M-PESA " + r.reference + (r.customer ? " (" + r.customer + ")" : "") + ".";
-    if (r.etims === "PENDING") note += " eTIMS signature pending (will retry).";
+  /* Send the sale to the server: the M-PESA payments chosen so far plus (if any) the cash handed over in total. */
+  function finish(cashTendered, d, onErr) {
+    if (S.busy) return;
+    var t = tender(), body = { mpesa_ids: t.mpesa.map(function (p) { return p.id; }) };
+    if (cashTendered != null) body.cash_tendered = Number(cashTendered).toFixed(2);
+    S.busy = true;
+    api("POST", "/api/sales/checkout/", body).then(function (r) {
+      S.busy = false;
+      if (!r.ok) {
+        var msg = r.error || "Could not complete the sale.";
+        if (/already been used|not found/i.test(msg)) { t.mpesa = []; msg += " The M-PESA payments were cleared. Choose them again."; }
+        onErr(msg); if (/stock/i.test(msg)) refresh();
+        return;
+      }
+      if (d && S.stack.indexOf(d) >= 0) closeDialog(d);
+      saleDone(r);
+    });
+  }
+  function saleDone(r) {
+    S.tender = null; setCart(r.cart); S.sel = -1; S.lastSale = r.sale_id;
+    var change = Number(r.change);
+    if (Number(r.cash) > 0) {
+      var t = $("totals"); t.className = "panel done";
+      $("t-total").textContent = fmt(change); document.querySelector("#totals .grandlbl").textContent = "Change due (KES)";
+      setTimeout(function () { document.querySelector("#totals .grandlbl").textContent = "Total payable (KES)"; if (!items().length) { $("t-total").textContent = "0.00"; t.className = "panel"; } }, 6000);
+    }
+    var how = [];
+    if (Number(r.mpesa) > 0) how.push("M-PESA " + fmt(r.mpesa) + (r.references && r.references.length ? " (" + r.references.join(", ") + ")" : ""));
+    if (Number(r.cash) > 0) how.push("Cash " + fmt(r.cash));
+    var note = "Sale " + r.number + " complete. Paid by " + how.join(" + ") + "." + (change > 0 ? " Change " + fmt(change) + "." : "") + (r.customer ? " Customer: " + r.customer + "." : "");
+    if (r.etims === "SUBMITTED") note += " eTIMS signed.";
+    else if (r.etims === "PENDING") note += " eTIMS signature pending (will retry). " + (r.etims_note || "");
     else if (r.etims === "REJECTED") note += " eTIMS REJECTED: tell the manager. " + (r.etims_note || "");
     say(note, r.etims === "REJECTED" ? "err" : "ok");
     printSale(r.sale_id, false);
   }
   function mpesa() {
-    var total = Number(S.cart.total), rows = [], idx = 0, poller = null, stkTimer = null, mcfg = S.cfg.mpesa || {};
-    var d = openDialog('<h2>M-PESA payment</h2><div class="grandlbl">Total payable (KES)</div><div class="grand" style="text-align:left">' + fmt(total) + "</div>" +
-      '<p class="note">Customer paid to the Till? It shows below within a few seconds. Choose it and press Enter. Only payments confirmed by Safaricom appear here.</p>' +
+    var t = tender(), rows = [], idx = 0, poller = null, stkTimer = null, mcfg = S.cfg.mpesa || {};
+    var left0 = leftC(); if (left0 <= 0) { say("Nothing is left to pay.", "err"); return; }
+    var whole = left0 % 100 === 0 ? String(left0 / 100) : (left0 / 100).toFixed(2);
+    var d = openDialog('<h2>M-PESA payment</h2><div class="grandlbl">' + (left0 === t.total ? "Total payable" : "Still to pay") + ' (KES)</div><div class="grand" style="text-align:left">' + money(left0) + "</div>" +
+      '<p class="note">Customer paid to the Till? It shows below within a few seconds. Choose it and press Enter. A payment smaller than the balance is a part payment: the rest can be cash or another M-PESA. Only payments confirmed by Safaricom appear here.</p>' +
       (mcfg.till_capture ? "" : '<p class="err">M-PESA capture is not set up on this shop yet. Ask the manager.</p>') +
       '<ul class="opts" id="mp-list"></ul>' +
       "<label>Or send a payment request to the customer's phone</label>" +
       '<input id="mp-phone" inputmode="tel" autocomplete="off" placeholder="0712 345 678"' + (mcfg.stk ? "" : " disabled") + ">" +
+      '<label>Amount to request (KES, whole shillings)</label><input id="mp-amt" inputmode="decimal" autocomplete="off" value="' + whole + '"' + (mcfg.stk ? "" : " disabled") + ">" +
       '<div class="note" id="mp-stk">' + (mcfg.stk ? "" : "Phone requests are not set up. The customer can still pay the Till.") + "</div>" +
       '<div class="err" id="mp-err"></div>' +
       '<div class="btns"><button class="ghost" id="mp-no" type="button">Back (Esc)</button><button id="mp-ok" data-first type="button">Use selected payment (Enter)</button></div>');
     function alive() { return S.stack.indexOf(d) >= 0; }
+    function staged(id) { return t.mpesa.some(function (p) { return p.id === id; }); }
+    function visible() { return rows.filter(function (p) { return !staged(p.id); }); }
+    function usable(p) { return cents(p.amount) <= leftC(); }
     function paint() {
       var ul = $("mp-list"); if (!ul) return;
-      if (!rows.length) { ul.innerHTML = '<li class="off"><span>Waiting for a payment of ' + fmt(total) + "...</span><span></span></li>"; return; }
-      ul.innerHTML = rows.map(function (p, i) {
-        var label = (p.name ? esc(p.name) : "Name not provided") + (p.who ? " " + esc(p.who) : "") + " | " + esc(p.receipt) + " | " + esc(p.time);
-        var right = fmt(Number(p.amount)) + (p.matches ? "" : " (sale is " + fmt(total) + ")");
-        return '<li class="' + (p.matches ? "on" : "off") + '"' + (i === idx ? ' style="outline:2px solid var(--crimson)"' : "") + "><span>" + label + "</span><span>" + right + "</span></li>";
+      var v = visible();
+      if (!v.length) { ul.innerHTML = '<li class="off"><span>Waiting for a payment of up to ' + money(leftC()) + "...</span><span></span></li>"; return; }
+      ul.innerHTML = v.map(function (p, i) {
+        var ok = usable(p), label = (p.name ? esc(p.name) : "Name not provided") + (p.who ? " " + esc(p.who) : "") + " | " + esc(p.receipt) + " | " + esc(p.time);
+        var right = fmt(Number(p.amount)) + (!ok ? " (more than the balance)" : cents(p.amount) === leftC() ? "" : " (part payment)");
+        return '<li class="' + (ok ? "on" : "off") + '"' + (i === idx ? ' style="outline:2px solid var(--crimson)"' : "") + "><span>" + label + "</span><span>" + right + "</span></li>";
       }).join("");
     }
     function poll() {
       api("GET", "/api/sales/mpesa/recent/").then(function (r) {
         if (!r.ok || !alive()) return;
         rows = r.payments || [];
-        var first = -1; rows.forEach(function (p, i) { if (first < 0 && p.matches) first = i; });
-        if (idx >= rows.length || (rows[idx] && !rows[idx].matches && first >= 0)) idx = first >= 0 ? first : 0;
+        var v = visible(), best = -1;
+        v.forEach(function (p, i) { if (best < 0 && cents(p.amount) === leftC()) best = i; });
+        if (best < 0) v.forEach(function (p, i) { if (best < 0 && usable(p)) best = i; });
+        if (idx >= v.length || !usable(v[idx])) idx = best >= 0 ? best : 0;
         paint();
       });
     }
-    function apply(id) {
-      if (S.busy) return; S.busy = true;
-      api("POST", "/api/sales/checkout/mpesa/", { transaction_id: id }).then(function (r) {
-        S.busy = false;
-        if (!r.ok) { var er = $("mp-err"); if (er) er.textContent = r.error || "Could not complete the sale."; if (alive()) poll(); return; }
-        if (alive()) closeDialog(d);
-        mpesaDone(r);
-      });
+    /* Add one confirmed payment. If that clears the balance the sale completes; otherwise back to the list. */
+    function take(id, c, receipt) {
+      if (S.busy) return;
+      if (c > leftC()) { $("mp-err").textContent = "That payment is more than what is left to pay (" + money(leftC()) + "). Overpayments come in the next update."; return; }
+      t.mpesa.push({ id: id, c: c, receipt: receipt });
+      if (leftC() === 0) {
+        finish(t.cashC ? t.cashC / 100 : null, d, function (msg) { var er = $("mp-err"); if (er) er.textContent = msg; t.mpesa.pop(); if (alive()) poll(); });
+      } else { closeDialog(d); payment(); }
     }
     function sendStk() {
       var phone = $("mp-phone").value.trim(); if (!phone) return;
       $("mp-err").textContent = ""; $("mp-stk").textContent = "Sending request...";
-      api("POST", "/api/sales/mpesa/stk/", { phone: phone }).then(function (r) {
+      api("POST", "/api/sales/mpesa/stk/", { phone: phone, amount: $("mp-amt").value.trim() }).then(function (r) {
         if (!alive()) return;
         if (!r.ok) { $("mp-stk").textContent = ""; $("mp-err").textContent = r.error || "Could not send the request."; return; }
         $("mp-stk").textContent = "Request sent. Ask the customer to enter their M-PESA PIN...";
@@ -465,7 +534,7 @@
         stkTimer = setInterval(function () {
           api("GET", "/api/sales/mpesa/stk/" + r.stk_id + "/").then(function (s) {
             if (!alive() || !s.ok) return;
-            if (s.status === "CONFIRMED" && s.transaction_id) { clearInterval(stkTimer); apply(s.transaction_id); }
+            if (s.status === "CONFIRMED" && s.transaction_id) { clearInterval(stkTimer); $("mp-stk").textContent = ""; take(s.transaction_id, cents(s.amount), s.receipt); }
             else if (s.status === "FAILED" || s.status === "EXPIRED") {
               clearInterval(stkTimer); $("mp-stk").textContent = "";
               $("mp-err").textContent = (s.status === "EXPIRED" ? "The customer did not answer. " : "") + (s.message || "The payment did not go through.");
@@ -478,41 +547,36 @@
     poller = setInterval(poll, 3000); poll(); paint();
     $("mp-no").onclick = function () { closeDialog(d); };
     $("mp-ok").onclick = function () {
-      if (rows[idx] && rows[idx].matches) apply(rows[idx].id);
-      else $("mp-err").textContent = "No payment of KES " + fmt(total) + " has arrived yet.";
+      var p = visible()[idx];
+      if (p && usable(p)) take(p.id, cents(p.amount), p.receipt);
+      else $("mp-err").textContent = "No payment of up to KES " + money(leftC()) + " has arrived yet.";
     };
     d.onKey = function (e) {
-      if (e.key === "ArrowDown") { e.preventDefault(); idx = Math.max(0, Math.min(rows.length - 1, idx + 1)); paint(); return true; }
+      var n = visible().length;
+      if (e.key === "ArrowDown") { e.preventDefault(); idx = Math.max(0, Math.min(n - 1, idx + 1)); paint(); return true; }
       if (e.key === "ArrowUp") { e.preventDefault(); idx = Math.max(0, idx - 1); paint(); return true; }
-      if (e.key === "Enter") { e.preventDefault(); if (document.activeElement === $("mp-phone")) sendStk(); else $("mp-ok").onclick(); return true; }
+      if (e.key === "Enter") { e.preventDefault(); var ae = document.activeElement; if (ae === $("mp-phone") || ae === $("mp-amt")) sendStk(); else $("mp-ok").onclick(); return true; }
       return false;
     };
   }
   function complete() {
     var c = S.cart; if (!c || !items().length) { say("The sale is empty. Scan a product first.", "err"); return; }
-    var total = Number(c.total);
-    var d = openDialog('<h2>Cash payment</h2><div class="grandlbl">Total payable (KES)</div><div class="grand" style="text-align:left">' + fmt(total) + "</div>" +
-      '<label>Cash received (KES)</label><input id="cp-in" data-first inputmode="decimal" autocomplete="off" value="' + total.toFixed(2) + '">' +
+    var t = tender(), due = leftC(), partly = due < t.total;
+    if (due <= 0) { say("Nothing is left to pay.", "err"); return; }
+    var d = openDialog('<h2>Cash payment</h2>' + (partly ? '<p class="note">Sale total ' + money(t.total) + ". Already paid " + money(t.total - due) + ".</p>" : "") +
+      '<div class="grandlbl">' + (partly ? "Cash still to pay" : "Total payable") + ' (KES)</div><div class="grand" style="text-align:left">' + money(due) + "</div>" +
+      '<label>Cash received (KES)</label><input id="cp-in" data-first inputmode="decimal" autocomplete="off" value="' + (due / 100).toFixed(2) + '">' +
       '<div class="tot" style="margin-top:10px"><span>Change</span><b id="cp-ch" style="color:var(--text);font-size:22px">0.00</b></div><div class="err" id="cp-err"></div>' +
       '<div class="btns"><button class="ghost" id="cp-no" type="button">Back (Esc)</button><button id="cp-ok" type="button">Complete sale (Enter)</button></div>');
     var inp = $("cp-in");
-    function calc() { var v = parseFloat(inp.value.replace(/,/g, "")); $("cp-ch").textContent = isFinite(v) && v >= total ? fmt(v - total) : "-"; }
+    function val() { var v = parseFloat(inp.value.replace(/,/g, "")); return isFinite(v) && v > 0 ? cents(v) : 0; }
+    function calc() { var v = val(); $("cp-ch").textContent = v >= due ? money(v - due) : "-"; }
     inp.addEventListener("input", calc); calc();
     var go = function () {
-      if (S.busy) return; S.busy = true;
-      api("POST", "/api/sales/checkout/cash/", { tendered: inp.value }).then(function (r) {
-        S.busy = false;
-        if (!r.ok) { $("cp-err").textContent = r.error || "Could not complete the sale."; if (r.error && /stock/i.test(r.error)) refresh(); return; }
-        closeDialog(d); setCart(r.cart); S.sel = -1; S.lastSale = r.sale_id;
-        var t = $("totals"); t.className = "panel done";
-        $("t-total").textContent = fmt(r.change); document.querySelector("#totals .grandlbl").textContent = "Change due (KES)";
-        setTimeout(function () { document.querySelector("#totals .grandlbl").textContent = "Total payable (KES)"; if (!items().length) { $("t-total").textContent = "0.00"; t.className = "panel"; } }, 6000);
-        var note = "Sale " + r.number + " complete. Change " + fmt(r.change) + ".";
-        if (r.etims === "SUBMITTED") note += " eTIMS signed.";
-        else if (r.etims === "PENDING") note += " eTIMS signature pending (will retry). " + (r.etims_note || "");
-        else if (r.etims === "REJECTED") note += " eTIMS REJECTED: tell the manager. " + (r.etims_note || "");
-        say(note, r.etims === "REJECTED" ? "err" : "ok");
-        printSale(r.sale_id, false);
+      var v = val(); if (!v) { $("cp-err").textContent = "Enter the cash received."; return; }
+      if (v >= due) { finish((t.cashC + v) / 100, d, function (msg) { $("cp-err").textContent = msg; }); return; }
+      confirmBox("Cash " + money(v) + " is less than the " + money(due) + " still to pay. Take it as a part payment and collect the rest by M-PESA?", function () {
+        t.cashC += v; closeDialog(d); payment();
       });
     };
     $("cp-ok").onclick = go; $("cp-no").onclick = function () { closeDialog(d); };
@@ -520,17 +584,26 @@
   }
 
   /* ---------- receipts ---------- */
+  function printLines(r, done) {
+    var mm = r.paper_mm === 58 ? 58 : 80, font = mm === 58 ? 11 : 10;
+    var html = "<!doctype html><html><head><meta charset=utf-8><style>@page{size:" + mm + "mm auto;margin:0}html,body{margin:0;background:#fff;color:#000}" +
+      "pre{margin:0;padding:2mm;width:" + (mm - 4) + "mm;font:" + font + "px/1.25 'Courier New',monospace;white-space:pre-wrap}" +
+      "svg{display:block;width:32mm;height:32mm;margin:2mm auto}</style></head><body><pre>" + esc(r.lines.join("\n")) + "</pre>" + (r.qr_svg || "") + "</body></html>";
+    var f = $("printframe"); f.onload = function () { f.onload = null; try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { say("The printer did not start.", "err"); } focusScan(); };
+    f.srcdoc = html;
+    say(done, "ok");
+  }
   function printSale(id, dup) {
     var call = dup ? api("POST", "/api/sales/receipt/" + id + "/reprint/", {}) : api("GET", "/api/sales/receipt/" + id + "/");
     call.then(function (r) {
       if (!r.ok) { say(r.error || "Could not print.", "err"); return; }
-      var mm = r.paper_mm === 58 ? 58 : 80, font = mm === 58 ? 11 : 10;
-      var html = "<!doctype html><html><head><meta charset=utf-8><style>@page{size:" + mm + "mm auto;margin:0}html,body{margin:0;background:#fff;color:#000}" +
-        "pre{margin:0;padding:2mm;width:" + (mm - 4) + "mm;font:" + font + "px/1.25 'Courier New',monospace;white-space:pre-wrap}" +
-        "svg{display:block;width:32mm;height:32mm;margin:2mm auto}</style></head><body><pre>" + esc(r.lines.join("\n")) + "</pre>" + (r.qr_svg || "") + "</body></html>";
-      var f = $("printframe"); f.onload = function () { f.onload = null; try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { say("The printer did not start.", "err"); } focusScan(); };
-      f.srcdoc = html;
-      say(dup ? "Duplicate receipt sent to the printer." : "Receipt sent to the printer.", "ok");
+      printLines(r, dup ? "Duplicate receipt sent to the printer." : "Receipt sent to the printer.");
+    });
+  }
+  function printRefund(id) {
+    api("POST", "/api/sales/refund/" + id + "/receipt/", {}).then(function (r) {
+      if (!r.ok) { say(r.error || "Could not print the refund slip.", "err"); return; }
+      printLines(r, r.duplicate ? "Duplicate refund slip sent to the printer." : "Refund slip sent to the printer.");
     });
   }
   function printMenu() {
@@ -549,7 +622,7 @@
       if (!r.ok) { say(r.error, "err"); return; }
       var s = r.shift;
       var d = openDialog("<h2>Shift summary</h2>" + '<div class="keys"><span>Sales made</span><b>' + s.sales_count + "</b><span>Sales total</span><b>" + fmt(s.sales_total) +
-        "</b><span>Cash sales</span><b>" + fmt(s.cash_sales) + "</b><span>Opening float</span><b>" + fmt(s.opening_float) + "</b><span>Expected cash in drawer</span><b>" + fmt(s.cash_in_drawer_expected) +
+        "</b><span>Cash sales</span><b>" + fmt(s.cash_sales) + "</b><span>M-PESA sales</span><b>" + fmt(s.mpesa_sales) + "</b><span>Opening float</span><b>" + fmt(s.opening_float) + "</b><span>Expected cash in drawer</span><b>" + fmt(s.cash_in_drawer_expected) +
         '</b></div><p class="note" style="margin-top:10px">Closing the till and cash-up arrive in Phase 5.</p><div class="btns"><button id="ss-ok" data-first type="button">Close (Enter)</button></div>');
       $("ss-ok").onclick = function () { closeDialog(d); };
       d.onKey = function (e) { if (e.key === "Enter") { e.preventDefault(); closeDialog(d); return true; } return false; };
@@ -565,8 +638,121 @@
     d.onKey = function (e) { if (e.key === "Enter") { e.preventDefault(); closeDialog(d); return true; } return false; };
   }
 
+  /* ---------- refunds (Alt+R) ----------
+     Ask -> a supervisor approves (stock goes back) -> the customer is paid back. Cash is handed over here and leaves
+     the drawer figure; M-PESA is paid back outside and a supervisor records the M-PESA code. Every step is checked
+     again by the server; nothing here is trusted. */
+  function refundMenu() {
+    if (!S.cfg.can.refund) { say("You are not allowed to start refunds.", "err"); return; }
+    var d = openDialog('<h2>Refunds</h2><ul class="opts"><li class="on"><span>1. New refund</span><span>press 1</span></li>' +
+      '<li class="on"><span>2. Waiting for approval / to pay back</span><span>press 2</span></li></ul>' +
+      '<div class="btns"><button class="ghost" id="rf-no" type="button" data-first>Back (Esc)</button></div>');
+    $("rf-no").onclick = function () { closeDialog(d); };
+    d.onKey = function (e) {
+      if (e.key === "1") { e.preventDefault(); closeDialog(d); refundFind(); return true; }
+      if (e.key === "2") { e.preventDefault(); closeDialog(d); refundList(); return true; }
+      return false;
+    };
+  }
+  function refundFind() {
+    promptBox("New refund", "Receipt number (the last 4 or more characters)", "", function (v, d, err) {
+      if (!v.trim()) { err("Type the receipt number."); return; }
+      api("GET", "/api/sales/refund/find/?q=" + encodeURIComponent(v.trim())).then(function (r) {
+        if (!r.ok) { err(r.error || "Not found."); return; }
+        closeDialog(d); refundLines(r.sale, r.lines);
+      });
+    }, "Find the sale the customer is bringing back goods from. It is on their receipt.");
+  }
+  function refundLines(sale, lines) {
+    var rows = lines.map(function (l) {
+      return "<tr><td>" + esc(l.name) + (l.pack ? " <small>" + esc(l.pack) + "</small>" : "") + "</td><td>" + l.sold + "</td><td>" + l.left + "</td><td>" +
+        (l.left > 0 ? '<input class="rl-q" data-id="' + l.item_id + '" inputmode="numeric" autocomplete="off" value="0" style="width:56px">' : "done") + "</td></tr>";
+    }).join("");
+    var d = openDialog("<h2>Refund for " + esc(sale.number) + "</h2><p class=\"note\">Sale total " + fmt(sale.total) + (sale.customer ? " | " + esc(sale.customer) : "") +
+      '. Type how many of each item come back.</p><table class="rl"><tr><th>Item</th><th>Sold</th><th>Left</th><th>Refund</th></tr>' + rows + "</table>" +
+      '<label>Pay the customer back by</label><select id="rl-method"><option value="CASH">Cash</option><option value="MPESA">M-PESA</option></select>' +
+      '<label>Reason</label><input id="rl-reason" autocomplete="off" placeholder="e.g. bottle was faulty">' +
+      '<label><input type="checkbox" id="rl-back" checked style="width:auto"> Goods are fine to sell again (put back in stock)</label>' +
+      '<div class="err" id="rl-err"></div><div class="btns"><button class="ghost" id="rl-no" type="button">Cancel (Esc)</button><button id="rl-ok" type="button">Ask for approval (Enter)</button></div>');
+    var first = d.root.querySelector(".rl-q"); if (first) { first.focus(); first.select(); }
+    var go = function () {
+      if (S.busy) return;
+      var picked = [].slice.call(d.root.querySelectorAll(".rl-q")).map(function (el) { return { item_id: Number(el.getAttribute("data-id")), quantity: parseInt(el.value, 10) || 0 }; })
+        .filter(function (x) { return x.quantity > 0; });
+      if (!picked.length) { $("rl-err").textContent = "Type how many of at least one item are coming back."; return; }
+      S.busy = true;
+      api("POST", "/api/sales/refund/request/", { sale_id: sale.id, lines: picked, method: $("rl-method").value, reason: $("rl-reason").value, restock: $("rl-back").checked }).then(function (r) {
+        S.busy = false;
+        if (!r.ok) { $("rl-err").textContent = r.error || "Could not start the refund."; return; }
+        closeDialog(d); say("Refund " + r.refund.number + " for " + fmt(r.refund.total) + " is waiting for a supervisor.", "ok");
+        refundApprove(r.refund);
+      });
+    };
+    $("rl-ok").onclick = go; $("rl-no").onclick = function () { closeDialog(d); };
+    d.onKey = function (e) { if (e.key === "Enter") { e.preventDefault(); go(); return true; } return false; };
+  }
+  function refundApprove(rf) {
+    act("/api/sales/refund/" + rf.id + "/approve/", {}, { detail: "refund " + rf.number + " of KES " + fmt(rf.total) }).then(function (r) {
+      if (r.ok) { refundApproved(r.refund, r); }
+      else if (r.cancelled) say("Not approved yet. The request is saved: Alt+R then 2 to approve it later.", "err");
+    });
+  }
+  function etimsNote(r) {
+    if (!r || !r.etims) return "";
+    if (r.etims === "SUBMITTED") return " eTIMS credit note signed.";
+    if (r.etims === "PENDING") return " eTIMS credit note pending (will retry)." + (r.etims_note ? " " + r.etims_note : "");
+    if (r.etims === "REJECTED") return " eTIMS credit note REJECTED: tell the manager. " + (r.etims_note || "");
+    return "";
+  }
+  function refundApproved(rf, r) {
+    var note = etimsNote(r), bad = r && r.etims === "REJECTED";
+    if (rf.method === "CASH" && rf.can.pay_cash) {
+      say("Refund " + rf.number + " approved." + note, bad ? "err" : "ok");
+      confirmBox("Refund " + rf.number + " approved. Hand KES " + fmt(rf.total) + " cash to the customer now?", function () { refundCash(rf); });
+    } else {
+      say("Refund " + rf.number + " approved. It goes back by M-PESA: a supervisor records the M-PESA code under Alt+R, 2 once paid." + note, bad ? "err" : "ok");
+    }
+  }
+  function refundCash(rf) {
+    act("/api/sales/refund/" + rf.id + "/pay-cash/", {}).then(function (r) {
+      if (r.ok) { say("Cash refund " + rf.number + " paid. Slip printing.", "ok"); printRefund(rf.id); }
+    });
+  }
+  function refundList() {
+    api("GET", "/api/sales/refund/list/").then(function (r) {
+      if (!r.ok) { say(r.error, "err"); return; }
+      pickList("Refunds", r.refunds, function (x) { return esc(x.number) + " <small>" + esc(x.status_label) + " | " + (x.method === "CASH" ? "cash" : "M-PESA") + " | " + esc(x.by) + " " + esc(x.time) + (x.etims && x.etims !== "SUBMITTED" ? " | eTIMS " + (x.etims === "REJECTED" ? "REJECTED" : "pending") : "") + "</small>"; },
+        function (x) { return fmt(x.total); }, "No refunds waiting.", refundActions);
+    });
+  }
+  function refundActions(rf) {
+    var c = rf.can, btn = function (id, label, on) { return on ? '<button class="ghost" id="' + id + '" type="button">' + label + "</button>" : ""; };
+    var d = openDialog("<h2>" + esc(rf.number) + "</h2><p class=\"note\">Sale " + esc(rf.sale) + " | " + esc(rf.status_label) + " | by " + esc(rf.by) + "</p>" +
+      '<ul class="opts">' + rf.items.map(function (i) { return "<li><span>" + i.quantity + " x " + esc(i.name) + (i.restock ? "" : " <small>(not for resale)</small>") + "</span><span>" + fmt(i.amount) + "</span></li>"; }).join("") +
+      '<li class="on"><span><b>Total refund</b></span><span><b>' + fmt(rf.total) + "</b></span></li></ul><p class=\"note\">Reason: " + esc(rf.reason) + "</p>" +
+      '<div class="btns" style="flex-wrap:wrap">' + btn("ra-approve", "Approve (A)", c.approve) + btn("ra-reject", "Reject (R)", c.reject) + btn("ra-cancel", "Cancel request (C)", c.cancel) +
+      btn("ra-cash", "Hand over cash (H)", c.pay_cash) + btn("ra-mpesa", "Record M-PESA payback (M)", c.mark_mpesa) +
+      btn("ra-print", "Print slip (P)", rf.status === "APPROVED" || rf.status === "PAID") + '<button class="ghost" id="ra-no" type="button" data-first>Close (Esc)</button></div>');
+    var on = function (id, fn) { var el = $(id); if (el) el.onclick = function () { closeDialog(d); fn(); }; };
+    on("ra-approve", function () { refundApprove(rf); });
+    on("ra-reject", function () { promptBox("Reject refund", "Why is it rejected?", "", function (v, pd, err) {
+      act("/api/sales/refund/" + rf.id + "/reject/", { reason: v }).then(function (r) { if (r.ok) { closeDialog(pd); say("Refund " + rf.number + " rejected.", "ok"); } else err(r.error); }); }); });
+    on("ra-cancel", function () { act("/api/sales/refund/" + rf.id + "/cancel/", {}).then(function (r) { if (r.ok) say("Refund " + rf.number + " cancelled.", "ok"); }); });
+    on("ra-cash", function () { confirmBox("Hand KES " + fmt(rf.total) + " cash to the customer now?", function () { refundCash(rf); }); });
+    on("ra-mpesa", function () { promptBox("M-PESA payback", "M-PESA code of the payback", "", function (v, pd, err) {
+      act("/api/sales/refund/" + rf.id + "/mpesa-paid/", { reference: v }).then(function (r) { if (r.ok) { closeDialog(pd); say("Refund " + rf.number + " recorded as paid back.", "ok"); printRefund(rf.id); } else err(r.error); }); },
+      "Type the code from the M-PESA message that proves the customer was paid. The person who asked for the refund cannot record it."); });
+    on("ra-print", function () { printRefund(rf.id); });
+    $("ra-no").onclick = function () { closeDialog(d); };
+    d.onKey = function (e) {
+      var k = String(e.key).toLowerCase(), map = { a: "ra-approve", r: "ra-reject", c: "ra-cancel", h: "ra-cash", m: "ra-mpesa", p: "ra-print" };
+      if (map[k] && $(map[k])) { e.preventDefault(); $(map[k]).click(); return true; }
+      return false;
+    };
+  }
+
   var ACTIONS = { help: help, search: search, scan: function () { $("scan").focus(); $("scan").select(); }, quantity: changeQty, hold: hold, retrieve: retrieve,
-                  discount: discount, payment: payment, complete: complete, print: printMenu, shift: shiftSummary, approval: approvalMenu, customer: customer };
+                  discount: discount, payment: payment, complete: complete, print: printMenu, shift: shiftSummary, approval: approvalMenu, customer: customer, refund: refundMenu };
   function run(a) { if (ACTIONS[a]) ACTIONS[a](); }
 
   /* ---------- start-up ---------- */

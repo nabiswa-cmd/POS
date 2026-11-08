@@ -10,6 +10,7 @@ for you (it tolerates short internet outages); OSCU talks to KRA online every ti
 over HTTP, which is all this module does. ETIMS_MODE=off (the default) disables everything here.
 """
 import json
+from decimal import Decimal
 import logging
 import urllib.error
 import urllib.request
@@ -23,7 +24,7 @@ from core import audit
 from core.models import ShopSettings
 
 from . import etims_rules
-from .models import EtimsSubmission, Sale
+from .models import EtimsCreditNote, EtimsSubmission, Sale
 
 log = logging.getLogger(__name__)
 
@@ -160,7 +161,8 @@ def submit(sale_id):
 
 
 def submit_pending(limit=5):
-    """Retry the oldest waiting sales. Rejected ones are not retried automatically: someone must look."""
+    """Retry the oldest waiting sales, then waiting credit notes. Rejected ones are not retried automatically:
+    someone must look."""
     if not enabled():
         return 0
     done = 0
@@ -168,10 +170,125 @@ def submit_pending(limit=5):
                         .order_by("id").values_list("sale_id", flat=True)[:limit]):
         sub = submit(sale_id)
         done += 1 if sub and sub.status == EtimsSubmission.SUBMITTED else 0
+    for refund_id in list(EtimsCreditNote.objects.filter(status=EtimsCreditNote.PENDING)
+                          .order_by("id").values_list("refund_id", flat=True)[:limit]):
+        note = submit_credit_note(refund_id)
+        done += 1 if note and note.status == EtimsCreditNote.SUBMITTED else 0
     return done
 
 
 def counts():
+    """Signed / waiting / rejected, sales invoices and credit notes together."""
     from django.db.models import Count
-    rows = EtimsSubmission.objects.values("status").annotate(n=Count("id"))
-    return {r["status"]: r["n"] for r in rows}
+    out = {}
+    for model in (EtimsSubmission, EtimsCreditNote):
+        for r in model.objects.values("status").annotate(n=Count("id")):
+            out[r["status"]] = out.get(r["status"], 0) + r["n"]
+    return out
+
+
+# --- credit notes (refunds) ----------------------------------------------------------------------
+
+def create_credit_note(refund):
+    """Called inside the approval transaction, so the number is gapless with the approval.
+
+    Only a sale that was itself put through eTIMS can be credited. If it never was (eTIMS was off when it was
+    sold) there is no KRA invoice to refer to, so nothing is created and the caller records that fact."""
+    if not enabled():
+        return None
+    original = EtimsSubmission.objects.filter(sale_id=refund.sale_id).first()
+    if original is None:
+        return None
+    return EtimsCreditNote.objects.create(refund=refund, invoice_no=CodeSequence.next("etims-invoice"),
+                                          original_invoice_no=original.invoice_no)
+
+
+def _credit_payload(refund, note):
+    shop = ShopSettings.load()
+    sale = refund.sale
+    items = []
+    for it in refund.items.select_related("sale_item__product"):
+        sold = it.sale_item
+        gross = etims_rules.money(sold.unit_price * it.quantity)
+        items.append({
+            "name": it.product_name, "code": sold.product.sku, "class_code": sold.product.etims_item_class_code,
+            "quantity": it.quantity, "unit_price": sold.unit_price,
+            "discount": max(gross - it.amount, Decimal("0.00")),           # so that gross - discount = what is credited
+            "tax_class": it.tax_class, "tax_rate": it.tax_rate, "taxable": it.taxable_amount,
+            "tax": it.tax_amount, "total": it.amount})
+    return etims_rules.build_sale_payload(
+        tin=shop.kra_pin, branch_id=settings.ETIMS_BRANCH_ID, invoice_no=note.invoice_no, receipt_type="R",
+        sale_time=timezone.localtime(refund.approved_at or refund.requested_at), customer_name=sale.customer_name,
+        customer_pin=sale.customer_pin, items=items, payment_method=refund.method,
+        user_label=refund.requested_by.username, original_invoice_no=note.original_invoice_no)
+
+
+def _missing_for_credit(refund):
+    shop = ShopSettings.load()
+    if not shop.kra_pin:
+        return "Shop settings has no KRA PIN."
+    blank = [i.product_name for i in refund.items.select_related("sale_item__product")
+             if not i.sale_item.product.etims_item_class_code]
+    if blank:
+        return "No eTIMS item class code on: " + ", ".join(sorted(set(blank))[:3])
+    return ""
+
+
+def submit_credit_note(refund_id):
+    """Try to get one credit note signed. Needs the original sale invoice to be signed first (KRA checks the
+    reference), so a still-waiting sale is sent first. Safe to call twice."""
+    if not enabled():
+        return None
+    original_sale_id = (EtimsCreditNote.objects.filter(refund_id=refund_id, status=EtimsCreditNote.PENDING)
+                        .values_list("refund__sale_id", flat=True).first())
+    if original_sale_id is not None:
+        orig = EtimsSubmission.objects.filter(sale_id=original_sale_id).first()
+        if orig is not None and orig.status == EtimsSubmission.PENDING:
+            submit(original_sale_id)
+    with transaction.atomic():
+        note = (EtimsCreditNote.objects.select_for_update().select_related("refund__sale", "refund__requested_by")
+                .filter(refund_id=refund_id).first())
+        if note is None or note.status == EtimsCreditNote.SUBMITTED:
+            return note
+        refund = note.refund
+        note.attempts += 1
+        note.last_attempt_at = timezone.now()
+        orig = EtimsSubmission.objects.filter(sale_id=refund.sale_id).first()
+        problem = config_problems() or _missing_for_credit(refund)
+        if not problem and (orig is None or orig.status != EtimsSubmission.SUBMITTED):
+            problem = ("The sale invoice was rejected by KRA, so it cannot be credited yet."
+                       if orig is not None and orig.status == EtimsSubmission.REJECTED
+                       else "Waiting for the original sale invoice to be signed by KRA.")
+        if problem:
+            note.last_error = (problem if isinstance(problem, str) else problem[0])[:300]
+            note.save()
+            return note
+        try:
+            result = etims_rules.parse_response(unit_factory().post(ENDPOINT, _credit_payload(refund, note)))
+        except EtimsError as exc:
+            note.last_error = str(exc)[:300]                 # stays PENDING: retried later, the refund is untouched
+            note.save()
+            return note
+        if not result["ok"]:
+            note.status = EtimsCreditNote.REJECTED
+            note.last_error = f"KRA {result['code']}: {result['message']}"[:300]
+            note.save()
+            audit.record("etims.credit_note_rejected", object_type="refund", object_ref=refund.number,
+                         reason=note.last_error, till_number=refund.till.number)
+            return note
+        data = result["data"]
+        shop = ShopSettings.load()
+        note.status, note.submitted_at, note.last_error = EtimsCreditNote.SUBMITTED, timezone.now(), ""
+        note.scu_id = str(data.get("sdcId", ""))[:40]
+        note.scu_receipt_no = str(data.get("rcptNo", ""))[:20]
+        note.scu_total_receipt_no = str(data.get("totRcptNo", ""))[:20]
+        note.scu_datetime = str(data.get("vsdcRcptPbctDate", ""))[:20]
+        note.internal_data = str(data.get("intrlData", ""))[:200]
+        note.signature = str(data.get("rcptSign", ""))[:200]
+        note.qr_text = etims_rules.qr_text(settings.ETIMS_QR_URL_TEMPLATE, shop.kra_pin,
+                                           settings.ETIMS_BRANCH_ID, note.signature)[:400]
+        note.save()
+        audit.record("etims.credit_note_signed", object_type="refund", object_ref=refund.number,
+                     new={"invoice_no": note.invoice_no, "original_invoice_no": note.original_invoice_no,
+                          "scu_receipt_no": note.scu_receipt_no}, till_number=refund.till.number)
+        return note

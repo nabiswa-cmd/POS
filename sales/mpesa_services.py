@@ -95,13 +95,18 @@ def _cart_total(user, shift):
     return sale, total
 
 
-def start_stk(user, shift, phone):
+def start_stk(user, shift, phone, amount=None):
+    """Send a payment request to the customer's phone. `amount` is for a part payment (the rest is paid in
+    cash or by another M-PESA); left out, the whole sale total is requested."""
     sales_services._need(user, "sales.make")
     sales_services._need(user, "payments.accept", "You are not allowed to accept payments.")
     sales_services._shift_still_open(shift)
-    sale, total = _cart_total(user, shift)
+    sale, cart_total = _cart_total(user, shift)
     try:
         number = rules.normalize_phone(phone)
+        total = cart_total if amount in (None, "") else rules.parse_amount(amount)
+        if total > cart_total:
+            raise rules.MpesaError(f"The request (KES {total}) is more than the sale total (KES {cart_total}).")
         whole = rules.stk_amount(total)
     except rules.MpesaError as exc:
         raise SaleError(str(exc)) from exc
@@ -183,3 +188,51 @@ def checkout_mpesa(user, shift, transaction_id):
                  new={"receipt": txn.trans_id, "amount": str(txn.amount), "name_from_mpesa": bool(txn.customer_name)},
                  till_number=shift.till.number)
     return done
+
+
+@transaction.atomic
+def checkout_split(user, shift, mpesa_ids, cash_tendered=None):
+    """Complete the sale from ANY mix: cash only, M-PESA only, or several M-PESA payments plus cash.
+
+    * Every M-PESA payment must be one Safaricom already confirmed to us and nobody has used.
+    * M-PESA is applied first; cash is the balance (and the only thing that can give change).
+    * All-or-nothing: if anything is wrong, nothing is sold and no M-PESA payment is marked used.
+    """
+    sales_services._need(user, "sales.make")
+    sales_services._need(user, "payments.accept", "You are not allowed to accept payments.")
+    sales_services._shift_still_open(shift)
+    sale, total = _cart_total(user, shift)
+
+    ids = list(mpesa_ids or [])
+    if len(set(ids)) != len(ids):
+        raise SaleError("The same M-PESA payment was chosen twice.")
+    txns = list(MpesaTransaction.objects.select_for_update().filter(pk__in=ids).order_by("pk"))
+    if len(txns) != len(ids):
+        raise SaleError("One of the chosen M-PESA payments was not found.")
+    for txn in txns:
+        if txn.status != MpesaTransaction.UNMATCHED:
+            raise SaleError(f"M-PESA payment {txn.trans_id} has already been used on another sale.")
+
+    try:
+        plan = sales_services.rules.split_tender(total, [t.amount for t in txns], cash_tendered)
+    except sales_services.rules.RuleError as exc:
+        raise SaleError(str(exc)) from exc
+
+    parts = [{"method": Payment.MPESA, "reference": t.trans_id, "mpesa_transaction": t, "amount": t.amount} for t in txns]
+    if plan["cash_due"] > 0:
+        parts.append({"method": Payment.CASH, "amount": plan["cash_due"], "tendered": plan["tendered"],
+                      "change_given": plan["change"]})
+    parts.sort(key=lambda p: -p["amount"])        # the biggest part first: eTIMS records one payment type per invoice
+
+    named = next((t.customer_name for t in txns if t.customer_name), "")
+    name = rules.pick_customer_name(named, sale.customer_name)
+    done = sales_services.finish_sale(user, shift, payments=parts, customer_name=name)
+
+    now = timezone.now()
+    for txn in txns:
+        txn.status, txn.sale, txn.matched_by, txn.matched_at = MpesaTransaction.MATCHED, done, user, now
+        txn.save(update_fields=["status", "sale", "matched_by", "matched_at", "updated_at"])
+        audit.record("mpesa.payment_applied", actor=user, object_type="sale", object_ref=done.number,
+                     new={"receipt": txn.trans_id, "amount": str(txn.amount), "name_from_mpesa": bool(txn.customer_name),
+                          "part_of_split": len(parts) > 1}, till_number=shift.till.number)
+    return done, plan

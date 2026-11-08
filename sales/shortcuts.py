@@ -21,12 +21,13 @@ ACTIONS = {
     "shift": "Shift summary",
     "approval": "Supervisor authorization (remove, void, price)",
     "customer": "Customer name and KRA PIN",
+    "refund": "Refunds (ask, approve, pay back)",
 }
 
 DEFAULTS = {
     "help": "F1", "search": "F2", "scan": "F3", "quantity": "F4", "hold": "F5", "retrieve": "F6",
     "discount": "F7", "payment": "F8", "complete": "F9", "print": "F10", "shift": "F11",
-    "approval": "F12", "customer": "Alt+C",
+    "approval": "F12", "customer": "Alt+C", "refund": "Alt+R",
 }
 
 FIXED_KEYS = {"Escape", "Enter", "Tab", "Shift+Tab", "Delete", "ArrowUp", "ArrowDown"}

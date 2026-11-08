@@ -4,7 +4,7 @@ from sales import etims
 
 
 class Command(BaseCommand):
-    help = "Send sales that eTIMS has not signed yet (run it now and then, or after the internet returns)."
+    help = "Send sales and refund credit notes that eTIMS has not signed yet (run it now and then, or after the internet returns)."
 
     def add_arguments(self, parser):
         parser.add_argument("--limit", type=int, default=50)

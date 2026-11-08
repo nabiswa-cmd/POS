@@ -108,6 +108,33 @@ def change_due(total, tendered):
     return tendered - total
 
 
+def split_tender(total, mpesa_amounts, cash_tendered=None):
+    """How one sale is paid when M-PESA and cash can be mixed (any of: cash only, M-PESA only, both).
+
+    M-PESA amounts are money Safaricom already confirmed; they are applied first and can never exceed the
+    total (overpayments are sub-phase 4B). Cash is always the balance: cash_due = total - M-PESA. The customer
+    may hand over more than cash_due, and the difference is the change. Returns a dict of Decimals:
+    mpesa_total, cash_due, tendered, change."""
+    total = money(total)
+    mpesa_total = money(sum((money(a) for a in mpesa_amounts), Decimal("0.00")))
+    if mpesa_total > total:
+        raise RuleError(f"The M-PESA payments ({mpesa_total:,.2f}) are more than the sale total ({total:,.2f}). "
+                        "Overpayments are handled in the next update.")
+    cash_due = total - mpesa_total
+    blank = cash_tendered is None or str(cash_tendered).strip() == ""
+    if cash_due == 0:
+        if not blank and parse_money(cash_tendered, field="Cash received", allow_zero=True) > 0:
+            raise RuleError("M-PESA already covers the whole sale, so no cash is needed.")
+        return {"mpesa_total": mpesa_total, "cash_due": Decimal("0.00"), "tendered": Decimal("0.00"),
+                "change": Decimal("0.00")}
+    if blank:
+        raise RuleError(f"KES {cash_due:,.2f} is still to be paid.")
+    tendered = parse_money(cash_tendered, field="Cash received")
+    if tendered < cash_due:
+        raise RuleError(f"KES {cash_due - tendered:,.2f} is still to be paid.")
+    return {"mpesa_total": mpesa_total, "cash_due": cash_due, "tendered": tendered, "change": tendered - cash_due}
+
+
 def allocate_cost(total_cost, weights):
     """Split a cost across lines in proportion to weights; the pieces always add up to total_cost."""
     weights = [int(w) for w in weights]

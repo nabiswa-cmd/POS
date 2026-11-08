@@ -14,7 +14,7 @@ from core.http import bad, client_ip, login_required_json, post_json
 from core.models import ShopSettings
 from tills.models import CashierShift
 
-from . import daraja, etims, mpesa_rules, mpesa_services, receipt, rules, services, shortcuts, tax
+from . import daraja, etims, mpesa_rules, mpesa_services, receipt, refunds, rules, services, shortcuts, tax
 from .models import Sale
 
 
@@ -245,6 +245,7 @@ def pos_config(request, shift):
         "owner": auth_services.is_exempt(user),
         "shortcuts": keys, "actions": shortcuts.ACTIONS,
         "can": {"hold": user.can("sales.hold"), "reprint": user.can("receipts.reprint"),
+                "refund": user.can("refunds.request"), "approve_refund": refunds.can_approve(user),
                 "discount": user.can("discount.apply") or auth_services.is_exempt(user),
                 "shift": user.can("shifts.view_own") or user.can("shifts.view_all")},
         "vat": shop.vat_registered,
@@ -323,7 +324,7 @@ def mpesa_recent(request, shift):
 @post_json
 @_guard
 def mpesa_stk_start(request, data, shift):
-    stk = mpesa_services.start_stk(request.user, shift, data.get("phone"))
+    stk = mpesa_services.start_stk(request.user, shift, data.get("phone"), amount=data.get("amount"))
     return JsonResponse({"ok": True, "stk_id": stk.pk, "status": stk.status})
 
 
@@ -333,7 +334,9 @@ def mpesa_stk_start(request, data, shift):
 def mpesa_stk_status(request, stk_id, shift):
     stk = mpesa_services.stk_status(request.user, shift, stk_id)
     return JsonResponse({"ok": True, "status": stk.status, "message": stk.result_desc,
-                         "transaction_id": stk.transaction_id})
+                         "transaction_id": stk.transaction_id,
+                         "amount": str(stk.transaction.amount) if stk.transaction_id else None,
+                         "receipt": stk.transaction.trans_id if stk.transaction_id else ""})
 
 
 @login_required_json
@@ -351,3 +354,125 @@ def checkout_mpesa(request, data, shift):
                          "change": "0.00", "customer": sale.customer_name,
                          "reference": sale.payments.first().reference, "cart": cart_payload(None),
                          "etims": sub.status if sub else None, "etims_note": sub.last_error if sub else ""})
+
+
+@login_required_json
+@post_json
+@_guard
+def checkout_any(request, data, shift):
+    """One checkout for every way of paying: cash only, M-PESA only, or M-PESA payments plus cash.
+    Body: {"mpesa_ids": [..], "cash_tendered": "1000"}. Either part may be left out."""
+    raw_ids = data.get("mpesa_ids") or []
+    try:
+        if not isinstance(raw_ids, list):
+            raise TypeError
+        ids = [int(i) for i in raw_ids]
+    except (TypeError, ValueError):
+        return bad("Choose the M-PESA payments again.")
+    sale, plan = mpesa_services.checkout_split(request.user, shift, ids, data.get("cash_tendered"))
+    sub = etims.submit(sale.pk)
+    etims.submit_pending(3)
+    return JsonResponse({"ok": True, "sale_id": sale.pk, "number": sale.number, "total": str(sale.total),
+                         "mpesa": str(plan["mpesa_total"]), "cash": str(plan["cash_due"]),
+                         "tendered": str(plan["tendered"]), "change": str(plan["change"]),
+                         "customer": sale.customer_name,
+                         "references": [p.reference for p in sale.payments.all() if p.reference],
+                         "cart": cart_payload(None),
+                         "etims": sub.status if sub else None, "etims_note": sub.last_error if sub else ""})
+
+
+# --- Phase 4B: refunds ---------------------------------------------------------------------------
+
+def _refund_reply(refund, user, **extra):
+    return JsonResponse({"ok": True, "refund": refunds.refund_json(refund, user), **extra})
+
+
+@require_GET
+@login_required_json
+@_guard
+def refund_find(request, shift):
+    sale = refunds.find_sale(request.user, request.GET.get("q"))
+    return JsonResponse({"ok": True, "sale": {"id": sale.pk, "number": sale.number, "total": str(sale.total),
+                                              "customer": sale.customer_name, "till": sale.till.name,
+                                              "date": sale.completed_at.isoformat()},
+                         "lines": refunds.sale_lines(sale)})
+
+
+@login_required_json
+@post_json
+@_guard
+def refund_request(request, data, shift):
+    lines = data.get("lines")
+    if not isinstance(lines, list):
+        return bad("Choose what to refund.")
+    refund = refunds.request_refund(request.user, shift, data.get("sale_id"), lines, data.get("reason"),
+                                    data.get("method"), restock=bool(data.get("restock", True)))
+    return _refund_reply(refunds_reload(refund.pk), request.user)
+
+
+def refunds_reload(pk):
+    from .models import Refund
+    return Refund.objects.select_related("sale", "requested_by").prefetch_related("items").get(pk=pk)
+
+
+@require_GET
+@login_required_json
+@_guard
+def refund_list(request, shift):
+    rows = [refunds.refund_json(r, request.user) for r in refunds.visible_refunds(request.user, shift)]
+    return JsonResponse({"ok": True, "refunds": rows})
+
+
+@login_required_json
+@post_json
+@_guard
+def refund_approve(request, refund_id, data, shift):
+    refund = refunds.approve_refund(request.user, refund_id, approval_token=data.get("approval_token"),
+                                    restock=data.get("restock") if isinstance(data.get("restock"), dict) else None)
+    note = etims.submit_credit_note(refund.pk)          # never holds the refund up: offline just means "pending"
+    etims.submit_pending(3)
+    return _refund_reply(refunds_reload(refund.pk), request.user,
+                         etims=note.status if note else None, etims_note=note.last_error if note else "")
+
+
+@login_required_json
+@post_json
+@_guard
+def refund_reject(request, refund_id, data, shift):
+    refund = refunds.reject_refund(request.user, refund_id, data.get("reason"))
+    return _refund_reply(refunds_reload(refund.pk), request.user)
+
+
+@login_required_json
+@post_json
+@_guard
+def refund_cancel(request, refund_id, data, shift):
+    refund = refunds.cancel_refund(request.user, refund_id)
+    return _refund_reply(refunds_reload(refund.pk), request.user)
+
+
+@login_required_json
+@post_json
+@_guard
+def refund_pay_cash(request, refund_id, data, shift):
+    refund = refunds.pay_cash(request.user, shift, refund_id)
+    return _refund_reply(refunds_reload(refund.pk), request.user)
+
+
+@login_required_json
+@post_json
+@_guard
+def refund_mpesa_paid(request, refund_id, data, shift):
+    refund = refunds.mark_mpesa_paid(request.user, refund_id, data.get("reference"))
+    return _refund_reply(refunds_reload(refund.pk), request.user)
+
+
+@login_required_json
+@post_json
+@_guard
+def refund_receipt(request, refund_id, data, shift):
+    refund, duplicate = refunds.mark_printed(request.user, refund_id)
+    info = refunds.build_receipt(refund, duplicate=duplicate)
+    qr = (info.get("etims") or {}).get("qr_text") or ""
+    return JsonResponse({"ok": True, "lines": refunds.format_receipt(info), "paper_mm": info["paper_mm"],
+                         "qr_svg": barcodes.qr_svg(qr) if qr else "", "duplicate": duplicate})
