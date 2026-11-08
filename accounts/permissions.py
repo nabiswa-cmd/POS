@@ -35,6 +35,7 @@ PERMISSIONS = {
     "discount.apply": "Apply ordinary discounts within policy",
     "receipts.reprint": "Reprint receipts (marked as duplicates)",
     "refunds.request": "Start a refund (needs approval to complete)",
+    "payments.reconcile": "Reconcile M-PESA: set aside or restore payments nobody used (with a reason)",
     # Tills
     "shifts.view_own": "View own shift information",
     "shifts.view_all": "View all till shifts and cash-ups",

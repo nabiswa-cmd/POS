@@ -290,8 +290,9 @@ class MpesaTransaction(models.Model):
 
     C2B, STK = "C2B", "STK"
     SOURCES = [(C2B, "Paid to the Till / Paybill"), (STK, "STK push")]
-    UNMATCHED, MATCHED = "UNMATCHED", "MATCHED"
-    STATUSES = [(UNMATCHED, "Received, not yet used on a sale"), (MATCHED, "Used on a sale")]
+    UNMATCHED, MATCHED, IGNORED = "UNMATCHED", "MATCHED", "IGNORED"
+    STATUSES = [(UNMATCHED, "Received, not yet used on a sale"), (MATCHED, "Used on a sale"),
+                (IGNORED, "Set aside by the manager (with a reason)")]
 
     trans_id = models.CharField("M-PESA receipt code", max_length=14, unique=True)
     source = models.CharField(max_length=3, choices=SOURCES)
@@ -307,6 +308,10 @@ class MpesaTransaction(models.Model):
     sale = models.ForeignKey(Sale, null=True, blank=True, on_delete=models.PROTECT, related_name="mpesa_transactions")
     matched_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
     matched_at = models.DateTimeField(null=True, blank=True)
+    # Reconciliation: why a payment that no sale used was set aside, and by whom. The money itself is never edited.
+    resolution_reason = models.CharField(max_length=250, blank=True)
+    resolved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    resolved_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -363,6 +368,47 @@ class MpesaStkRequest(models.Model):
 
     def delete(self, *args, **kwargs):
         raise PermissionError("Payment requests cannot be deleted.")
+
+
+class MpesaCallbackLog(models.Model):
+    """Every well-formed message Safaricom sent to this server, exactly as received. This is what the online (VPS) server
+    hands to the shop PC (see mpesa_relay), and the evidence if a payment is ever disputed. Append-only: never edited,
+    never deleted (harden_db adds the database trigger)."""
+
+    C2B, STK = "c2b", "stk"
+    KINDS = [(C2B, "Till / paybill confirmation"), (STK, "STK push result")]
+
+    kind = models.CharField(max_length=8, choices=KINDS)
+    received_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    source_ip = models.GenericIPAddressField(null=True, blank=True)
+    payload = models.JSONField()
+    outcome = models.CharField(max_length=200, blank=True, help_text="'ok' when it was accepted and applied here.")
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"{self.kind} #{self.pk} ({self.outcome})"
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise PermissionError("Callback logs cannot be modified.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise PermissionError("Callback logs cannot be deleted.")
+
+
+class MpesaRelayCursor(models.Model):
+    """How far this shop PC has read the online server's callback log (one row). Moves forward only."""
+
+    last_id = models.PositiveBigIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    def load(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
 
 
 class Refund(models.Model):

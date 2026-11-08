@@ -64,6 +64,14 @@ def record_stk_callback(payload):
         if stk is None:
             audit.record("mpesa.unknown_stk_callback", object_type="mpesa", object_ref=p["checkout_request_id"],
                          new={"code": p["result_code"]})
+            if p["ok"]:
+                # Safaricom confirmed real money for a request this server did not make (this is the online server
+                # relaying for the shop PC). Keep it: it waits in the cashier's list and is relayed to the shop.
+                txn, _ = MpesaTransaction.objects.get_or_create(
+                    trans_id=p["trans_id"],
+                    defaults={"source": MpesaTransaction.STK, "amount": p["amount"], "payer_ref": p["payer_ref"],
+                              "trans_time": p["trans_time"], "raw": payload})
+                _enrich(txn, "", p["payer_ref"])
             return None
         if stk.status in (MpesaStkRequest.CONFIRMED, MpesaStkRequest.FAILED, MpesaStkRequest.EXPIRED):
             return stk                                   # Safaricom retried; nothing more to do

@@ -140,3 +140,59 @@ STK_TERMINAL_FAILS = {1, 17, 1019, 1025, 1032, 1037, 2001, 9999}
 def stk_failure_status(code):
     """FAILED or EXPIRED for a non-zero result code."""
     return "EXPIRED" if int(code) in STK_EXPIRED else "FAILED"
+
+
+# --- Phase 4C: callback allow-list and the offline relay --------------------------------------------
+
+def parse_ip_list(raw):
+    """'1.2.3.4, 10.0.0.0/24' -> a list of ip_network objects. Anything that is not an address is an error, so a typo
+    in .env stops the server at the first callback instead of silently allowing (or blocking) everyone."""
+    import ipaddress
+
+    nets = []
+    for part in str(raw or "").replace(";", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(part, strict=False))
+        except ValueError:
+            raise MpesaError(f"'{part}' is not an IP address or range.")
+    return nets
+
+
+def ip_allowed(ip, nets):
+    """True if there is no allow-list, or `ip` is inside it. A missing/garbled address is never allowed once a list exists."""
+    import ipaddress
+
+    if not nets:
+        return True
+    try:
+        addr = ipaddress.ip_address(str(ip or "").strip())
+    except ValueError:
+        return False
+    return any(addr in net for net in nets)
+
+
+def forwarded_ip(header):
+    """The caller's address from X-Forwarded-For when (and only when) our own reverse proxy sits in front.
+
+    The LAST entry is the one our proxy appended; earlier ones are whatever the caller claimed and can be forged."""
+    parts = [p.strip() for p in str(header or "").split(",") if p.strip()]
+    return parts[-1] if parts else ""
+
+
+def relay_url_ok(url):
+    """The shop PC may only pull payments over HTTPS (a local test server on this machine is the one exception)."""
+    from urllib.parse import urlparse
+
+    p = urlparse(str(url or "").strip())
+    if not p.hostname:
+        return False
+    return p.scheme == "https" or (p.scheme == "http" and p.hostname in ("127.0.0.1", "localhost"))
+
+
+def relay_record_ok(rec):
+    """A record from the online server is usable only if it is shaped like one we exported."""
+    return (isinstance(rec, dict) and isinstance(rec.get("id"), int) and not isinstance(rec.get("id"), bool)
+            and rec.get("kind") in ("c2b", "stk") and isinstance(rec.get("payload"), dict))

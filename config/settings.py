@@ -197,4 +197,8 @@ MPESA = {
     "CALLBACK_BASE_URL": env("MPESA_CALLBACK_BASE_URL", ""),             # public HTTPS address, no trailing slash
     "CALLBACK_SECRET": env("MPESA_CALLBACK_SECRET", ""),                 # long random text inside the callback path
     "TIMEOUT": env_int("MPESA_TIMEOUT_SECONDS", 12),
+    # Relay (reconciliation part 2). On the SHOP PC: where the online server is, and the token to ask it.
+    # On the ONLINE server: only the token (the same value) is needed; it also uses MPESA_CALLBACK_SECRET.
+    "RELAY_URL": env("MPESA_RELAY_URL", ""),
+    "RELAY_TOKEN": env("MPESA_RELAY_TOKEN", ""),
 }

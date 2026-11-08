@@ -70,9 +70,19 @@ class MpesaCaptureTests(SalesCase):
             self.post("stk", stk_ok())
         self.assertEqual(MpesaTransaction.objects.count(), 1)
 
-    def test_unknown_stk_callback_creates_no_payment(self):
-        self.post("stk", stk_ok(checkout="never-asked"))
+    def test_unknown_failed_stk_callback_creates_no_payment(self):
+        failed = stk_ok(checkout="never-asked")
+        failed["Body"]["stkCallback"].update(ResultCode=1032, ResultDesc="cancelled")
+        failed["Body"]["stkCallback"].pop("CallbackMetadata")
+        self.post("stk", failed)
         self.assertEqual(MpesaTransaction.objects.count(), 0)
+
+    def test_unknown_successful_stk_callback_keeps_the_money_waiting_once(self):
+        # The online server never made this request (the shop PC did). Real money must not be lost.
+        for _ in range(2):
+            self.post("stk", stk_ok(checkout="never-asked"))
+        txn = MpesaTransaction.objects.get()
+        self.assertEqual((txn.status, txn.source, txn.amount), (MpesaTransaction.UNMATCHED, "STK", D("3500.00")))
 
 
 @override_settings(MPESA=CFG)

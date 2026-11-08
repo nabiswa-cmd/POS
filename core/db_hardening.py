@@ -9,6 +9,7 @@ APPEND_ONLY_TABLES = [
     "accounts_loginattempt",
     "inventory_stockmovement",
     "catalog_shelftransfer",
+    "sales_mpesacallbacklog",      # exactly what Safaricom sent, never edited or deleted
 ]
 
 FUNCTION_SQL = """
@@ -75,6 +76,26 @@ $$ LANGUAGE plpgsql;
 """
 SIGNED_TABLES = ["sales_etimssubmission", "sales_etimscreditnote"]
 
+# A Safaricom payment is money evidence: never deleted; its receipt code, amount and source never change; and once it has
+# been used on a sale it cannot be un-used or moved to another sale. (Customer name and phone may still be filled in, and
+# a waiting payment may be set aside / put back: that is reconciliation.)
+MPESA_SQL = """
+CREATE OR REPLACE FUNCTION winespos_protect_mpesa() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'M-PESA payment records cannot be deleted';
+    END IF;
+    IF NEW.trans_id <> OLD.trans_id OR NEW.amount <> OLD.amount OR NEW.source <> OLD.source THEN
+        RAISE EXCEPTION 'An M-PESA receipt code, amount and source cannot be changed';
+    END IF;
+    IF OLD.status = 'MATCHED' AND (NEW.status <> OLD.status OR NEW.sale_id IS DISTINCT FROM OLD.sale_id) THEN
+        RAISE EXCEPTION 'An M-PESA payment already used on a sale cannot be moved or released';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+"""
+
 REFUND_SQL = """
 CREATE OR REPLACE FUNCTION winespos_protect_refund() RETURNS trigger AS $$
 BEGIN
@@ -138,6 +159,10 @@ def apply(connection):
         cursor.execute('DROP TRIGGER IF EXISTS winespos_refund_item ON "sales_refunditem"')
         cursor.execute('CREATE TRIGGER winespos_refund_item BEFORE UPDATE OR DELETE ON "sales_refunditem" '
                        "FOR EACH ROW EXECUTE FUNCTION winespos_protect_refund_item()")
+        cursor.execute(MPESA_SQL)
+        cursor.execute('DROP TRIGGER IF EXISTS winespos_mpesa ON "sales_mpesatransaction"')
+        cursor.execute('CREATE TRIGGER winespos_mpesa BEFORE UPDATE OR DELETE ON "sales_mpesatransaction" '
+                       "FOR EACH ROW EXECUTE FUNCTION winespos_protect_mpesa()")
         cursor.execute(SIGNED_SQL)
         for table in SIGNED_TABLES:
             cursor.execute(f'DROP TRIGGER IF EXISTS winespos_signed ON "{table}"')
@@ -145,4 +170,5 @@ def apply(connection):
                            "FOR EACH ROW EXECUTE FUNCTION winespos_protect_signed()")
     return (list(APPEND_ONLY_TABLES) + ["sales_sale (completed rows)"] + FINAL_SALE_CHILD_TABLES
             + ["sales_refund (never deleted; finished rows frozen)", "sales_refunditem"]
-            + [f"{t} (signed rows frozen)" for t in SIGNED_TABLES])
+            + [f"{t} (signed rows frozen)" for t in SIGNED_TABLES]
+            + ["sales_mpesatransaction (never deleted; code and amount frozen; used payments locked)"])

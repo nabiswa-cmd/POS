@@ -9,10 +9,11 @@ import json
 from django.conf import settings
 from django.http import Http404, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET, require_POST
 
 from . import mpesa_rules as rules
 from . import mpesa_services as svc
+from . import relay, relay_rules
 
 ACK = {"ResultCode": 0, "ResultDesc": "Accepted"}
 MAX_BODY = 64 * 1024
@@ -60,3 +61,16 @@ def stk_result(request, secret):
     except rules.MpesaError:
         return JsonResponse({"ResultCode": 1, "ResultDesc": "Rejected"}, status=400)
     return JsonResponse(ACK)
+
+
+@require_GET
+def relay_feed(request, secret):
+    """The shop PC asks for recent payments. Needs the secret in the address AND the relay token; 404 otherwise
+    (also when no token is configured, so the feed does not exist unless you switch it on)."""
+    _check(secret)
+    if not relay_rules.bearer_ok(request.headers.get("Authorization"), settings.MPESA.get("RELAY_TOKEN")):
+        raise Http404()
+    after, limit, hours = relay_rules.feed_params(request.GET)
+    response = JsonResponse(relay.feed(after, limit, hours))
+    response["Cache-Control"] = "no-store"
+    return response

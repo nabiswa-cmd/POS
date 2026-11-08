@@ -108,3 +108,72 @@ Test a refund in the sandbox and fix anything KRA rejects before going live. Cre
 6. `harden_db` triggers for the M-PESA tables, an M-PESA line in the F11 shift summary, and Safaricom IP allow-listing notes for the VPS.
 
 Phase 5 (cash-up, reports) then reads the separated cash / M-PESA / other figures already recorded here.
+
+## Sub-phase 4B-3: reconciliation, part 1 (this update)
+
+**What it is.** A manager screen at **Reconciliation** (`/manage/reconciliation/`) for M-PESA money that Safaricom confirmed but no sale used,
+plus a daily check that the books agree. Pick a day; download it as a CSV for the accountant (`?csv=1`).
+
+**What you see**
+- Received that day (count and KES), used on sales that day, **waiting** (confirmed, nobody used it yet; anything older than 24 hours is flagged),
+  **set aside**, and M-PESA refunds paid back that day.
+- **Checks** (7 kinds, run every time you open the screen). It lists anything wrong in plain words, or says "All passed":
+  receipt M-PESA total = the Safaricom payments marked used on that sale; every M-PESA payment row has a Safaricom record behind it;
+  a "used" payment always has a completed sale; waiting / set-aside payments are not tied to a sale; the day's payments add up by status;
+  a phone request that says "paid" has a payment record; a phone request stuck more than 10 minutes with no answer is named.
+- Received that day, by status.
+
+**What you can do** (needs the new permission `payments.reconcile`: **the owner always has it**, supervisors can look but not act unless you give it to them in the role)
+- **Set aside** a waiting payment, with a reason of at least 8 characters (customer paid twice and is being refunded, test payment, wrong till...).
+  It disappears from the cashier's list, so nobody sells against it by mistake. It is **not** "money handled": the reason says what is happening.
+- **Put back** a set-aside payment (with a reason). It returns to the cashier's list.
+- A payment **used on a sale can never be set aside.** The M-PESA code and amount are never edited or deleted. Every action is in the audit log
+  (who, receipt code, amount, reason; `mpesa.set_aside`, `mpesa.restored`).
+- The cashier screen and checkout already refused anything that is not "waiting", so a set-aside payment cannot be used (tested, including a race with checkout).
+
+**Report from the command line / for a schedule:** `python manage.py mpesa_recon_report [--date 2026-11-07]`.
+
+**Run:** `python manage.py migrate` (adds `sales/0006_reconciliation`: three nullable fields and the new status). Tested on a copy of your `dev.sqlite3`.
+
+**Still part 2 (not built):** assigning a payment to a sale after the fact, pulling payments the shop missed while its internet was down (`mpesa_pull` relay),
+Safaricom Transaction Status query for missing names, auto-match when exactly one waiting payment equals the cart total.
+Nothing was tried against Safaricom's sandbox.
+
+### Test status of this project (important)
+`DB_ENGINE=sqlite DJANGO_DEBUG=true python manage.py test` runs 398 tests. **390 pass, including the 24 new reconciliation tests. 8 fail, and they failed before this update:**
+all in `sales/tests_screen.py`. The cause is a half-finished refactor in your zip: `sales/pages.py` renders `sales/sell.html` which does not exist, `sales/page_urls.py`
+is not included in `config/urls.py` (the old `pos_page`, `overview` and `reprint_page` are still routed), and the shortcut validation in `core/shortcuts.py`
+rejects lower-case `alt+h`. These are not related to M-PESA. Decide whether the new `sell.html` + `pos.js` screen is the one to keep.
+
+## Sub-phase 4B-3, part 2: the relay (payments made while the shop was offline)
+
+**The problem it solves.** Safaricom can only call a public HTTPS address, which is the VPS. If the shop PC is off or its internet is down,
+the payment is safe on the VPS but never reaches the shop. Now the shop PC **pulls** it.
+
+**How it works**
+- The VPS keeps every confirmed payment (as before). New: a successful STK callback for a request the VPS did not make (the shop PC sent it) is
+  **kept as a waiting payment** instead of being dropped, so real money is never lost.
+- The VPS serves a read-only list at `/api/pay/relay/<MPESA_CALLBACK_SECRET>/`. It needs the secret in the address **and** `Authorization: Bearer <MPESA_RELAY_TOKEN>`.
+  With no token configured the address does not exist (404).
+- The shop PC pulls with `python manage.py mpesa_pull` (once), `python manage.py mpesa_pull --loop 60` (keeps going), or the **Pull now** button
+  on the Reconciliation screen (owner / anyone with `payments.reconcile`). It re-reads the last 72 hours each time, so it needs no bookmark and nothing is missed after a long outage.
+- **Safe to repeat**: one receipt code = one row. Pulling twice changes nothing. A name that arrives later fills a blank, never overwrites.
+- **Never reopens or edits money**: a used payment stays used. If the VPS reports a *different amount* for a code the shop already holds, nothing is applied;
+  it is counted as a conflict and written to the audit log (`mpesa.relay_conflict`).
+- An STK row also finishes the shop's own pending phone request, so the cashier's screen completes even if the callback never reached the shop directly.
+- The Reconciliation screen shows "Online relay": last successful check, or "Cannot reach the online server" with the reason. The audit log gets
+  one `mpesa.relay_ok` line per 10 minutes and one `mpesa.relay_failed` per hour (not one per attempt).
+
+**Set up (`.env`)**
+- VPS: `MPESA_RELAY_TOKEN=<long random text>` (and the callback secret it already has).
+- Shop PC: the same `MPESA_RELAY_TOKEN`, the same `MPESA_CALLBACK_SECRET`, and `MPESA_RELAY_URL=https://your-vps-address`.
+- No migration is needed for this part.
+
+**Decided not to build, and why**
+- **Assigning a payment to a sale that is already completed.** It would change a finished receipt, the drawer figure and the eTIMS invoice after the fact. The correct
+  paths today: the cashier uses it on a new sale, the manager sets it aside with a reason, or a refund is done. Say if you want a controlled version.
+- **Safaricom Transaction Status query for missing names.** It needs the initiator name, an encrypted security credential and extra result URLs from Safaricom, and cannot be tested without them. Names still come from the till message.
+- **Auto-complete when one payment equals the total.** The cashier screen already puts exact matches first and highlights one; a sale is never completed without the cashier choosing it.
+
+**Not tested here:** Django was not available, so `sales/test_relay.py` (about 35 tests) and the changed `test_phase4a.py` have **not been run**. The 9 framework-free
+tests in `tests_pure/test_relay_rules.py` pass. Run `DB_ENGINE=sqlite DJANGO_DEBUG=true python manage.py test sales` and send me any failure. Nothing was tried against a real VPS.
