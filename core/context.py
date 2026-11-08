@@ -12,6 +12,7 @@ NAV = [
     ("Cash-ups", "/manage/cashups/", ("shifts.view_all",)),
     ("Expenses", "/manage/expenses/", ("expenses.manage",)),
     ("Profit & reports", "/manage/reports/", ("reports.financial.view",)),
+    ("Backups", "/manage/backups/", ("settings.manage",)),
     ("Suppliers", "/manage/suppliers/", ("suppliers.manage",)),
     ("Categories & brands", "/manage/lists/", ("products.manage",)),
 ]

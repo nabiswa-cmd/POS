@@ -356,3 +356,8 @@ See `PHASE5A_NOTES.md`. New screens: `/manage/cashups/`, `/manage/expenses/`, an
 # Phase 5B: profit and financial reports
 
 See `PHASE5B_NOTES.md`. New screen `/manage/reports/` (cost of goods, gross profit, net profit, by product / day, CSV). No migration needed.
+
+
+# Phase 6: Windows deployment
+
+See `PHASE6_NOTES.md`, `docs/WINDOWS_INSTALL.md`, `docs/BACKUP_AND_RESTORE.md`, `docs/UAT_CHECKLIST.md`. Build with `packaging\build.ps1`. New: Manager > Backups, `manage selfcheck`, `manage backup_db / verify_backup / restore_db`. The Windows scripts have not been run on Windows yet.

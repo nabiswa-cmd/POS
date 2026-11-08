@@ -66,7 +66,22 @@ def main(argv=None):
             self.view.setPage(LockedPage(self.view))
             self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
             self.setCentralWidget(self.view)
+            self._printer = None
+            if os.environ.get("WINESPOS_RECEIPT_PRINTER", "").strip():
+                self.view.printRequested.connect(self.print_receipt)   # silent printing, opt-in (see desktop/printers.py)
             self.view.load(QUrl(args.server.rstrip("/") + MODES[args.mode]))
+
+        def print_receipt(self):
+            """Send the page to the receipt printer named in WINESPOS_RECEIPT_PRINTER, with no dialog."""
+            from PySide6.QtPrintSupport import QPrinter, QPrinterInfo
+            name = os.environ["WINESPOS_RECEIPT_PRINTER"].strip()
+            if name not in QPrinterInfo.availablePrinterNames():
+                QMessageBox.warning(self, TITLES[args.mode], f"The receipt printer '{name}' was not found.\n"
+                                    "Check it is on and plugged in, or ask the manager to check WINESPOS_RECEIPT_PRINTER.")
+                return
+            self._printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+            self._printer.setPrinterName(name)
+            self.view.print(self._printer)
 
         def closeEvent(self, event):
             if args.mode == "pos" and not args.allow_quit:

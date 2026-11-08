@@ -6,6 +6,7 @@ from django.views.static import serve
 
 from sales import recon_views, refund_views
 from sales import views as sales_views
+from core import backup_views
 from tills import cashup_views
 from tills import views as tills_views
 
@@ -22,6 +23,7 @@ urlpatterns = [
     path("manage/cashups/<int:shift_id>/", cashup_views.cashup_detail, name="cashup-detail"),
     path("manage/cashups/<int:shift_id>/slip/", cashup_views.cashup_slip, name="cashup-slip"),
     path("pos/cashup/", cashup_views.pos_cashup, name="pos-cashup"),
+    path("manage/backups/", backup_views.backups, name="backups"),
     path("manage/sales/<int:sale_id>/reprint/", sales_views.reprint_page, name="sale-reprint"),
     path("api/", include("accounts.urls")),
     path("api/pos/", include("tills.urls")),

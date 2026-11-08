@@ -20,6 +20,9 @@ def _load_env_file(path: Path) -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
+# An installed shop keeps its settings outside the program folder (see docs/WINDOWS_INSTALL.md).
+if os.environ.get("WINESPOS_ENV_FILE"):
+    _load_env_file(Path(os.environ["WINESPOS_ENV_FILE"]))
 _load_env_file(BASE_DIR / ".env")
 
 
@@ -164,6 +167,12 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 # Uploaded product images live next to the app data, never inside the code folder.
 MEDIA_URL = "media/"
 MEDIA_ROOT = Path(env("WINESPOS_MEDIA_ROOT", str(BASE_DIR / "media")))
+
+# --- Backups (core/backup.py). Keep BACKUP_COPY_DIR on a different disk (USB drive or another PC's share). ---
+BACKUP_DIR = Path(env("WINESPOS_BACKUP_DIR", str(BASE_DIR / "backups")))
+BACKUP_COPY_DIR = env("WINESPOS_BACKUP_COPY_DIR", "")
+BACKUP_KEEP = env_int("BACKUP_KEEP", 30)                 # newest ordinary backups kept; older ones are removed
+BACKUP_STALE_HOURS = env_int("BACKUP_STALE_HOURS", 26)   # the manager is warned when the newest is older than this
 FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 DATA_UPLOAD_MAX_MEMORY_SIZE = 6 * 1024 * 1024
 
