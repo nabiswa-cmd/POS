@@ -263,6 +263,84 @@ def cancel_authorization(request, data):
     return JsonResponse({"ok": True})
 
 
+@post_json
+def change_till(request, data):
+    """Move a pending POS opening to another till (till 1 <-> till 2).
+
+    Allowed at any step before the shift is open: after supervisor authorization, after the cashier has
+    logged in, or when the chosen till turns out to be busy. The supervisor's authorization travels with
+    the opening, so nobody has to sign in again, unless the shop sets POS_TILL_CHANGE_REAUTH = True in
+    settings, in which case the opening is cancelled and the supervisor must authorize the new till.
+    A till whose shift is open for this same cashier cannot be left this way (close the shift first).
+    """
+    new_till = _till_from(data)
+    if new_till is None:
+        return bad("Choose a valid till.")
+    auth_id = request.session.get("pos_auth_id")
+    if not auth_id:
+        return bad("There is no pending POS opening. Choose the till on the supervisor step.", 409)
+    ip = client_ip(request)
+    with transaction.atomic():
+        authorization = (PosAuthorization.objects.select_for_update()
+                         .select_related("approval__approver", "till")
+                         .filter(pk=auth_id, cancelled_at__isnull=True).first())
+        if authorization is None:
+            return bad("There is no pending POS opening. Choose the till on the supervisor step.", 409)
+        if authorization.cashier_id and (
+                not request.user.is_authenticated or authorization.cashier_id != request.user.pk):
+            return bad("Only the logged-in cashier can change the till on this opening.", 403)
+        old_till = authorization.till
+        mine_open = _open_shift(old_till)
+        if mine_open is not None and authorization.cashier_id and mine_open.cashier_id == authorization.cashier_id:
+            return bad("Your shift is already open on this till. Close it with a cash-up before changing till.", 409)
+        new_shift = _open_shift(new_till)
+        if new_shift is not None and new_shift.locked_at is not None:
+            return bad(f"{new_till.name} is locked. The cashier on its open shift must unlock it.", 409)
+
+        if new_till.pk != old_till.pk:
+            if getattr(settings, "POS_TILL_CHANGE_REAUTH", False):
+                authorization.cancelled_at = timezone.now()
+                authorization.save(update_fields=["cancelled_at"])
+                audit.record("pos.till_changed_reauth_required",
+                             actor=request.user if request.user.is_authenticated else None,
+                             approver=authorization.approval.approver, object_type="till",
+                             object_ref=new_till.number, previous={"till": old_till.number},
+                             new={"till": new_till.number}, ip=ip, till_number=new_till.number,
+                             reason="Till changed before shift open; supervisor must authorize again.")
+                reauthorize = True
+            else:
+                reauthorize = False
+                authorization.till = new_till
+                authorization.save(update_fields=["till"])
+                approval = authorization.approval
+                approval.till_number = new_till.number
+                approval.save(update_fields=["till_number"])
+                audit.record("pos.till_changed_before_shift",
+                             actor=request.user if request.user.is_authenticated else None,
+                             approver=approval.approver, object_type="till", object_ref=new_till.number,
+                             previous={"till": old_till.number}, new={"till": new_till.number},
+                             ip=ip, till_number=new_till.number)
+        else:
+            reauthorize = False
+
+    if reauthorize:
+        if request.user.is_authenticated:
+            logout(request)
+        request.session.pop("pos_auth_id", None)
+        request.session["pos_till"] = new_till.number
+        return JsonResponse({"ok": True, "till": new_till.number, "till_name": new_till.name,
+                             "reauthorize": True, "shift": None, "till_busy_with": None})
+
+    request.session["pos_till"] = new_till.number
+    mine = new_shift if (new_shift and request.user.is_authenticated
+                         and new_shift.cashier_id == request.user.pk) else None
+    return JsonResponse({
+        "ok": True, "till": new_till.number, "till_name": new_till.name, "reauthorize": False,
+        "shift": _shift_payload(mine),
+        "till_busy_with": new_shift.cashier.display_name if new_shift and mine is None else None,
+    })
+
+
 @login_required_json
 @post_json
 def change_cashier(request, data):

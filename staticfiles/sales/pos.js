@@ -9,6 +9,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var scan = $("scan");
   var state = { cart: null, held: 0, sel: 0, lastSale: null, busy: false, heldCount: 0 };
+  var locking = false;
 
   // ---- helpers ---------------------------------------------------------------------------------
   function fmt(n) { return Number(n).toLocaleString("en-KE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -38,6 +39,17 @@
   }
   function fail(r) { beep(); flash(r.error || "Something went wrong."); }
   function expired() { flash("Your session ended. Signing you out..."); setTimeout(function () { location.href = "/app/pos/"; }, 1500); }
+  function lockPos() {
+    if (locking) return;
+    locking = true;
+    enqueue(function () {
+      return api("POST", "/api/pos/lock/", {}).then(function (r) {
+        if (!r.ok) { locking = false; fail(r); return r; }
+        location.replace("/app/pos/?sleep=1&till=" + encodeURIComponent(document.body.getAttribute("data-till")));
+        return r;
+      });
+    });
+  }
 
   // ---- dialogs ---------------------------------------------------------------------------------
   var dialogs = Array.prototype.slice.call(document.querySelectorAll("dialog"));
@@ -423,10 +435,12 @@
       case "supervisor": openD("d-super", "d-super"); break;
       case "remove_line": removeSelected(); break;
       case "customer": openCust(); break;
+      case "lock": lockPos(); break;
     }
   }
   document.addEventListener("keydown", function (e) {
     if (e.isComposing) return;
+    if (combo(e) === "Ctrl+Alt+L") { e.preventDefault(); lockPos(); return; }
     var action = byKey[combo(e)];
     if (!anyOpen() && (e.key === "ArrowDown" || e.key === "ArrowUp") && !e.ctrlKey && !e.altKey) {
       if (lines().length) { e.preventDefault(); state.sel = Math.max(0, Math.min(lines().length - 1, state.sel + (e.key === "ArrowDown" ? 1 : -1))); render(); showLast(selLine()); }
@@ -448,6 +462,8 @@
   Array.prototype.forEach.call(document.querySelectorAll("[data-act]"), function (b) {
     b.addEventListener("click", function () { run(b.getAttribute("data-act")); });
   });
+  $("b-lock").addEventListener("click", lockPos);
+  window.addEventListener("winespos-lock-request", lockPos);
   document.addEventListener("click", function (e) {
     if (!anyOpen() && !e.target.closest("button,input,select,textarea,a,tr")) scan.focus();
   });

@@ -6,6 +6,15 @@
 <title>{{ area_title }} | {{ shop_name }}</title>
 <link rel="stylesheet" href="{% static 'core/theme.css' %}">
 <script src="{% static 'core/theme.js' %}"></script>
+<link rel="stylesheet" href="{% static 'core/posloader.css' %}">
+<script src="{% static 'core/posloader.js' %}"></script>
+<style>
+  /* Till picker shown on every step after the supervisor step */
+  main.auth .tillpick{display:flex;gap:8px;margin-top:6px}
+  main.auth .tillpick button,main.auth .tillpick button.ghost{margin:0;width:auto;flex:1;padding:11px 10px}
+  main.auth .tillpick button[aria-pressed="true"]{cursor:default}
+  main.auth .tillpick button.ghost{color:var(--text)}
+</style>
 </head>
 <body class="auth">
 <button type="button" class="theme-toggle floating" data-theme-toggle title="Switch light / dark mode"><svg class="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg><svg class="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/></svg><span class="t-label">Dark</span></button>
@@ -31,6 +40,8 @@
   <form id="f-cashier" hidden autocomplete="off">
     <p class="step">Step 2 of 3: Cashier login</p>
     <p class="hint" id="authorized-note"></p>
+    <label>Till</label>
+    <div class="tillpick" data-tillpick data-msg="m-cashier" role="group" aria-label="Choose till"></div>
     <label for="c-user">Cashier username</label>
     <input id="c-user" autocomplete="off">
     <label for="c-secret">Password or PIN</label>
@@ -48,6 +59,7 @@
     <label for="u-secret">Password or PIN</label>
     <input id="u-secret" type="password" autocomplete="off">
     <button type="submit">Unlock POS</button>
+    <button type="button" class="ghost" id="b-unlock-other">Use a different till</button>
     <div class="msg" id="m-unlock" role="alert"></div>
   </form>
 
@@ -55,6 +67,8 @@
   <form id="f-shift" hidden autocomplete="off">
     <p class="step">Step 3 of 3: Open your shift</p>
     <p class="hint" id="shift-note"></p>
+    <label>Till</label>
+    <div class="tillpick" data-tillpick data-msg="m-shift" role="group" aria-label="Choose till"></div>
     <label for="s-float">Opening cash float (KES)</label>
     <input id="s-float" inputmode="decimal" autocomplete="off">
     <button type="submit">Open shift</button>
@@ -95,8 +109,11 @@
 (function () {
   var MODE = "{{ mode }}";
   var $ = function (id) { return document.getElementById(id); };
+  var current = null, tills = [], authBy = "";
   var show = function (id) {
+    current = id;
     ["f-authorize","f-cashier","f-unlock","f-shift","s-ready","f-login","s-home"].forEach(function (x) { $(x).hidden = (x !== id); });
+    if (typeof renderPicks === "function") renderPicks();
     var first = $(id).querySelector("input:not([type=hidden]), select");
     if (first) first.focus();
   };
@@ -124,8 +141,10 @@
     var tillNo = null, lockedShift = null;
     var requestedTill = new URLSearchParams(location.search).get("till");
     var stateUrl = "/api/pos/state/" + (requestedTill ? "?till=" + encodeURIComponent(requestedTill) : "");
+    PosLoader.show("Getting the till ready");
     api("GET", stateUrl).then(function (s) {
       lockedShift = s.locked_shift;
+      tills = s.tills || [];
       var sel = $("a-till");
       (s.tills || []).forEach(function (t) {
         var o = document.createElement("option"); o.value = t.number; o.textContent = t.name; sel.appendChild(o);
@@ -148,7 +167,7 @@
       } else {
         show("f-authorize");
       }
-    });
+    }).then(function () { PosLoader.hide(); }, function () { PosLoader.hide(); });
     submit("f-unlock", "m-unlock", function () {
       return api("POST", "/api/pos/unlock/", {
         till: tillNo, username: $("u-user").value, secret: $("u-secret").value
@@ -163,7 +182,7 @@
       return api("POST", "/api/pos/authorize/", { till: $("a-till").value, username: $("a-user").value, secret: $("a-secret").value })
         .then(function (r) {
           $("a-secret").value = ""; $("a-user").value = "";
-          if (r.ok) { tillNo = r.till; $("authorized-note").textContent = "Authorized by " + r.authorized_by + " for till " + r.till + "."; show("f-cashier"); if (r.owner) { $("c-user").value = typed; $("c-secret").focus(); } }
+          if (r.ok) { tillNo = r.till; authBy = r.authorized_by; $("authorized-note").textContent = "Authorized by " + r.authorized_by + " for " + tillName(r.till) + "."; show("f-cashier"); if (r.owner) { $("c-user").value = typed; $("c-secret").focus(); } }
           return r;
         });
     });
@@ -180,7 +199,7 @@
           $("c-secret").value = "";
           if (!r.ok) return r;
           tillNo = r.till;
-          if (r.till_busy_with) { say("m-cashier", "This till already has an open shift for " + r.till_busy_with + "."); return { ok: true }; }
+          if (r.till_busy_with) { say("m-cashier", tillName(r.till) + " already has an open shift for " + r.till_busy_with + ". Switch to another till above."); renderPicks(); return { ok: true }; }
           r.shift ? ready(r.user, r.till, r.shift) : needShift();
           return r;
         });
@@ -206,16 +225,60 @@
       });
     });
     $("b-logout-pos").addEventListener("click", logout);
+    function tillName(n) {
+      for (var i = 0; i < tills.length; i++) { if (String(tills[i].number) === String(n)) return tills[i].name; }
+      return "till " + n;
+    }
+    // Till buttons on steps 2 and 3: the current till is highlighted, the others switch to it.
+    function renderPicks() {
+      Array.prototype.forEach.call(document.querySelectorAll("[data-tillpick]"), function (box) {
+        box.innerHTML = "";
+        tills.forEach(function (t) {
+          var b = document.createElement("button"), cur = String(t.number) === String(tillNo);
+          b.type = "button"; b.textContent = t.name; b.setAttribute("aria-pressed", cur ? "true" : "false");
+          if (!cur) { b.className = "ghost"; b.addEventListener("click", function () { switchTill(t.number, box.getAttribute("data-msg")); }); }
+          box.appendChild(b);
+        });
+      });
+    }
+    function switchTill(n, msgId) {
+      say(msgId, "");
+      return api("POST", "/api/pos/till/change/", { till: n }).then(function (r) {
+        if (!r.ok) { say(msgId, r.error || "Could not change the till."); return; }
+        tillNo = r.till;
+        if (r.reauthorize) {
+          $("a-till").value = r.till; $("c-user").value = ""; $("c-secret").value = "";
+          show("f-authorize"); say("m-authorize", "Now on " + r.till_name + ". The supervisor must authorize it.", true);
+          return;
+        }
+        $("authorized-note").textContent = (authBy ? "Authorized by " + authBy + " for " : "Now on ") + r.till_name + ".";
+        if (r.till_busy_with) { say(msgId, r.till_name + " already has an open shift for " + r.till_busy_with + ". Choose another till."); renderPicks(); return; }
+        api("GET", "/api/auth/me/").then(function (me) {
+          if (me.user && r.shift) { ready(me.user, r.till, r.shift); return; }
+          if (me.user) { needShift(); say("m-shift", "Switched to " + r.till_name + ".", true); return; }
+          renderPicks(); say("m-cashier", "Switched to " + r.till_name + ".", true);
+        });
+      });
+    }
+    $("b-unlock-other").addEventListener("click", function () {
+      var other = tills.filter(function (t) { return String(t.number) !== String(tillNo); })[0];
+      lockedShift = null; tillNo = null;
+      if (other) $("a-till").value = other.number;
+      say("m-authorize", "Choose the till, then have a supervisor authorize it.", true);
+      show("f-authorize");
+    });
     function needShift() { $("shift-note").textContent = "No open shift on this till yet."; show("f-shift"); }
     function ready(user, till, shift) {
       $("r-till").textContent = till; $("r-who").textContent = "Cashier: " + user.name + " | Float: " + shift.opening_float;
-      show("s-ready"); location.replace("/pos/sell/");
+      show("s-ready");
+      PosLoader.show("Opening till " + till, "Loading the sales screen");   // stays up until the next page appears
+      location.replace("/pos/sell/");
     }
   } else {
     var NEEDS = { manager: "Manager area", receiving: "Stock receiving" };
     function home(user) {
-      if (MODE === "manager") { location.replace("/manage/"); return; }
-      if (MODE === "receiving") { location.replace("/manage/receiving/"); return; }
+      if (MODE === "manager") { PosLoader.show("Opening manager", "Loading the management screens"); location.replace("/manage/"); return; }
+      if (MODE === "receiving") { PosLoader.show("Opening receiving", "Loading stock receiving"); location.replace("/manage/receiving/"); return; }
       $("h-who").textContent = "Signed in: " + user.name + (user.role ? " (" + user.role + ")" : "");
       $("h-note").textContent = NEEDS[MODE] + ". The full screens arrive in later phases. Your access:";
       var ul = $("h-perms"); ul.innerHTML = "";
@@ -223,7 +286,9 @@
       $("b-admin").hidden = !(user.is_manager && MODE === "manager");
       show("s-home");
     }
-    api("GET", "/api/auth/me/").then(function (me) { if (me.user) home(me.user); else show("f-login"); });
+    PosLoader.show(MODE === "manager" ? "Starting manager" : "Starting receiving", "Checking sign-in");
+    api("GET", "/api/auth/me/").then(function (me) { if (me.user) home(me.user); else show("f-login"); })
+      .then(function () { PosLoader.hide(); }, function () { PosLoader.hide(); });
     submit("f-login", "m-login", function () {
       return api("POST", "/api/auth/login/", { area: MODE, username: $("l-user").value, secret: $("l-secret").value })
         .then(function (r) { $("l-secret").value = ""; if (r.ok) home(r.user); return r; });

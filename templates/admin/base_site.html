@@ -4,5 +4,7 @@
 <link rel="stylesheet" href="{% static 'core/admin-theme.css' %}">
 {% endblock %}
 {% block extrahead %}{{ block.super }}
+<link rel="stylesheet" href="{% static 'core/posloader.css' %}">
+<script src="{% static 'core/posloader.js' %}"></script>
 <script>try{document.documentElement.setAttribute("data-theme",localStorage.getItem("pos-theme")==="light"?"light":"dark")}catch(e){}</script>
 {% endblock %}
