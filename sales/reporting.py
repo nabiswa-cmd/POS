@@ -16,12 +16,13 @@ from .models import Refund, RefundItem, Sale, SaleItem
 ZERO = Decimal("0.00")
 MONEY = DecimalField(max_digits=14, decimal_places=2)
 VOLUME = DecimalField(max_digits=14, decimal_places=2)
-VOLUME_LEDGER_TYPES = (mr.BOTTLE_OPEN, mr.PARTIAL_SALE, mr.VOLUME_REFUND, mr.VOLUME_WASTAGE, mr.VOLUME_ADJUST)
+VOLUME_LEDGER_TYPES = (mr.BOTTLE_OPEN, mr.PARTIAL_SALE, mr.VOLUME_REFUND, mr.VOLUME_WASTAGE,
+                       mr.VOLUME_ADJUST, mr.VOLUME_DEFICIT_OFFSET)
 AUDIT_ACTIONS = (
     "sale.completed", "sale.voided", "sale.discount_applied", "sale.price_changed", "sale.item_removed",
     "sale.item_quantity_reduced", "refund.requested", "refund.approved", "refund.rejected", "refund.cancelled",
     "refund.paid_cash", "refund.paid_mpesa", "stock.adjusted", "stock.volume_wasted", "stock.volume_adjusted",
-    "receiving.approved", "shift.closed", "shift.reopened",
+    "receiving.approved", "shift.closed", "shift.reopened", "pos.session_locked", "pos.session_unlocked",
 )
 
 
@@ -263,16 +264,22 @@ def inventory_position():
             Value(ZERO, output_field=VOLUME), output_field=VOLUME),
     ).order_by("name", "pk"))
 
+    volume_deficits = dict(
+        StockMovement.objects.filter(movement_type__in=mr.PRODUCT_VOLUME_TYPES)
+        .values("product_id").annotate(balance=Sum("volume_ml"))
+        .values_list("product_id", "balance"))
     rows, unit_mismatches, unknown_capacity = [], [], 0
     for product in products:
         capacity = product.bottle_capacity_ml or product.historical_capacity
         sealed_volume = product.stock_qty * capacity if capacity is not None else (
             ZERO if product.stock_qty == 0 else None)
-        total_volume = None if sealed_volume is None else sealed_volume + product.opened_volume
+        volume_deficit = volume_deficits.get(product.pk, ZERO) or ZERO
+        total_volume = None if sealed_volume is None else sealed_volume + product.opened_volume + volume_deficit
         rows.append({
             "product": product, "sealed_bottles": product.stock_qty, "opened_bottles": product.opened_count,
             "empty_bottles": product.empty_count, "opened_volume_ml": product.opened_volume,
-            "sealed_volume_ml": sealed_volume, "total_volume_ml": total_volume,
+            "sealed_volume_ml": sealed_volume, "partial_volume_deficit_ml": volume_deficit,
+            "total_volume_ml": total_volume,
             "capacity_known": capacity is not None,
         })
         if sealed_volume is None:

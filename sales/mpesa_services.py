@@ -230,7 +230,7 @@ def recent_unmatched(user, shift, total=None):
 
 
 @transaction.atomic
-def checkout_mpesa(user, shift, transaction_id):
+def checkout_mpesa(user, shift, transaction_id, *, approval_token=None):
     """Complete the sale with a payment Safaricom has already confirmed to us."""
     sales_services._need(user, "sales.make")
     sales_services._need(user, "payments.accept", "You are not allowed to accept payments.")
@@ -246,12 +246,13 @@ def checkout_mpesa(user, shift, transaction_id):
                         "Part payments and overpayments are handled in the next update.")
     name = rules.pick_customer_name(txn.customer_name, sale.customer_name)
     done = sales_services.finish_sale(user, shift, payment={
-        "method": Payment.MPESA, "reference": txn.trans_id, "mpesa_transaction": txn}, customer_name=name)
+        "method": Payment.MPESA, "reference": txn.trans_id, "mpesa_transaction": txn}, customer_name=name,
+        approval_token=approval_token)
     return done
 
 
 @transaction.atomic
-def checkout_split(user, shift, mpesa_ids, cash_tendered=None):
+def checkout_split(user, shift, mpesa_ids, cash_tendered=None, *, approval_token=None):
     """Complete the sale from ANY mix: cash only, M-PESA only, or several M-PESA payments plus cash.
 
     * Every M-PESA payment must be one Safaricom already confirmed to us and nobody has used.
@@ -286,6 +287,7 @@ def checkout_split(user, shift, mpesa_ids, cash_tendered=None):
 
     named = next((t.customer_name for t in txns if t.customer_name), "")
     name = rules.pick_customer_name(named, sale.customer_name)
-    done = sales_services.finish_sale(user, shift, payments=parts, customer_name=name)
+    done = sales_services.finish_sale(user, shift, payments=parts, customer_name=name,
+                                      approval_token=approval_token)
 
     return done, plan

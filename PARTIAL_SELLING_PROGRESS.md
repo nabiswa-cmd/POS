@@ -309,3 +309,62 @@ Recommended next phase
 - Decide whether the operational report needs a CSV export and, if so, keep its fields and permission checks
   aligned with the on-screen report.
 
+## Phase 9: final integration verification (incomplete; not production-ready)
+
+### Verification performed
+- Reviewed the current Phase 1-8 implementation and ran the focused partial-selling/accounting/reporting suites.
+  `python manage.py test catalog.tests catalog.test_selling_units inventory.tests inventory.test_partial_models
+  inventory.test_partial_services inventory.test_partial_admin sales.tests sales.test_partial_sale_items
+  sales.test_partial_pos sales.test_partial_refunds sales.test_refunds sales.test_credit_notes
+  sales.test_phase4a sales.test_split_payments sales.test_reporting accounting.test_reports -v 1`:
+  **346 passed**.
+- Full suite: **778 tests; 749 passed, 12 failed, 13 errored, 4 skipped**. The failures/errors are in
+  `sales.test_cashup` (6 errors), `sales.test_phase4c` (7 failures, 3 errors), `sales.tests_screen`
+  (5 failures, 3 errors), and `core.test_backup` (1 Windows `/dev/null` error). These reproduce on the
+  unmodified Phase 8 checkout used for this phase; they were not introduced by Phase 9. Their first
+  introduction relative to earlier partial-selling phases was not established.
+- `python manage.py check`: no issues. `python manage.py makemigrations --check --dry-run`: no changes detected.
+- `python manage.py migrate --plan` lists only `sales.0011_saleitem_full_volume_per_sale_unit_ml_and_more`.
+  The configured development SQLite database has sales migrations through `0010`; `0011` is pending there.
+  The focused Django test database and isolated browser-test database were migrated to the current schema.
+  The development database was not migrated or written by this verification.
+- Browser smoke test on an isolated SQLite database: manager authorized the cashier/till, cashier scanned a
+  product, added one full bottle and a TOT, edited the TOT quantity to two, and completed a KES 3,700 cash
+  checkout. The manager report showed 1 full bottle, 2 partial measures, 750 ml full volume, 60 ml partial
+  volume, 810 ml total, KES 3,500 full-bottle revenue, and KES 200 partial revenue. Inventory showed 8 sealed
+  bottles, 1 opened bottle with 690 ml remaining, and 6,690 ml total. The ledger showed one full-unit sale,
+  one bottle opening, and one 60 ml partial-sale movement; the report reconciliation passed. This was a
+  single local browser smoke test, not full manual UAT.
+- No production code, tests, or migrations were changed in Phase 9. Only this progress report is updated.
+  `PARTIAL_SELLING_ARCHITECTURE.md` was not changed because no architecture change was made.
+
+### Not verified / remaining risks
+- PostgreSQL is not configured or available in this environment. Database constraints, PostgreSQL row locks,
+  concurrent checkout/refund behavior, and transaction rollback under concurrent load are therefore unverified;
+  SQLite results do not prove them.
+- No live Safaricom/provider test was run. Existing electronic-payment coverage uses local test fixtures, not a
+  provider sandbox or production integration.
+- Browser verification did not cover refunds, refund idempotency, wastage/spillage, stock adjustments, failed
+  or pending electronic payments, supervisor workflows, cashier report denial, or unauthorized price/stock
+  changes. Automated focused tests cover a number of these paths, but do not replace role-based UAT.
+- Historical full-bottle lines without a saved capacity still have unknown volume, as documented above.
+- The complete test suite is not green. Do not describe the feature as production-ready until the unrelated
+  failures are triaged and the database/provider/role UAT below is completed.
+
+### Deployment and rollback recommendations
+1. Back up the production database and uploaded/configuration data, deploy the matching application version,
+   and confirm the configured database and migration plan before applying schema changes.
+2. Run `python manage.py check`, `python manage.py migrate --plan`, then `python manage.py migrate` in the
+   deployment environment. Confirm `sales.0011_saleitem_full_volume_per_sale_unit_ml_and_more` is applied;
+   never treat this local SQLite migration status as production status.
+3. Before enabling cashier use, run the focused integration tests against the supported deployment database
+   (PostgreSQL), exercise concurrent checkout/refund and rollback cases, and complete manager/supervisor/cashier
+   browser UAT including the electronic-provider sandbox if configured.
+4. For rollback, stop writes and restore the pre-deployment database backup together with the matching previous
+   application release. Do not blindly reverse migration `sales.0011`: removing its field discards saved
+   full-sale volume snapshots. Test any alternative rollback procedure against a restored copy first.
+
+### Complete Phase 9 file list
+- `PARTIAL_SELLING_PROGRESS.md` (this verification record only).
+- No application, test, migration, or architecture files changed during Phase 9.
+

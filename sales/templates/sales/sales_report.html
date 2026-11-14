@@ -78,19 +78,20 @@
 
 {% if show_stock %}
 <h2>Current inventory and ledger reconciliation</h2>
-<p class="muted">Current counts are not date-filtered. Sealed liquid is stock quantity multiplied by the configured or last recorded bottle capacity. Bottle volume is checked against its signed movement ledger; sealed base units are checked against the latest stock movement balance.</p>
+<p class="muted">Current counts are not date-filtered. Net liquid includes sealed stock, opened bottles and any outstanding partial-sale volume deficit. Bottle volume is checked against its signed movement ledger; sealed base units are checked against the latest stock movement balance.</p>
 {% if inventory.unknown_capacity_count %}<div class="toast error" role="alert">{{ inventory.unknown_capacity_count }} product(s) have sealed stock with no known bottle capacity; total liquid volume is shown as unknown.</div>{% endif %}
 {% if inventory.unit_mismatch_count or inventory.bottle_mismatch_count %}
 <div class="toast error" role="alert">Reconciliation found {{ inventory.unit_mismatch_count }} sealed-stock mismatch(es) and {{ inventory.bottle_mismatch_count }} bottle-volume mismatch(es), totalling {{ inventory.bottle_mismatch_volume_ml }} ml absolute bottle variance.</div>
 {% else %}<p class="toast success" role="status">Sealed-unit and bottle-volume balances reconcile to their movement ledgers.</p>{% endif %}
 <table>
-  <tr><th>Product</th><th class="num">Sealed bottles / base units</th><th class="num">Opened bottles</th><th class="num">Empty bottles</th><th class="num">Opened liquid (ml)</th><th class="num">Sealed liquid (ml)</th><th class="num">Total liquid (ml)</th></tr>
+  <tr><th>Product</th><th class="num">Sealed bottles / base units</th><th class="num">Opened bottles</th><th class="num">Empty bottles</th><th class="num">Opened liquid (ml)</th><th class="num">Sealed liquid (ml)</th><th class="num">Partial deficit (ml)</th><th class="num">Net liquid (ml)</th></tr>
   {% for row in inventory.products %}
   <tr><td>{{ row.product.name }}</td><td class="num">{{ row.sealed_bottles }}</td><td class="num">{{ row.opened_bottles }}</td>
     <td class="num">{{ row.empty_bottles }}</td><td class="num">{{ row.opened_volume_ml }}</td>
     <td class="num">{% if row.sealed_volume_ml is None %}unknown{% else %}{{ row.sealed_volume_ml }}{% endif %}</td>
+    <td class="num">{{ row.partial_volume_deficit_ml }}</td>
     <td class="num">{% if row.total_volume_ml is None %}unknown{% else %}{{ row.total_volume_ml }}{% endif %}</td></tr>
-  {% empty %}<tr><td colspan="7" class="muted">No products.</td></tr>{% endfor %}
+  {% empty %}<tr><td colspan="8" class="muted">No products.</td></tr>{% endfor %}
 </table>
 
 {% if inventory.unit_mismatches %}

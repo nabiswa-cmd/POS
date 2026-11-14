@@ -44,7 +44,7 @@ def main(argv=None):
     parser.add_argument("--allow-quit", action="store_true", help="Development only: Ctrl+Shift+Q closes the POS window.")
     args = parser.parse_args(argv)
 
-    from PySide6.QtCore import QLockFile, QUrl, Qt
+    from PySide6.QtCore import QLockFile, QUrl, QUrlQuery, Qt, QTimer
     from PySide6.QtGui import QKeySequence, QShortcut
     from PySide6.QtWebEngineCore import QWebEnginePage
     from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -66,10 +66,44 @@ def main(argv=None):
             self.view.setPage(LockedPage(self.view))
             self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
             self.setCentralWidget(self.view)
+            self.view.loadFinished.connect(self._sleep_if_requested)
+            if args.mode == "pos":
+                self._lock_shortcut = QShortcut(QKeySequence("Ctrl+Alt+L"), self)
+                self._lock_shortcut.activated.connect(self._request_lock)
             self._printer = None
             if os.environ.get("WINESPOS_RECEIPT_PRINTER", "").strip():
                 self.view.printRequested.connect(self.print_receipt)   # silent printing, opt-in (see desktop/printers.py)
             self.view.load(QUrl(args.server.rstrip("/") + MODES[args.mode]))
+
+        def _request_lock(self):
+            self.view.page().runJavaScript(
+                "window.dispatchEvent(new Event('winespos-lock-request'));")
+
+        def _sleep_if_requested(self, loaded):
+            url = self.view.url()
+            if not loaded or args.mode != "pos" or url.path() != "/app/pos/":
+                return
+            if QUrlQuery(url).queryItemValue("sleep") != "1":
+                return
+            till = QUrlQuery(url).queryItemValue("till")
+            target = "/app/pos/" + (f"?till={till}" if till.isdigit() else "")
+            self.view.page().runJavaScript(f"history.replaceState(null, '', '{target}');")
+            QTimer.singleShot(500, self._sleep_computer)
+
+        def _sleep_computer(self):
+            if sys.platform != "win32":
+                QMessageBox.warning(self, TITLES[args.mode], "Desktop sleep is supported only on Windows.")
+                return
+            import ctypes
+
+            power = ctypes.WinDLL("PowrProf.dll", use_last_error=True)
+            suspend = power.SetSuspendState
+            suspend.argtypes = [ctypes.c_bool, ctypes.c_bool, ctypes.c_bool]
+            suspend.restype = ctypes.c_bool
+            if not suspend(False, False, False):
+                error = ctypes.get_last_error()
+                message = ctypes.FormatError(error).strip() if error else "Windows rejected the sleep request."
+                QMessageBox.warning(self, TITLES[args.mode], f"Could not put the computer to sleep: {message}")
 
         def print_receipt(self):
             """Send the page to the receipt printer named in WINESPOS_RECEIPT_PRINTER, with no dialog."""

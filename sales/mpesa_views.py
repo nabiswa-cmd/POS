@@ -6,10 +6,11 @@ recorded exactly once because of the database's unique receipt code."""
 import hmac
 import json
 
-from django.conf import settings
 from django.http import Http404, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
+
+from core import integration_settings
 
 from . import mpesa_rules as rules
 from . import mpesa_services as svc
@@ -20,7 +21,7 @@ MAX_BODY = 64 * 1024
 
 
 def _check(secret):
-    expected = settings.MPESA["CALLBACK_SECRET"]
+    expected = integration_settings.mpesa()["CALLBACK_SECRET"]
     if not expected or not hmac.compare_digest(str(secret), expected):
         raise Http404()
 
@@ -87,7 +88,8 @@ def relay_feed(request, secret):
     """The shop PC asks for recent payments. Needs the secret in the address AND the relay token; 404 otherwise
     (also when no token is configured, so the feed does not exist unless you switch it on)."""
     _check(secret)
-    if not relay_rules.bearer_ok(request.headers.get("Authorization"), settings.MPESA.get("RELAY_TOKEN")):
+    if not relay_rules.bearer_ok(request.headers.get("Authorization"),
+                                 integration_settings.mpesa().get("RELAY_TOKEN")):
         raise Http404()
     after, limit, hours = relay_rules.feed_params(request.GET)
     response = JsonResponse(relay.feed(after, limit, hours))

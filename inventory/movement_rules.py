@@ -17,11 +17,16 @@ PARTIAL_SALE = "PARTIAL_SALE"
 VOLUME_WASTAGE = "VOLUME_WASTAGE"
 VOLUME_ADJUST = "VOLUME_ADJUST"
 VOLUME_REFUND = "VOLUME_REFUND"
+PARTIAL_DEFICIT = "PARTIAL_DEFICIT"
+PARTIAL_DEFICIT_OFFSET = "PARTIAL_DEFICIT_OFFSET"
+VOLUME_DEFICIT_OFFSET = "VOLUME_DEFICIT_OFFSET"
 
 POSITIVE_ONLY = {OPENING, RECEIVE, REFUND_RETURN}
 NEGATIVE_ONLY = {SALE, DAMAGED, EXPIRED, SUPPLIER_RETURN}
 EITHER = {ADJUST}
-BOTTLE_TYPES = {BOTTLE_OPEN, PARTIAL_SALE, VOLUME_WASTAGE, VOLUME_ADJUST, VOLUME_REFUND}
+BOTTLE_TYPES = {BOTTLE_OPEN, PARTIAL_SALE, VOLUME_WASTAGE, VOLUME_ADJUST, VOLUME_REFUND,
+                VOLUME_DEFICIT_OFFSET}
+PRODUCT_VOLUME_TYPES = {PARTIAL_DEFICIT, PARTIAL_DEFICIT_OFFSET}
 ALL_TYPES = POSITIVE_ONLY | NEGATIVE_ONLY | EITHER | BOTTLE_TYPES
 
 # Types that set the weighted-average cost (they bring in stock at a real purchase cost).
@@ -35,6 +40,9 @@ LABELS = {
     ADJUST: "Adjustment", DAMAGED: "Damaged", EXPIRED: "Expired", SUPPLIER_RETURN: "Returned to supplier",
     BOTTLE_OPEN: "Bottle opened", PARTIAL_SALE: "Partial sale", VOLUME_WASTAGE: "Volume wastage",
     VOLUME_ADJUST: "Volume adjustment", VOLUME_REFUND: "Partial refund return",
+    PARTIAL_DEFICIT: "Partial-sale volume deficit",
+    PARTIAL_DEFICIT_OFFSET: "Partial-sale deficit offset",
+    VOLUME_DEFICIT_OFFSET: "Received volume used to offset deficit",
 }
 
 
@@ -70,7 +78,7 @@ def check_bottle_movement(movement_type, quantity, volume_ml):
         return
     if quantity != 0:
         raise MovementError(f"{LABELS[movement_type]} does not change whole-unit stock.")
-    if movement_type in (PARTIAL_SALE, VOLUME_WASTAGE) and volume_ml > 0:
+    if movement_type in (PARTIAL_SALE, VOLUME_WASTAGE, VOLUME_DEFICIT_OFFSET) and volume_ml > 0:
         raise MovementError(f"{LABELS[movement_type]} must remove volume.")
     if movement_type == VOLUME_REFUND and volume_ml < 0:
         raise MovementError("Partial refund return must add volume.")

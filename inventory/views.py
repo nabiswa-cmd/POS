@@ -120,8 +120,9 @@ def _approval_token(request, form, product, needs_approver):
 def bottle_stock(request, pk):
     product = get_object_or_404(Product, pk=pk)
     kind = request.GET.get("type", "")
-    history = StockMovement.objects.filter(product=product, movement_type__in=mr.BOTTLE_TYPES)
-    if kind in mr.BOTTLE_TYPES:
+    history = StockMovement.objects.filter(
+        product=product, movement_type__in=mr.BOTTLE_TYPES | mr.PRODUCT_VOLUME_TYPES)
+    if kind in mr.BOTTLE_TYPES | mr.PRODUCT_VOLUME_TYPES:
         history = history.filter(movement_type=kind)
     else:
         kind = ""
@@ -131,7 +132,8 @@ def bottle_stock(request, pk):
         "product": product, "overview": services.bottle_overview(product.pk),
         "opened": Bottle.objects.filter(product=product, status=Bottle.OPENED).select_related("opened_by"),
         "empties": Bottle.objects.filter(product=product, status=Bottle.EMPTY).order_by("-pk")[:10],
-        "page": page, "kind": kind, "types": [(t, mr.LABELS[t]) for t in sorted(mr.BOTTLE_TYPES)],
+        "page": page, "kind": kind,
+        "types": [(t, mr.LABELS[t]) for t in sorted(mr.BOTTLE_TYPES | mr.PRODUCT_VOLUME_TYPES)],
         "show_cost": can_see_cost(request.user), "can_adjust": request.user.can("stock.adjust"),
         "selling_units": product.selling_units.all()})
 

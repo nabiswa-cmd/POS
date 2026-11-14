@@ -8,6 +8,7 @@
 <div><div class="muted">Empty bottles</div><b>{{ overview.empty_bottles }}</b></div>
 <div><div class="muted">Liquid left in opened bottles</div><b>{{ overview.opened_volume_ml }} ml</b></div>
 <div><div class="muted">Sealed liquid</div><b>{% if overview.sealed_volume_ml is None %}unknown{% else %}{{ overview.sealed_volume_ml }} ml{% endif %}</b></div>
+<div><div class="muted">Partial-sale volume deficit</div><b>{{ overview.partial_volume_deficit_ml }} ml</b></div>
 <div><div class="muted">Total liquid</div><b>{% if overview.total_volume_ml is None %}unknown{% else %}{{ overview.total_volume_ml }} ml{% endif %}</b></div></div>
 {% if overview.sealed_volume_ml is None %}<div class="help">The bottle size is learned when the first bottle is opened, so sealed liquid is not shown until then.</div>{% endif %}</div>
 

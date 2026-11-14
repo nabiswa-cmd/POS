@@ -36,7 +36,19 @@
     <label for="c-secret">Password or PIN</label>
     <input id="c-secret" type="password" autocomplete="off">
     <button type="submit">Log in</button>
+    <button type="button" class="ghost" id="b-back-authorize">Back to supervisor authorization</button>
     <div class="msg" id="m-cashier" role="alert"></div>
+  </form>
+
+  <form id="f-unlock" hidden autocomplete="off">
+    <p class="step">POS locked</p>
+    <p class="hint" id="locked-note"></p>
+    <label for="u-user">Cashier username</label>
+    <input id="u-user" autocomplete="off">
+    <label for="u-secret">Password or PIN</label>
+    <input id="u-secret" type="password" autocomplete="off">
+    <button type="submit">Unlock POS</button>
+    <div class="msg" id="m-unlock" role="alert"></div>
   </form>
 
   <!-- POS step 3: shift -->
@@ -46,6 +58,8 @@
     <label for="s-float">Opening cash float (KES)</label>
     <input id="s-float" inputmode="decimal" autocomplete="off">
     <button type="submit">Open shift</button>
+    <button type="button" class="ghost" id="b-back-cashier">Back / choose a different cashier</button>
+    <button type="button" class="ghost" id="b-change-authorizer">Change supervisor or till</button>
     <div class="msg" id="m-shift" role="alert"></div>
   </form>
 
@@ -82,7 +96,7 @@
   var MODE = "{{ mode }}";
   var $ = function (id) { return document.getElementById(id); };
   var show = function (id) {
-    ["f-authorize","f-cashier","f-shift","s-ready","f-login","s-home"].forEach(function (x) { $(x).hidden = (x !== id); });
+    ["f-authorize","f-cashier","f-unlock","f-shift","s-ready","f-login","s-home"].forEach(function (x) { $(x).hidden = (x !== id); });
     var first = $(id).querySelector("input:not([type=hidden]), select");
     if (first) first.focus();
   };
@@ -107,8 +121,11 @@
   function logout() { api("POST", "/api/auth/logout/", {}).then(function () { location.reload(); }); }
 
   if (MODE === "pos") {
-    var tillNo = null;
-    api("GET", "/api/pos/state/").then(function (s) {
+    var tillNo = null, lockedShift = null;
+    var requestedTill = new URLSearchParams(location.search).get("till");
+    var stateUrl = "/api/pos/state/" + (requestedTill ? "?till=" + encodeURIComponent(requestedTill) : "");
+    api("GET", stateUrl).then(function (s) {
+      lockedShift = s.locked_shift;
       var sel = $("a-till");
       (s.tills || []).forEach(function (t) {
         var o = document.createElement("option"); o.value = t.number; o.textContent = t.name; sel.appendChild(o);
@@ -117,9 +134,29 @@
     }).then(function (me) {
       if (me.user) { return api("GET", "/api/pos/shift/").then(function (s) {
         if (s.ok) { tillNo = s.till; return s.shift ? ready(me.user, s.till, s.shift) : needShift(); }
+        if (lockedShift) {
+          tillNo = lockedShift.till;
+          $("locked-note").textContent = "Till " + tillNo + " is locked. Sign in as the cashier on the open shift. No new supervisor authorization is needed.";
+          return api("POST", "/api/auth/logout/", {}).then(function () { show("f-unlock"); });
+        }
         show("f-authorize");
       }); }
-      show("f-authorize");
+      if (lockedShift) {
+        tillNo = lockedShift.till;
+        $("locked-note").textContent = "Till " + tillNo + " is locked. Sign in as the cashier on the open shift. No new supervisor authorization is needed.";
+        show("f-unlock");
+      } else {
+        show("f-authorize");
+      }
+    });
+    submit("f-unlock", "m-unlock", function () {
+      return api("POST", "/api/pos/unlock/", {
+        till: tillNo, username: $("u-user").value, secret: $("u-secret").value
+      }).then(function (r) {
+        $("u-secret").value = "";
+        if (r.ok) ready(r.user, r.till, r.shift);
+        return r;
+      });
     });
     submit("f-authorize", "m-authorize", function () {
       var typed = $("a-user").value;
@@ -129,6 +166,13 @@
           if (r.ok) { tillNo = r.till; $("authorized-note").textContent = "Authorized by " + r.authorized_by + " for till " + r.till + "."; show("f-cashier"); if (r.owner) { $("c-user").value = typed; $("c-secret").focus(); } }
           return r;
         });
+    });
+    $("b-back-authorize").addEventListener("click", function () {
+      api("POST", "/api/pos/authorization/cancel/", {}).then(function (r) {
+        if (!r.ok) { say("m-cashier", r.error || "Could not return to supervisor authorization."); return; }
+        tillNo = null; $("c-user").value = ""; $("c-secret").value = "";
+        show("f-authorize");
+      });
     });
     submit("f-cashier", "m-cashier", function () {
       return api("POST", "/api/pos/cashier-login/", { username: $("c-user").value, secret: $("c-secret").value, till: tillNo })
@@ -140,6 +184,20 @@
           r.shift ? ready(r.user, r.till, r.shift) : needShift();
           return r;
         });
+    });
+    $("b-back-cashier").addEventListener("click", function () {
+      api("POST", "/api/pos/cashier/change/", {}).then(function (r) {
+        if (!r.ok) { say("m-shift", r.error || "Could not change cashier."); return; }
+        $("c-user").value = ""; $("c-secret").value = ""; say("m-cashier", "");
+        show("f-cashier");
+      });
+    });
+    $("b-change-authorizer").addEventListener("click", function () {
+      api("POST", "/api/pos/authorization/cancel/", {}).then(function (r) {
+        if (!r.ok) { say("m-shift", r.error || "Could not change supervisor authorization."); return; }
+        tillNo = null; $("c-user").value = ""; $("c-secret").value = "";
+        show("f-authorize");
+      });
     });
     submit("f-shift", "m-shift", function () {
       return api("POST", "/api/pos/shift/open/", { opening_float: $("s-float").value }).then(function (r) {

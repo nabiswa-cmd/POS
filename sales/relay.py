@@ -10,11 +10,11 @@ import urllib.error
 import urllib.request
 from datetime import timedelta
 
-from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
 from core import audit
+from core import integration_settings
 from core.models import AuditLog
 
 from . import mpesa_rules as rules
@@ -32,7 +32,7 @@ class RelayError(Exception):
 
 
 def cfg():
-    return settings.MPESA
+    return integration_settings.mpesa()
 
 
 def enabled():

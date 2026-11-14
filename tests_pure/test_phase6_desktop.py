@@ -32,6 +32,7 @@ class BuildValuesTests(unittest.TestCase):
         self.assertEqual((v["DJANGO_DEBUG"], v["DB_ENGINE"], v["WINESPOS_BIND"]), ("false", "postgres", "127.0.0.1"))
         self.assertGreaterEqual(len(v["DJANGO_SECRET_KEY"]), 48)
         self.assertNotEqual(v["DJANGO_SECRET_KEY"], v["DESKTOP_SHELL_SECRET"])
+        self.assertNotEqual(v["DJANGO_SECRET_KEY"], v["INTEGRATION_SETTINGS_KEY"])
         self.assertEqual(v["DJANGO_ALLOWED_HOSTS"], "localhost,127.0.0.1")
 
     def test_a_second_till_opens_the_server_to_the_shop_network_only_when_asked(self):
@@ -42,7 +43,7 @@ class BuildValuesTests(unittest.TestCase):
     def test_secrets_are_kept_when_run_again(self):
         first = configure.build_values("server", root=Path("/x"))
         again = configure.build_values("server", root=Path("/x"), existing=first)
-        for key in ("DJANGO_SECRET_KEY", "DB_PASSWORD", "DESKTOP_SHELL_SECRET"):
+        for key in ("DJANGO_SECRET_KEY", "DB_PASSWORD", "DESKTOP_SHELL_SECRET", "INTEGRATION_SETTINGS_KEY"):
             self.assertEqual(first[key], again[key])
         fresh = configure.build_values("server", root=Path("/x"))
         self.assertNotEqual(first["DJANGO_SECRET_KEY"], fresh["DJANGO_SECRET_KEY"])

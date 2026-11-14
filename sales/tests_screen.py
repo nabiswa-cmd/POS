@@ -74,6 +74,14 @@ class SellPageTests(ScreenCase):
     def test_pos_login_hands_a_ready_cashier_to_the_sales_screen(self):
         self.assertIn("/pos/sell/", self.c.get("/app/pos/").content.decode())
 
+    def test_scanner_and_lock_controls_are_available_on_the_active_pos_page(self):
+        html = self.c.get("/pos/sell/").content.decode()
+        self.assertIn('id="scan" autofocus', html)
+        self.assertIn('id="lock-pos"', html)
+        self.assertIn("Ctrl+Alt+L", html)
+        self.assertIn('/api/pos/lock/', html)
+        self.assertIn('e.key === "Enter"', html)
+
     def test_every_element_and_endpoint_the_script_uses_exists(self):
         js = (STATIC / "pos.js").read_text()
         html = self.c.get("/pos/sell/").content.decode()

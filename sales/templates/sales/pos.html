@@ -49,7 +49,7 @@
   #printframe{position:fixed;width:0;height:0;border:0;left:-99px}
 </style>
 </head>
-<body class="pos">
+<body class="pos" data-till="{{ till_number }}">
 <div class="bar">
   <span><b id="shop">{{ shop_name }}</b></span>
   <span>Till <b id="till">-</b></span>
@@ -59,13 +59,14 @@
   <span class="grow"></span>
   <span id="conn" class="pill">Server OK</span>
   <span id="clock"></span>
+  <button id="lock-pos" class="ghost" type="button" title="Lock and put this computer to sleep (Ctrl+Alt+L)">Lock &amp; sleep</button>
   <span><kbd id="helpkey">F1</kbd> Help</span>
 </div>
 
 <div class="work">
   <div class="left">
     <div class="scanrow">
-      <input id="scan" autocomplete="off" spellcheck="false" aria-label="Scan or type a product code. Use 3*code for a quantity."
+      <input id="scan" autofocus autocomplete="off" spellcheck="false" aria-label="Scan or type a product code. Use 3*code for a quantity."
              placeholder="Scan barcode, or type a code (3*code for quantity)">
     </div>
     <div id="msg" role="status" aria-live="polite"></div>
@@ -107,6 +108,15 @@
   function esc(t) { return String(t == null ? "" : t).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
   function say(text, kind) { var m = $("msg"); m.textContent = text || ""; m.className = kind || ""; }
   function focusScan() { if (!S.stack.length) { $("scan").focus(); } }
+  function lockPos() {
+    if (!S.cfg || S.busy || S.stack.length) return;
+    api("POST", "/api/pos/lock/", {}).then(function (r) {
+      if (!r.ok) { say(r.error || "Could not lock this till.", "err"); return; }
+      location.replace("/app/pos/?sleep=1&till=" + encodeURIComponent(S.cfg.till_number));
+    });
+  }
+  $("lock-pos").addEventListener("click", lockPos);
+  window.addEventListener("winespos-lock-request", lockPos);
 
   /* ---------- dialogs (Escape only ever closes a dialog; it never performs or skips anything) ---------- */
   function openDialog(html, opts) {
@@ -137,6 +147,11 @@
   }
   document.addEventListener("keydown", function (e) {
     var d = topDialog();
+    if (e.ctrlKey && e.altKey && String(e.key).toLowerCase() === "l") {
+      e.preventDefault();
+      if (!d) lockPos();
+      return;
+    }
     if (e.key === "Escape") { e.preventDefault(); if (d) closeDialog(d); else { $("scan").value = ""; } return; }
     if (d) {
       if (d.onKey && d.onKey(e)) { return; }
@@ -203,10 +218,12 @@
      single-use token, and send the SAME request again with it. Closing this window just cancels. */
   var ACTION_LABEL = { refund: "Approve a refund", remove_item: "Remove item from sale", void_sale: "Void the sale", price_change: "Change price",
                        exceptional_discount: "Exceptional discount" };
-  function askApproval(action, ref, detail) {
+  function askApproval(request) {
     return new Promise(function (resolve) {
       var done = false;
-      var d = openDialog('<h2>Supervisor authorization</h2><p class="note">' + esc(ACTION_LABEL[action] || action) + (detail ? ": " + esc(detail) : "") +
+      var detail = request.detail ? JSON.stringify(request.detail) : "";
+      var action = request.action;
+      var d = openDialog('<h2>Supervisor authorization</h2><p class="note">' + esc(request.label || ACTION_LABEL[action] || action) + (detail ? ": " + esc(detail) : "") +
         '. A supervisor or manager types their own login. The cashier never sees it.</p>' +
         '<label>Supervisor / manager username</label><input id="ap-user" data-first autocomplete="off">' +
         '<label>Password or PIN</label><input id="ap-secret" type="password" autocomplete="off">' +
@@ -215,7 +232,8 @@
         { onClose: function () { if (!done) resolve(null); } });
       var go = function () {
         if (S.busy) return; S.busy = true;
-        api("POST", "/api/approvals/request/", { action: action, object_ref: ref, approver_username: $("ap-user").value,
+        api("POST", "/api/approvals/request/", { action: action, object_ref: request.object_ref,
+          detail: request.detail, approver_username: $("ap-user").value,
           secret: $("ap-secret").value, reason: $("ap-reason").value }).then(function (r) {
           S.busy = false; $("ap-secret").value = "";
           if (r.ok) { done = true; resolve(r.token || ""); closeDialog(d); }
@@ -231,7 +249,7 @@
     opts = opts || {};
     return api("POST", url, body).then(function (r) {
       if (r.ok || r.approval_required == null) return r;
-      return askApproval(r.approval_required, r.object_ref, opts.detail).then(function (token) {
+      return askApproval(r.approval_required).then(function (token) {
         if (token === null) return { ok: false, cancelled: true, error: "Cancelled: not authorized." };
         var b2 = {}; for (var k in body) b2[k] = body[k]; b2.approval_token = token;
         return api("POST", url, b2);
@@ -491,9 +509,19 @@
     var t = tender(), body = { mpesa_ids: t.mpesa.map(function (p) { return p.id; }) };
     if (cashTendered != null) body.cash_tendered = Number(cashTendered).toFixed(2);
     S.busy = true;
-    api("POST", "/api/sales/checkout/", body).then(function (r) {
+    function handle(r) {
       S.busy = false;
       if (!r.ok) {
+        if (r.approval_required) {
+          askApproval(r.approval_required).then(function (token) {
+            if (token === null) { onErr("Cancelled: supervisor approval was not given."); return; }
+            var approvedBody = {}; for (var k in body) approvedBody[k] = body[k];
+            approvedBody.approval_token = token;
+            S.busy = true;
+            api("POST", "/api/sales/checkout/", approvedBody).then(handle);
+          });
+          return;
+        }
         var msg = r.error || "Could not complete the sale.";
         if (/already been used|not found/i.test(msg)) { t.mpesa = []; msg += " The M-PESA payments were cleared. Choose them again."; }
         onErr(msg); if (/stock/i.test(msg)) refresh();
@@ -501,7 +529,8 @@
       }
       if (d && S.stack.indexOf(d) >= 0) closeDialog(d);
       saleDone(r);
-    });
+    }
+    api("POST", "/api/sales/checkout/", body).then(handle);
   }
   function saleDone(r) {
     S.tender = null; setCart(r.cart); S.sel = -1; S.lastSale = r.sale_id;

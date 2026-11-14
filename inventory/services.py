@@ -65,6 +65,7 @@ def post_movement(*, product_id, movement_type, quantity, user, reference="", re
     except mr.MovementError as exc:
         raise StockError(str(exc)) from exc
     product = _lock_product(product_id)
+    previous_balance = product.stock_qty
     new_balance = product.stock_qty + quantity
     if new_balance < 0 and not allow_negative:
         raise StockError(f"Only {product.stock_qty} {product.base_unit} of '{product.name}' in stock.")
@@ -83,16 +84,22 @@ def post_movement(*, product_id, movement_type, quantity, user, reference="", re
         reference=reference[:60], reason=reason[:250])
 
     if quantity > 0:
+        offset_units = min(quantity, max(-previous_balance, 0))
+        available_units = quantity - offset_units
         StockLot.objects.create(product=product, movement=movement, received_qty=quantity,
-                                remaining_qty=quantity, unit_cost=cost)
-        if movement_type in mr.COSTED_IN:
-            product.avg_cost = costing.weighted_average(product.stock_qty, product.avg_cost, quantity, cost)
+                                remaining_qty=available_units, unit_cost=cost)
+        if movement_type in mr.COSTED_IN and available_units:
+            product.avg_cost = costing.weighted_average(max(previous_balance, 0), product.avg_cost,
+                                                        available_units, cost)
             product.last_cost = cost
     product.stock_qty = new_balance
     product.save(update_fields=["stock_qty", "avg_cost", "last_cost"])
     if movement_type == mr.SALE and not shop.costing_locked:
         shop.costing_locked = True  # the costing method can never change once a sale exists
         shop.save(update_fields=["costing_locked"])
+    if quantity > 0 and movement_type in mr.POSITIVE_ONLY:
+        _settle_partial_deficits(product, max(new_balance, 0) - max(previous_balance, 0),
+                                 user=user, reference=reference, receipt_movement=movement)
     return movement
 
 
@@ -175,9 +182,60 @@ def _volume_cost(product, bottle, volume_ml):
     return unit_cost, costing.q2(unit_cost * volume_ml)
 
 
+def _partial_deficit_rows(product):
+    rows = StockMovement.objects.filter(product=product, movement_type=mr.PARTIAL_DEFICIT,
+                                        volume_ml__lt=0).order_by("pk")
+    offsets = dict(
+        StockMovement.objects.filter(movement_type=mr.PARTIAL_DEFICIT_OFFSET,
+                                     source_movement__in=rows)
+        .values("source_movement_id").annotate(total=Sum("volume_ml"))
+        .values_list("source_movement_id", "total"))
+    return [(row, max(-row.volume_ml - offsets.get(row.pk, Decimal("0.00")), Decimal("0.00")))
+            for row in rows]
+
+
+def _settle_partial_deficits(product, available_units, *, user, reference, receipt_movement):
+    if available_units <= 0:
+        return
+    deficits = [(movement, amount) for movement, amount in _partial_deficit_rows(product) if amount > 0]
+    if not deficits:
+        return
+    capacity = _known_capacity(product.pk)
+    if capacity is None:
+        return
+    operation_key = f"deficit-offset-{receipt_movement.pk}"
+    sequence = 0
+    for _ in range(available_units):
+        if not any(amount > 0 for _movement, amount in deficits):
+            break
+        bottle, _opening = _open_bottle_locked(
+            product=product, capacity_ml=capacity, user=user, operation_key=operation_key,
+            operation_sequence=sequence, reference=reference, reason="Bottle opened to offset a prior partial-sale deficit")
+        sequence += 1
+        for deficit, outstanding in deficits:
+            if outstanding <= 0:
+                continue
+            amount = min(outstanding, bottle.remaining_ml)
+            _change_bottle_volume(
+                product=product, bottle=bottle, volume_ml=-amount, movement_type=mr.VOLUME_DEFICIT_OFFSET,
+                user=user, operation_key=operation_key, operation_sequence=sequence, reference=reference,
+                reason="Received stock used to offset an approved partial-sale deficit",
+                source_movement=deficit)
+            sequence += 1
+            StockMovement.objects.create(
+                product=product, movement_type=mr.PARTIAL_DEFICIT_OFFSET, quantity=0,
+                balance_after=product.stock_qty, volume_ml=amount, source_movement=deficit,
+                user=user, reference=reference[:60], reason="Receipt offset prior partial-sale deficit",
+                operation_key=operation_key, operation_sequence=sequence)
+            sequence += 1
+            deficits[deficits.index((deficit, outstanding))] = (deficit, outstanding - amount)
+            if bottle.remaining_ml <= 0:
+                break
+
+
 def _change_bottle_volume(*, product, bottle, volume_ml, movement_type, user, operation_key,
                           operation_sequence, reference="", reason="", source_movement=None,
-                          refund_item_id=None, approved_by=None):
+                          refund_item_id=None, approved_by=None, cost_override=None):
     new_remaining = bottle.remaining_ml + volume_ml
     if new_remaining < 0:
         raise StockError(f"Only {bottle.remaining_ml} ml remain in this bottle.")
@@ -186,7 +244,7 @@ def _change_bottle_volume(*, product, bottle, volume_ml, movement_type, user, op
     if bottle.status == Bottle.SEALED:
         raise StockError("A sealed bottle must be opened before its volume can be changed.")
     new_status = Bottle.EMPTY if new_remaining == 0 else Bottle.OPENED
-    unit_cost, total_cost = _volume_cost(product, bottle, abs(volume_ml))
+    unit_cost, total_cost = cost_override or _volume_cost(product, bottle, abs(volume_ml))
     bottle.remaining_ml = new_remaining
     bottle.status = new_status
     bottle.save(update_fields=["remaining_ml", "status"])
@@ -256,7 +314,8 @@ def sell_measures(*, selling_unit_id, quantity, user, operation_key, bottle_capa
 
 
 @transaction.atomic
-def sell_volume(*, product_id, volume_ml, user, operation_key, bottle_capacity_ml=None, reference="", reason=""):
+def sell_volume(*, product_id, volume_ml, user, operation_key, bottle_capacity_ml=None, reference="", reason="",
+                allow_negative=False, approved_by=None):
     """Deduct liquid from oldest opened bottles first, opening sealed bottles as needed."""
     requested = _volume(volume_ml, positive=True)
     key = _operation_key(operation_key)
@@ -274,8 +333,8 @@ def sell_volume(*, product_id, volume_ml, user, operation_key, bottle_capacity_m
     if needed_ml and capacity is None:
         raise StockError("Bottle capacity is required before opening the first bottle.")
     sealed_needed = int((needed_ml / capacity).to_integral_value(rounding="ROUND_CEILING")) if needed_ml else 0
-    if sealed_needed > product.stock_qty:
-        total_available = available_open_ml + product.stock_qty * (capacity or Decimal("0.00"))
+    if sealed_needed > max(product.stock_qty, 0) and not allow_negative:
+        total_available = available_open_ml + max(product.stock_qty, 0) * (capacity or Decimal("0.00"))
         raise StockError(f"Only {total_available} ml of '{product.name}' are available.")
 
     movements = []
@@ -291,7 +350,7 @@ def sell_volume(*, product_id, volume_ml, user, operation_key, bottle_capacity_m
         sequence += 1
         remaining_to_sell -= amount
 
-    while remaining_to_sell > 0:
+    while remaining_to_sell > 0 and product.stock_qty > 0:
         bottle, opening_movement = _open_bottle_locked(
             product=product, capacity_ml=capacity, user=user, operation_key=key,
             operation_sequence=sequence, reference=reference, reason="Bottle opened for partial sale")
@@ -303,6 +362,23 @@ def sell_volume(*, product_id, volume_ml, user, operation_key, bottle_capacity_m
             user=user, operation_key=key, operation_sequence=sequence, reference=reference, reason=reason))
         sequence += 1
         remaining_to_sell -= amount
+
+    if remaining_to_sell > 0:
+        if not allow_negative:
+            raise StockError(f"Only {available_open_ml + max(product.stock_qty, 0) * (capacity or Decimal('0.00'))} "
+                             f"ml of '{product.name}' are available.")
+        if capacity is None:
+            raise StockError(f"Bottle capacity is required before recording a volume deficit for '{product.name}'.")
+        deficit_volume = _volume(remaining_to_sell, positive=True)
+        unit_cost = costing.q4(product.avg_cost / capacity)
+        total_cost = costing.q2(unit_cost * deficit_volume)
+        movements.append(StockMovement.objects.create(
+            product=product, movement_type=mr.PARTIAL_DEFICIT, quantity=0,
+            balance_after=product.stock_qty, volume_ml=-deficit_volume,
+            unit_cost=unit_cost, total_cost=total_cost, user=user, approved_by=approved_by,
+            reference=reference[:60], reason=reason[:250], operation_key=key,
+            operation_sequence=sequence))
+        remaining_to_sell = Decimal("0.00")
 
     shop = ShopSettings.load()
     if not shop.costing_locked:
@@ -334,38 +410,101 @@ def restore_refunded_volume(*, refund_item_id, user, approved_by):
     product = _lock_product(sale_item.product_id)
     _ensure_operation_unused(operation_key)
     sources = list(StockMovement.objects.filter(
-        product=product, movement_type=mr.PARTIAL_SALE, operation_key=source_key,
-        volume_ml__lt=0, bottle__isnull=False).order_by("operation_sequence", "pk"))
+        product=product, movement_type__in=(mr.PARTIAL_SALE, mr.PARTIAL_DEFICIT),
+        operation_key=source_key, volume_ml__lt=0).order_by("operation_sequence", "pk"))
     if not sources:
-        raise StockError("The original partial-sale bottle movements are missing; volume cannot be restored.")
+        raise StockError("The original partial-sale movements are missing; volume cannot be restored.")
 
     already_returned = dict(
         StockMovement.objects.filter(movement_type=mr.VOLUME_REFUND, source_movement__in=sources)
         .values("source_movement_id").annotate(total=Sum("volume_ml"))
         .values_list("source_movement_id", "total"))
+    already_deficit_refunded = dict(
+        StockMovement.objects.filter(movement_type=mr.PARTIAL_DEFICIT_OFFSET, source_movement__in=sources,
+                                     refund_item__isnull=False)
+        .values("source_movement_id").annotate(total=Sum("volume_ml"))
+        .values_list("source_movement_id", "total"))
+    settled_deficits = dict(
+        StockMovement.objects.filter(movement_type=mr.PARTIAL_DEFICIT_OFFSET, source_movement__in=sources,
+                                     refund_item__isnull=True)
+        .values("source_movement_id").annotate(total=Sum("volume_ml"))
+        .values_list("source_movement_id", "total"))
+    settled_bottles = list(StockMovement.objects.filter(
+        movement_type=mr.VOLUME_DEFICIT_OFFSET, source_movement__in=sources,
+        bottle__isnull=False).values_list("bottle_id", flat=True))
     bottles = {
         bottle.pk: bottle
         for bottle in Bottle.objects.select_for_update().filter(
-            product=product, pk__in={source.bottle_id for source in sources})
+            product=product, pk__in=({source.bottle_id for source in sources if source.bottle_id}
+                                     | set(settled_bottles)))
     }
 
     remaining = refund_item.volume_ml
     movements = []
     for source in sources:
         sold_from_source = -source.volume_ml
-        available_to_return = sold_from_source - already_returned.get(source.pk, Decimal("0.00"))
-        if available_to_return <= 0:
+        if source.movement_type == mr.PARTIAL_SALE:
+            available_to_return = sold_from_source - already_returned.get(source.pk, Decimal("0.00"))
+            amount = min(remaining, max(available_to_return, Decimal("0.00")))
+            bottle = bottles.get(source.bottle_id)
+            if amount and bottle is None:
+                raise StockError("An original bottle for this partial sale is no longer available.")
+            if amount:
+                movements.append(_change_bottle_volume(
+                    product=product, bottle=bottle, volume_ml=amount, movement_type=mr.VOLUME_REFUND,
+                    user=user, operation_key=operation_key, operation_sequence=len(movements),
+                    reference=refund.number, reason=f"Partial refund of sale {sale.number}",
+                    source_movement=source, refund_item_id=refund_item.pk, approved_by=approved_by))
+                remaining -= amount
             continue
-        bottle = bottles.get(source.bottle_id)
-        if bottle is None:
-            raise StockError("An original bottle for this partial sale is no longer available.")
+
+        already_refunded = (already_returned.get(source.pk, Decimal("0.00"))
+                            + already_deficit_refunded.get(source.pk, Decimal("0.00")))
+        available_to_return = max(sold_from_source - already_refunded, Decimal("0.00"))
         amount = min(remaining, available_to_return)
-        movements.append(_change_bottle_volume(
-            product=product, bottle=bottle, volume_ml=amount, movement_type=mr.VOLUME_REFUND,
-            user=user, operation_key=operation_key, operation_sequence=len(movements),
-            reference=refund.number, reason=f"Partial refund of sale {sale.number}",
-            source_movement=source, refund_item_id=refund_item.pk, approved_by=approved_by))
-        remaining -= amount
+        if amount <= 0:
+            continue
+        outstanding = max(sold_from_source - settled_deficits.get(source.pk, Decimal("0.00"))
+                          - already_deficit_refunded.get(source.pk, Decimal("0.00")), Decimal("0.00"))
+        debt_return = min(amount, outstanding)
+        if debt_return:
+            cost = costing.q2(Decimal(source.unit_cost or 0) * debt_return)
+            movements.append(StockMovement.objects.create(
+                product=product, movement_type=mr.PARTIAL_DEFICIT_OFFSET, quantity=0,
+                balance_after=product.stock_qty, volume_ml=debt_return, source_movement=source,
+                refund_item=refund_item, unit_cost=source.unit_cost, total_cost=cost,
+                user=user, approved_by=approved_by, reference=refund.number[:60],
+                reason=f"Partial refund of sale {sale.number}", operation_key=operation_key,
+                operation_sequence=len(movements)))
+            remaining -= debt_return
+        physical_return = amount - debt_return
+        if physical_return:
+            offsets = list(StockMovement.objects.filter(
+                movement_type=mr.VOLUME_DEFICIT_OFFSET, source_movement=source, bottle__isnull=False)
+                .order_by("pk"))
+            for offset in offsets:
+                if physical_return <= 0:
+                    break
+                bottle = bottles.get(offset.bottle_id)
+                if bottle is None:
+                    raise StockError("A bottle used to offset this partial-sale deficit is no longer available.")
+                returned_to_bottle = (StockMovement.objects.filter(
+                    movement_type=mr.VOLUME_REFUND, source_movement=source, bottle=bottle)
+                    .aggregate(total=Sum("volume_ml"))["total"] or Decimal("0.00"))
+                available_from_offset = -offset.volume_ml - returned_to_bottle
+                take = min(physical_return, max(available_from_offset, Decimal("0.00")))
+                if take:
+                    cost = costing.q2(Decimal(source.unit_cost or 0) * take)
+                    movements.append(_change_bottle_volume(
+                        product=product, bottle=bottle, volume_ml=take, movement_type=mr.VOLUME_REFUND,
+                        user=user, operation_key=operation_key, operation_sequence=len(movements),
+                        reference=refund.number, reason=f"Partial refund of sale {sale.number}",
+                        source_movement=source, refund_item_id=refund_item.pk, approved_by=approved_by,
+                        cost_override=(source.unit_cost, cost)))
+                    physical_return -= take
+                    remaining -= take
+            if physical_return > 0:
+                raise StockError("The refund volume exceeds liquid previously received to offset this deficit.")
         if remaining <= 0:
             break
     if remaining > 0:
@@ -455,6 +594,8 @@ def partial_stock(product_id, *, bottle_capacity_ml=None):
     opened_count = opened.count()
     opened_volume = sum(opened.values_list("remaining_ml", flat=True), Decimal("0.00"))
     empty_count = Bottle.objects.filter(product=product, status=Bottle.EMPTY).count()
+    volume_deficit = (StockMovement.objects.filter(product=product, movement_type__in=mr.PRODUCT_VOLUME_TYPES)
+                      .aggregate(total=Sum("volume_ml"))["total"] or Decimal("0.00"))
     if product.stock_qty and capacity is None:
         raise StockError("Bottle capacity is required to calculate sealed-stock volume.")
     sealed_volume = product.stock_qty * capacity if capacity is not None else Decimal("0.00")
@@ -464,7 +605,8 @@ def partial_stock(product_id, *, bottle_capacity_ml=None):
         "empty_bottles": empty_count,
         "opened_volume_ml": opened_volume,
         "sealed_volume_ml": sealed_volume,
-        "total_volume_ml": sealed_volume + opened_volume,
+        "partial_volume_deficit_ml": volume_deficit,
+        "total_volume_ml": sealed_volume + opened_volume + volume_deficit,
     }
 
 
@@ -478,8 +620,10 @@ def bottle_overview(product_id):
     capacity = _known_capacity(product.pk)
     opened = Bottle.objects.filter(product=product, status=Bottle.OPENED)
     opened_volume = sum(opened.values_list("remaining_ml", flat=True), Decimal("0.00"))
+    volume_deficit = (StockMovement.objects.filter(product=product, movement_type__in=mr.PRODUCT_VOLUME_TYPES)
+                      .aggregate(total=Sum("volume_ml"))["total"] or Decimal("0.00"))
     sealed_volume = product.stock_qty * capacity if capacity is not None else (None if product.stock_qty else Decimal("0.00"))
-    total = None if sealed_volume is None else sealed_volume + opened_volume
+    total = None if sealed_volume is None else sealed_volume + opened_volume + volume_deficit
     return {
         "sealed_bottles": product.stock_qty,
         "opened_bottles": opened.count(),
@@ -487,6 +631,7 @@ def bottle_overview(product_id):
         "opened_volume_ml": opened_volume,
         "bottle_capacity_ml": capacity,
         "sealed_volume_ml": sealed_volume,
+        "partial_volume_deficit_ml": volume_deficit,
         "total_volume_ml": total,
     }
 

@@ -55,6 +55,7 @@ def build_values(role, *, root, existing=None, lan_host="", server_url="", port=
         "WINESPOS_MEDIA_ROOT": str(root / "data" / "media"),
         "WINESPOS_BACKUP_DIR": str(root / "data" / "backups"),
         "DESKTOP_SHELL_SECRET": existing.get("DESKTOP_SHELL_SECRET") or generate_secret(),
+        "INTEGRATION_SETTINGS_KEY": existing.get("INTEGRATION_SETTINGS_KEY") or generate_secret(),
         # Everything below keeps the program's own defaults; edit this file to change them.
     }
 

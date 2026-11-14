@@ -30,6 +30,7 @@ class PosAuthorization(models.Model):
                                 related_name="pos_sessions")
     created_at = models.DateTimeField(auto_now_add=True)
     cashier_logged_in_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
 
     @property
     def authorized_by(self):
@@ -45,6 +46,7 @@ class CashierShift(models.Model):
                                       related_name="shifts_authorized")
     opened_at = models.DateTimeField(auto_now_add=True)
     opening_float = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    locked_at = models.DateTimeField(null=True, blank=True)
     closed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:

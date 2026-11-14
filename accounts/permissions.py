@@ -52,6 +52,7 @@ PERMISSIONS = {
     "approve.refund": "Authorize refunds",
     "approve.reopen_shift": "Authorize reopening a closed shift",
     "approve.stock_adjust": "Authorize stock adjustments",
+    "approve.negative_stock_sale": "Authorize sales that create negative stock",
 }
 
 # Actions that can require supervisor/manager approval. The manager decides which
@@ -65,6 +66,7 @@ RESTRICTED_ACTIONS = {
     "refund": {"label": "Process a refund", "permission": "approve.refund"},
     "reopen_shift": {"label": "Reopen a closed shift", "permission": "approve.reopen_shift"},
     "stock_adjust": {"label": "Adjust stock", "permission": "approve.stock_adjust"},
+    "negative_stock_sale": {"label": "Sell below available stock", "permission": "approve.negative_stock_sale"},
 }
 
 METHOD_PASSWORD = "PASSWORD"
@@ -86,6 +88,7 @@ _SUPERVISOR_APPROVALS = [
     "approve.exceptional_discount",
     "approve.refund",
     "approve.stock_adjust",
+    "approve.negative_stock_sale",
 ]
 
 # Manager is special-cased as "all permissions" (is_manager=True), so it is not listed.

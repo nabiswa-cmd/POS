@@ -7,7 +7,7 @@ from inventory import movement_rules as mr
 from inventory import services as stock_services
 from inventory.models import Bottle, StockMovement
 
-from . import refunds, services
+from . import refunds, rules, services
 from .models import Refund, RefundItem
 from .tests import SalesCase
 
@@ -178,4 +178,34 @@ class PartialRefundTests(SalesCase):
         refunds.reject_refund(self.supervisor, refund.pk, "Not resalable")
         self.assertFalse(StockMovement.objects.filter(movement_type=mr.VOLUME_REFUND).exists())
         self.assertEqual(Bottle.objects.get(product=self.product).remaining_ml, D("720.00"))
+
+    def test_refund_of_negative_partial_sale_offsets_outstanding_volume_debt(self):
+        sale, _line = services.add_item(self.cashier, self.shift, selling_unit_id=self.tot.pk, quantity=251)
+        token = self.approval("negative_stock_sale", rules.sale_ref(sale.pk), reason="Approved volume shortage")
+        sale = services.checkout_cash(self.cashier, self.shift, "25100", approval_token=token)
+        refund = self.ask(sale, 251)
+        self.approve(refund)
+
+        source = StockMovement.objects.get(movement_type=mr.PARTIAL_DEFICIT, reference=sale.number)
+        returned = StockMovement.objects.get(
+            movement_type=mr.PARTIAL_DEFICIT_OFFSET, refund_item__isnull=False)
+        self.assertEqual((source.volume_ml, returned.volume_ml, returned.source_movement_id),
+                         (D("-30.00"), D("30.00"), source.pk))
+        self.assertEqual(Bottle.objects.filter(product=self.product, status=Bottle.OPENED).count(), 10)
+
+    def test_refund_after_receipt_offset_restores_liquid_to_the_received_bottle(self):
+        sale, _line = services.add_item(self.cashier, self.shift, selling_unit_id=self.tot.pk, quantity=251)
+        token = self.approval("negative_stock_sale", rules.sale_ref(sale.pk), reason="Approved volume shortage")
+        sale = services.checkout_cash(self.cashier, self.shift, "25100", approval_token=token)
+        stock_services.post_movement(product_id=self.product.pk, movement_type=mr.RECEIVE, quantity=1,
+                                     user=self.clerk, unit_cost=D("2400"), reference="REFUND-RESTOCK")
+
+        refund = self.ask(sale, 251)
+        self.approve(refund)
+        offset = StockMovement.objects.get(movement_type=mr.VOLUME_DEFICIT_OFFSET)
+        bottle = Bottle.objects.get(pk=offset.bottle_id)
+        returned = StockMovement.objects.get(
+            movement_type=mr.VOLUME_REFUND, source_movement__movement_type=mr.PARTIAL_DEFICIT)
+        self.assertEqual((bottle.remaining_ml, returned.volume_ml, returned.total_cost),
+                         (D("750.00"), D("30.00"), D("96.00")))
 

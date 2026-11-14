@@ -97,6 +97,41 @@ class ReceiptSettings(SingletonModel):
         return "Receipt settings"
 
 
+class IntegrationConfiguration(SingletonModel):
+    SOURCE_ENV = "ENV"
+    SOURCE_DATABASE = "DATABASE"
+    SOURCES = [(SOURCE_ENV, "Environment file"), (SOURCE_DATABASE, "Database")]
+
+    mpesa_source = models.CharField(max_length=8, choices=SOURCES, default=SOURCE_ENV)
+    etims_source = models.CharField(max_length=8, choices=SOURCES, default=SOURCE_ENV)
+    mpesa_config_ciphertext = models.TextField(blank=True, editable=False)
+    etims_config_ciphertext = models.TextField(blank=True, editable=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Payment and tax integration settings"
+        verbose_name_plural = "Payment and tax integration settings"
+
+    def mpesa_values(self):
+        from core.integration_settings import decrypt_values
+        return decrypt_values(self.mpesa_config_ciphertext, "M-PESA")
+
+    def etims_values(self):
+        from core.integration_settings import decrypt_values
+        return decrypt_values(self.etims_config_ciphertext, "eTIMS")
+
+    def set_mpesa_values(self, values):
+        from core.integration_settings import encrypt_values
+        self.mpesa_config_ciphertext = encrypt_values(values)
+
+    def set_etims_values(self, values):
+        from core.integration_settings import encrypt_values
+        self.etims_config_ciphertext = encrypt_values(values)
+
+    def __str__(self):
+        return "Payment and tax integrations"
+
+
 class AuditLog(models.Model):
     """Append-only record of sensitive actions. Never edited or deleted.
 

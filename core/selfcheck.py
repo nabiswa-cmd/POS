@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from django.db import connection
 
 OK, WARN, FAIL = "OK", "WARN", "FAIL"
@@ -87,10 +88,17 @@ def run_checks():
 
     if settings.BIOMETRIC_ENABLED and not settings.DESKTOP_SHELL_SECRET:
         add(FAIL, "Fingerprint is on but DESKTOP_SHELL_SECRET is empty.")
-    if settings.MPESA["CONSUMER_KEY"] and settings.MPESA["ENV"] == "sandbox":
-        add(WARN, "M-PESA is in SANDBOX mode: payments are not real.")
-    if settings.ETIMS_MODE == "sandbox":
-        add(WARN, "eTIMS is in SANDBOX mode: receipts are not real tax invoices.")
+    from core import integration_settings
+    try:
+        mpesa_config = integration_settings.mpesa()
+        etims_config = integration_settings.etims()
+    except ImproperlyConfigured as exc:
+        add(FAIL, str(exc))
+    else:
+        if mpesa_config["CONSUMER_KEY"] and mpesa_config["ENV"] == "sandbox":
+            add(WARN, "M-PESA is in SANDBOX mode: payments are not real.")
+        if etims_config["MODE"] == "sandbox":
+            add(WARN, "eTIMS is in SANDBOX mode: receipts are not real tax invoices.")
     printer = os.environ.get("WINESPOS_RECEIPT_PRINTER", "")
     add(OK, f"Receipts print silently to '{printer}'." if printer else
         "Receipts use the Windows print dialog (set WINESPOS_RECEIPT_PRINTER for silent printing).")

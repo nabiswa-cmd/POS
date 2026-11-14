@@ -152,6 +152,7 @@ LOCKOUT_MAX_ATTEMPTS = env_int("LOCKOUT_MAX_ATTEMPTS", 5)
 LOCKOUT_MINUTES = env_int("LOCKOUT_MINUTES", 5)
 BIOMETRIC_ENABLED = env_bool("BIOMETRIC_ENABLED", False)
 DESKTOP_SHELL_SECRET = env("DESKTOP_SHELL_SECRET", "")
+INTEGRATION_SETTINGS_KEY = env("INTEGRATION_SETTINGS_KEY", "")
 # Discounts up to this share of a line need no approval for staff allowed to give discounts.
 ORDINARY_DISCOUNT_MAX_PERCENT = env_int("ORDINARY_DISCOUNT_MAX_PERCENT", 5)
 
@@ -207,6 +208,8 @@ MPESA = {
     "CALLBACK_BASE_URL": env("MPESA_CALLBACK_BASE_URL", ""),             # public HTTPS address, no trailing slash
     "CALLBACK_SECRET": env("MPESA_CALLBACK_SECRET", ""),                 # long random text inside the callback path
     "TIMEOUT": env_int("MPESA_TIMEOUT_SECONDS", 12),
+    "INITIATOR_NAME": env("MPESA_INITIATOR_NAME", ""),
+    "SECURITY_CREDENTIAL": env("MPESA_SECURITY_CREDENTIAL", ""),
     # Relay (reconciliation part 2). On the SHOP PC: where the online server is, and the token to ask it.
     # On the ONLINE server: only the token (the same value) is needed; it also uses MPESA_CALLBACK_SECRET.
     "RELAY_URL": env("MPESA_RELAY_URL", ""),

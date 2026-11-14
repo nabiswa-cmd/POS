@@ -15,12 +15,12 @@ import logging
 import urllib.error
 import urllib.request
 
-from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
 from catalog.models import CodeSequence
 from core import audit
+from core import integration_settings
 from core.models import ShopSettings
 
 from . import etims_rules
@@ -36,19 +36,20 @@ class EtimsError(Exception):
 
 
 def enabled():
-    return settings.ETIMS_MODE in ("sandbox", "live")
+    return integration_settings.etims()["MODE"] in ("sandbox", "live")
 
 
 def config_problems():
     """What is missing before eTIMS can work. Shown on the manager screen; empty list means ready."""
     problems = []
+    config = integration_settings.etims()
     if not enabled():
         return ["eTIMS is switched off (ETIMS_MODE=off)."]
     if not ShopSettings.load().kra_pin:
         problems.append("Shop settings has no KRA PIN.")
-    if not settings.ETIMS_BASE_URL:
+    if not config["BASE_URL"]:
         problems.append("ETIMS_BASE_URL is not set.")
-    if settings.ETIMS_INTEGRATION == "oscu" and not settings.ETIMS_COMM_KEY:
+    if config["INTEGRATION"] == "oscu" and not config["COMM_KEY"]:
         problems.append("ETIMS_COMM_KEY is not set (OSCU needs it).")
     return problems
 
@@ -57,14 +58,15 @@ class HttpUnit:
     """Talks JSON to the eTIMS unit (the local VSCU, or KRA's OSCU endpoint)."""
 
     def post(self, endpoint, payload):
-        url = settings.ETIMS_BASE_URL.rstrip("/") + "/" + endpoint
+        config = integration_settings.etims()
+        url = config["BASE_URL"].rstrip("/") + "/" + endpoint
         headers = {"Content-Type": "application/json"}
-        if settings.ETIMS_INTEGRATION == "oscu":
-            headers.update({"tin": payload.get("tin") or "", "bhfId": settings.ETIMS_BRANCH_ID,
-                            "cmcKey": settings.ETIMS_COMM_KEY})
+        if config["INTEGRATION"] == "oscu":
+            headers.update({"tin": payload.get("tin") or "", "bhfId": config["BRANCH_ID"],
+                            "cmcKey": config["COMM_KEY"]})
         request = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(request, timeout=settings.ETIMS_TIMEOUT_SECONDS) as response:
+            with urllib.request.urlopen(request, timeout=config["TIMEOUT_SECONDS"]) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             raise EtimsError(f"The eTIMS unit answered HTTP {exc.code}.") from exc
@@ -87,6 +89,7 @@ def create_submission(sale):
 
 def _payload(sale, submission):
     shop = ShopSettings.load()
+    config = integration_settings.etims()
     items = []
     for it in sale.items.select_related("product"):
         items.append({
@@ -95,7 +98,7 @@ def _payload(sale, submission):
             "tax_class": it.tax_class, "tax_rate": it.tax_rate, "taxable": it.taxable_amount,
             "tax": it.tax_amount, "total": it.line_total})
     return etims_rules.build_sale_payload(
-        tin=shop.kra_pin, branch_id=settings.ETIMS_BRANCH_ID, invoice_no=submission.invoice_no,
+        tin=shop.kra_pin, branch_id=config["BRANCH_ID"], invoice_no=submission.invoice_no,
         receipt_type=submission.receipt_type, sale_time=timezone.localtime(sale.completed_at),
         customer_name=sale.customer_name, customer_pin=sale.customer_pin, items=items,
         payment_method=(sale.payments.first().method if sale.payments.exists() else "CASH"),
@@ -143,6 +146,7 @@ def submit(sale_id):
                          till_number=sale.till.number)
             return sub
         data = result["data"]
+        config = integration_settings.etims()
         shop = ShopSettings.load()
         sub.status, sub.submitted_at, sub.last_error = EtimsSubmission.SUBMITTED, timezone.now(), ""
         sub.scu_id = str(data.get("sdcId", ""))[:40]
@@ -151,8 +155,8 @@ def submit(sale_id):
         sub.scu_datetime = str(data.get("vsdcRcptPbctDate", ""))[:20]
         sub.internal_data = str(data.get("intrlData", ""))[:200]
         sub.signature = str(data.get("rcptSign", ""))[:200]
-        sub.qr_text = etims_rules.qr_text(settings.ETIMS_QR_URL_TEMPLATE, shop.kra_pin,
-                                          settings.ETIMS_BRANCH_ID, sub.signature)[:400]
+        sub.qr_text = etims_rules.qr_text(config["QR_URL_TEMPLATE"], shop.kra_pin,
+                                          config["BRANCH_ID"], sub.signature)[:400]
         sub.save()
         audit.record("etims.signed", object_type="sale", object_ref=sale.number,
                      new={"invoice_no": sub.invoice_no, "scu_receipt_no": sub.scu_receipt_no},
@@ -205,6 +209,7 @@ def create_credit_note(refund):
 
 def _credit_payload(refund, note):
     shop = ShopSettings.load()
+    config = integration_settings.etims()
     sale = refund.sale
     items = []
     for it in refund.items.select_related("sale_item__product"):
@@ -217,7 +222,7 @@ def _credit_payload(refund, note):
             "tax_class": it.tax_class, "tax_rate": it.tax_rate, "taxable": it.taxable_amount,
             "tax": it.tax_amount, "total": it.amount})
     return etims_rules.build_sale_payload(
-        tin=shop.kra_pin, branch_id=settings.ETIMS_BRANCH_ID, invoice_no=note.invoice_no, receipt_type="R",
+        tin=shop.kra_pin, branch_id=config["BRANCH_ID"], invoice_no=note.invoice_no, receipt_type="R",
         sale_time=timezone.localtime(refund.approved_at or refund.requested_at), customer_name=sale.customer_name,
         customer_pin=sale.customer_pin, items=items, payment_method=refund.method,
         user_label=refund.requested_by.username, original_invoice_no=note.original_invoice_no)
@@ -277,6 +282,7 @@ def submit_credit_note(refund_id):
                          reason=note.last_error, till_number=refund.till.number)
             return note
         data = result["data"]
+        config = integration_settings.etims()
         shop = ShopSettings.load()
         note.status, note.submitted_at, note.last_error = EtimsCreditNote.SUBMITTED, timezone.now(), ""
         note.scu_id = str(data.get("sdcId", ""))[:40]
@@ -285,8 +291,8 @@ def submit_credit_note(refund_id):
         note.scu_datetime = str(data.get("vsdcRcptPbctDate", ""))[:20]
         note.internal_data = str(data.get("intrlData", ""))[:200]
         note.signature = str(data.get("rcptSign", ""))[:200]
-        note.qr_text = etims_rules.qr_text(settings.ETIMS_QR_URL_TEMPLATE, shop.kra_pin,
-                                           settings.ETIMS_BRANCH_ID, note.signature)[:400]
+        note.qr_text = etims_rules.qr_text(config["QR_URL_TEMPLATE"], shop.kra_pin,
+                                           config["BRANCH_ID"], note.signature)[:400]
         note.save()
         audit.record("etims.credit_note_signed", object_type="refund", object_ref=refund.number,
                      new={"invoice_no": note.invoice_no, "original_invoice_no": note.original_invoice_no,

@@ -1,12 +1,14 @@
 """Cashier POS integration for configured selling units and bottle-capacity inventory."""
 from decimal import Decimal as D
 
+from django.db.models import Sum
+
 from catalog.models import SellingUnit
 from inventory import movement_rules as mr
 from inventory import services as stock_services
 from inventory.models import Bottle, StockMovement
 
-from . import rules
+from . import rules, services
 from .models import MpesaTransaction, Payment, Sale, SaleItem
 from .tests_screen import ScreenCase, post
 
@@ -63,23 +65,89 @@ class PartialSellingPosTests(ScreenCase):
         self.assertEqual([(i["selling_unit"], i["total_volume_ml"]) for i in removed["cart"]["items"]],
                          [("TOT", "90.00")])
 
-    def test_insufficient_partial_stock_is_rejected(self):
+    def test_insufficient_partial_sale_requires_approval_at_checkout(self):
         response = post(self.c, "/api/sales/cart/add/", {"selling_unit_id": self.tot.pk, "quantity": 251})
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("Only", response.json()["error"])
-        self.assertEqual(SaleItem.objects.count(), 0)
+        self.assertEqual(response.status_code, 200)
+        sale_id = response.json()["cart"]["id"]
+        checkout = post(self.c, "/api/sales/checkout/cash/", {"tendered": "25100"})
+        self.assertEqual(checkout.status_code, 409)
+        request = checkout.json()["approval_required"]
+        self.assertEqual((request["action"], request["object_ref"]), ("negative_stock_sale", rules.sale_ref(sale_id)))
+        self.assertEqual(SaleItem.objects.count(), 1)
+        self.assertEqual(Payment.objects.count(), 0)
 
-    def test_partial_and_full_cart_reservations_cannot_oversell_combined_volume(self):
+        token = self.approval("negative_stock_sale", rules.sale_ref(sale_id), reason="Approved missing liquid")
+        done = post(self.c, "/api/sales/checkout/cash/", {
+            "tendered": "25100", "approval_token": token
+        }).json()
+        self.assertTrue(done["ok"], done)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock_qty, 0)
+        deficit = StockMovement.objects.get(movement_type=mr.PARTIAL_DEFICIT)
+        self.assertEqual((deficit.volume_ml, deficit.approved_by), (D("-30.00"), self.supervisor))
+
+    def test_future_receipt_offsets_partial_deficit_without_creating_extra_stock(self):
+        response = post(self.c, "/api/sales/cart/add/", {"selling_unit_id": self.tot.pk, "quantity": 251})
+        sale_id = response.json()["cart"]["id"]
+        token = self.approval("negative_stock_sale", rules.sale_ref(sale_id), reason="Approved shortage")
+        completed = post(self.c, "/api/sales/checkout/cash/", {
+            "tendered": "25100", "approval_token": token
+        }).json()
+        self.assertTrue(completed["ok"], completed)
+
+        stock_services.post_movement(product_id=self.product.pk, movement_type=mr.RECEIVE, quantity=1,
+                                     user=self.clerk, unit_cost=D("2400"), reference="AFTER-DEFICIT")
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock_qty, 0)
+        self.assertEqual(Bottle.objects.get(product=self.product, status=Bottle.OPENED).remaining_ml, D("720.00"))
+        self.assertEqual(StockMovement.objects.filter(movement_type=mr.PARTIAL_DEFICIT_OFFSET)
+                         .aggregate(total=Sum("volume_ml"))["total"], D("30.00"))
+        self.assertEqual(StockMovement.objects.filter(movement_type=mr.VOLUME_DEFICIT_OFFSET)
+                         .aggregate(total=Sum("volume_ml"))["total"], D("-30.00"))
+
+        stock_services.post_movement(product_id=self.product.pk, movement_type=mr.RECEIVE, quantity=1,
+                                     user=self.clerk, unit_cost=D("2400"), reference="EXTRA-RECEIPT")
+        self.product.refresh_from_db()
+        self.assertEqual((self.product.stock_qty,
+                          StockMovement.objects.filter(movement_type=mr.PARTIAL_DEFICIT_OFFSET).count()), (1, 1))
+
+    def test_mpesa_checkout_keeps_confirmed_payment_unmatched_until_approved(self):
+        sale, _line = services.add_item(self.cashier, self.shift, code="6001111111111", quantity=11)
+        transaction = MpesaTransaction.objects.create(
+            trans_id="NEGATIVE-STOCK-01", source=MpesaTransaction.C2B, amount=D("38500"))
+
+        response = post(self.c, "/api/sales/checkout/", {"mpesa_ids": [transaction.pk]})
+        self.assertEqual(response.status_code, 409)
+        transaction.refresh_from_db()
+        self.product.refresh_from_db()
+        self.assertEqual((transaction.status, Payment.objects.count(), self.product.stock_qty),
+                         (MpesaTransaction.UNMATCHED, 0, 10))
+        token = self.approval("negative_stock_sale", rules.sale_ref(sale.pk), reason="Approved M-PESA shortage")
+
+        done = post(self.c, "/api/sales/checkout/", {
+            "mpesa_ids": [transaction.pk], "approval_token": token
+        }).json()
+        self.assertTrue(done["ok"], done)
+        transaction.refresh_from_db()
+        self.assertEqual((transaction.status, transaction.sale_id), (MpesaTransaction.MATCHED, done["sale_id"]))
+
+    def test_mixed_cart_volume_shortage_is_approved_atomically_at_checkout(self):
         full = post(self.c, "/api/sales/cart/add/", {"code": "6001111111111", "quantity": 9}).json()
         self.assertTrue(full["ok"], full)
-        partial = post(self.c, "/api/sales/cart/add/", {"selling_unit_id": self.tot.pk, "quantity": 25}).json()
+        partial = post(self.c, "/api/sales/cart/add/", {"selling_unit_id": self.tot.pk, "quantity": 26}).json()
         self.assertTrue(partial["ok"], partial)
-        extra_measure = post(self.c, "/api/sales/cart/add/", {"selling_unit_id": self.tot.pk, "quantity": 1})
-        self.assertEqual(extra_measure.status_code, 400)
-
-        full_after_partial = post(self.c, "/api/sales/cart/add/", {"code": "6001111111111"}).json()
-        self.assertFalse(full_after_partial["ok"])
-        self.assertIn("ml remain", full_after_partial["error"])
+        sale_id = partial["cart"]["id"]
+        response = post(self.c, "/api/sales/checkout/cash/", {"tendered": "34100"})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["approval_required"]["action"], "negative_stock_sale")
+        token = self.approval("negative_stock_sale", rules.sale_ref(sale_id), reason="Approved mixed-cart shortage")
+        done = post(self.c, "/api/sales/checkout/cash/", {
+            "tendered": "34100", "approval_token": token
+        }).json()
+        self.assertTrue(done["ok"], done)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock_qty, 0)
+        self.assertEqual(StockMovement.objects.get(movement_type=mr.PARTIAL_DEFICIT).volume_ml, D("-30.00"))
 
     def test_partial_checkout_opens_a_bottle_records_volume_and_allocates_cost(self):
         added = post(self.c, "/api/sales/cart/add/", {"selling_unit_id": self.tot.pk, "quantity": 2}).json()
@@ -153,20 +221,21 @@ class PartialSellingPosTests(ScreenCase):
                          (8, D("690.00")))
         self.assertEqual(StockMovement.objects.filter(reference=sale.number, movement_type=mr.PARTIAL_SALE).count(), 1)
 
-    def test_stock_shortage_after_full_movement_rolls_back_mixed_checkout(self):
+    def test_stock_shortage_after_cart_creation_requires_approval_without_partial_commit(self):
         post(self.c, "/api/sales/cart/add/", {"code": "6001111111111"})
         post(self.c, "/api/sales/cart/add/", {"selling_unit_id": self.tot.pk, "quantity": 2})
         stock_services.post_movement(product_id=self.product.pk, movement_type=mr.DAMAGED, quantity=-9,
                                      user=self.manager, reason="Checkout rollback test")
 
         response = post(self.c, "/api/sales/checkout/cash/", {"tendered": "3700"})
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["approval_required"]["action"], "negative_stock_sale")
         sale = Sale.objects.get()
         self.product.refresh_from_db()
         self.assertEqual((sale.status, sale.number, self.product.stock_qty), (Sale.OPEN, None, 1))
         self.assertFalse(Payment.objects.exists())
         self.assertEqual(StockMovement.objects.filter(movement_type__in=(mr.SALE, mr.BOTTLE_OPEN,
-                                                                         mr.PARTIAL_SALE)).count(), 0)
+                                                                         mr.PARTIAL_SALE, mr.PARTIAL_DEFICIT)).count(), 0)
         self.assertFalse(Bottle.objects.filter(product=self.product).exists())
 
     def test_cashier_screen_loads_configured_units_and_displays_volume(self):

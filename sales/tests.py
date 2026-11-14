@@ -54,10 +54,10 @@ class CartTests(SalesCase):
         with self.assertRaises(services.SaleError):
             self.scan("0000000000000")
 
-    def test_cannot_put_more_in_the_cart_than_is_in_stock(self):
-        with self.assertRaises(services.SaleError) as ctx:
-            self.scan(qty=11)
-        self.assertIn("Only 10", str(ctx.exception))
+    def test_out_of_stock_quantity_can_be_saved_for_checkout_approval(self):
+        sale, line = self.scan(qty=11)
+        self.assertEqual((line.quantity, sale.status, self.stock()), (11, Sale.OPEN, 10))
+        self.assertFalse(StockMovement.objects.filter(movement_type=mr.SALE).exists())
 
     def test_internally_generated_code_scans(self):
         code = catalog_services.generate_internal_code(self.product, self.manager)
@@ -72,11 +72,11 @@ class CartTests(SalesCase):
         services.checkout_cash(self.cashier, self.shift, "21000")
         self.assertEqual(self.stock(), 4)
 
-    def test_pack_cannot_exceed_stock(self):
+    def test_pack_over_stock_waits_for_checkout_approval(self):
         pack = Packaging.objects.create(product=self.product, name="Carton", units_per_pack=24)
         catalog_services.add_code(self.product, "CARTON-JW", self.manager, packaging=pack)
-        with self.assertRaises(services.SaleError):
-            self.scan("CARTON-JW")
+        sale, line = self.scan("CARTON-JW")
+        self.assertEqual((line.base_qty, sale.status, self.stock()), (24, Sale.OPEN, 10))
 
     def test_product_without_a_price_cannot_be_sold(self):
         free = make_product("Free", "FREE-1", price="0")
@@ -94,6 +94,26 @@ class CartTests(SalesCase):
                                                   authorized_by=self.supervisor, opening_float=D("0"))
         with self.assertRaises(services.NotAllowed):
             self.scan(user=self.clerk, shift=clerk_shift)
+
+
+class PosLockTests(SalesCase):
+    def test_lock_and_unlock_preserve_open_cart(self):
+        sale, line = self.scan()
+        self.client.force_login(self.cashier)
+        session = self.client.session
+        session["pos_till"] = self.till1.number
+        session.save()
+
+        self.assertEqual(self.post("/api/pos/lock/", {}).status_code, 200)
+        self.assertEqual(self.post("/api/pos/unlock/", {
+            "till": self.till1.number, "username": "cash1", "secret": "1111"
+        }).status_code, 200)
+
+        sale.refresh_from_db()
+        line.refresh_from_db()
+        self.shift.refresh_from_db()
+        self.assertEqual((sale.status, line.quantity), (Sale.OPEN, 1))
+        self.assertIsNone(self.shift.locked_at)
 
 
 class RemovalAndApprovalTests(SalesCase):
@@ -231,6 +251,22 @@ class CheckoutTests(SalesCase):
         self.assertEqual(Sale.objects.get().status, Sale.OPEN)
         self.assertEqual(self.stock(), 10)
 
+    def test_full_bottle_shortage_requires_supervisor_approval_before_payment_or_stock_changes(self):
+        sale, _line = self.scan(qty=11)
+        with self.assertRaises(services.ApprovalNeeded) as needed:
+            services.checkout_cash(self.cashier, self.shift, "40000")
+        self.assertEqual((needed.exception.action, needed.exception.object_ref),
+                         ("negative_stock_sale", rules.sale_ref(sale.pk)))
+        self.assertEqual((Sale.objects.get().status, self.stock(), Payment.objects.count()), (Sale.OPEN, 10, 0))
+        self.assertFalse(StockMovement.objects.filter(movement_type=mr.SALE).exists())
+
+        token = self.approval("negative_stock_sale", rules.sale_ref(sale.pk), reason="Approved stock shortage")
+        done = services.checkout_cash(self.cashier, self.shift, "40000", approval_token=token)
+        self.assertEqual(self.stock(), -1)
+        movement = StockMovement.objects.get(movement_type=mr.SALE, reference=done.number)
+        self.assertEqual((movement.quantity, movement.approved_by, movement.reason),
+                         (-11, self.supervisor, "Approved stock shortage"))
+
     def test_finish_sale_requires_a_valid_payment_before_marking_completed(self):
         self.scan()
         for kwargs in (
@@ -268,18 +304,19 @@ class CheckoutTests(SalesCase):
         b = services.checkout_cash(self.cashier, self.shift, "3500")
         self.assertTrue(a.number.endswith("-0001") and b.number.endswith("-0002"))
 
-    def test_stock_that_vanished_after_scanning_blocks_checkout_and_rolls_back(self):
+    def test_stock_that_vanished_after_scanning_requires_approval_without_partial_commit(self):
         self.scan(qty=10)
         stock_services.post_movement(product_id=self.product.pk, movement_type=mr.DAMAGED, quantity=-4,
                                      user=self.manager, reason="Dropped crate")
-        with self.assertRaises(services.SaleError) as ctx:
+        with self.assertRaises(services.ApprovalNeeded) as ctx:
             services.checkout_cash(self.cashier, self.shift, "35000")
-        self.assertIn("Only 6", str(ctx.exception))
+        self.assertEqual(ctx.exception.action, "negative_stock_sale")
         self.assertEqual(self.stock(), 6)
         sale = Sale.objects.get()
         self.assertEqual(sale.status, Sale.OPEN)
         self.assertIsNone(sale.number)
         self.assertFalse(Payment.objects.exists())
+        self.assertFalse(StockMovement.objects.filter(movement_type=mr.SALE).exists())
 
     def test_two_tills_share_stock_and_the_last_bottle_sells_once(self):
         # stock is 10; leave exactly one bottle

@@ -27,8 +27,10 @@ def _guard(view):
             shift = services.open_shift_for(request.user, request.session.get("pos_till"))
             return view(request, *args, shift=shift, **kwargs)
         except services.ApprovalNeeded as exc:
-            return JsonResponse({"ok": False, "error": str(exc), "approval_required": exc.action,
-                                 "object_ref": exc.object_ref}, status=409)
+            return JsonResponse({"ok": False, "error": str(exc),
+                                 "approval_required": {"action": exc.action, "label": exc.label,
+                                                       "object_ref": exc.object_ref, "detail": exc.detail}},
+                                status=409)
         except services.NotAllowed as exc:
             return bad(str(exc), 403)
         except services.SaleError as exc:
@@ -173,7 +175,8 @@ def held_resume(request, data, shift):
 @post_json
 @_guard
 def checkout_cash(request, data, shift):
-    sale = services.checkout_cash(request.user, shift, data.get("tendered"))
+    sale = services.checkout_cash(request.user, shift, data.get("tendered"),
+                                  approval_token=data.get("approval_token"))
     payment = sale.payments.first()
     # The sale is saved. Now try to get it signed by KRA; if that cannot happen right now it simply waits.
     sub = etims.submit(sale.pk)
@@ -271,9 +274,11 @@ def pos_page(request):
         return redirect("/app/pos/")
     till_number = request.session.get("pos_till")
     if not till_number or not CashierShift.objects.filter(
-            till__number=till_number, cashier=request.user, closed_at__isnull=True).exists():
+            till__number=till_number, cashier=request.user, closed_at__isnull=True,
+            locked_at__isnull=True).exists():
         return redirect("/app/pos/")
-    return render(request, "sales/pos.html", {"shop_name": ShopSettings.load().shop_name})
+    return render(request, "sales/pos.html", {"shop_name": ShopSettings.load().shop_name,
+                                              "till_number": till_number})
 
 
 def reprint_page(request, sale_id):
@@ -351,7 +356,8 @@ def checkout_mpesa(request, data, shift):
         transaction_id = int(data.get("transaction_id"))
     except (TypeError, ValueError):
         return bad("Choose a payment first.")
-    sale = mpesa_services.checkout_mpesa(request.user, shift, transaction_id)
+    sale = mpesa_services.checkout_mpesa(request.user, shift, transaction_id,
+                                         approval_token=data.get("approval_token"))
     sub = etims.submit(sale.pk)
     etims.submit_pending(3)
     return JsonResponse({"ok": True, "sale_id": sale.pk, "number": sale.number, "total": str(sale.total),
@@ -373,7 +379,8 @@ def checkout_any(request, data, shift):
         ids = [int(i) for i in raw_ids]
     except (TypeError, ValueError):
         return bad("Choose the M-PESA payments again.")
-    sale, plan = mpesa_services.checkout_split(request.user, shift, ids, data.get("cash_tendered"))
+    sale, plan = mpesa_services.checkout_split(request.user, shift, ids, data.get("cash_tendered"),
+                                               approval_token=data.get("approval_token"))
     sub = etims.submit(sale.pk)
     etims.submit_pending(3)
     return JsonResponse({"ok": True, "sale_id": sale.pk, "number": sale.number, "total": str(sale.total),

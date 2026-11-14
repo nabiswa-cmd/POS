@@ -18,7 +18,7 @@ class StockMovement(models.Model):
     TYPE_CHOICES = [(k, v) for k, v in mr.LABELS.items()]
 
     product = models.ForeignKey("catalog.Product", on_delete=models.PROTECT, related_name="movements")
-    movement_type = models.CharField(max_length=16, choices=TYPE_CHOICES, db_index=True)
+    movement_type = models.CharField(max_length=32, choices=TYPE_CHOICES, db_index=True)
     quantity = models.IntegerField(help_text="Signed whole base units. Zero only for volume-only bottle movements.")
     balance_after = models.IntegerField()
     # Partial quantity selling: set only for bottle movements (see movement_rules.BOTTLE_TYPES).
@@ -50,12 +50,18 @@ class StockMovement(models.Model):
                 condition=~Q(quantity=0) | (Q(volume_ml__isnull=False) & ~Q(volume_ml=0)),
                 name="movement_has_quantity_or_volume"),
             models.CheckConstraint(
-                condition=Q(volume_ml__isnull=True) | Q(bottle__isnull=False),
+                condition=(Q(volume_ml__isnull=True) | Q(bottle__isnull=False)
+                           | Q(movement_type__in=mr.PRODUCT_VOLUME_TYPES)),
                 name="movement_volume_needs_bottle"),
             models.CheckConstraint(
                 condition=(Q(movement_type=mr.VOLUME_REFUND, source_movement__isnull=False,
                             refund_item__isnull=False)
-                           | (~Q(movement_type=mr.VOLUME_REFUND) & Q(source_movement__isnull=True)
+                           | Q(movement_type=mr.PARTIAL_DEFICIT_OFFSET, source_movement__isnull=False)
+                           | Q(movement_type=mr.VOLUME_DEFICIT_OFFSET, source_movement__isnull=False,
+                               refund_item__isnull=True)
+                           | (~Q(movement_type__in=[mr.VOLUME_REFUND, mr.PARTIAL_DEFICIT_OFFSET,
+                                                   mr.VOLUME_DEFICIT_OFFSET])
+                              & Q(source_movement__isnull=True)
                               & Q(refund_item__isnull=True))),
                 name="volume_refund_has_provenance"),
             models.UniqueConstraint(fields=["operation_key", "operation_sequence"],

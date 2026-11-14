@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="{% static 'sales/pos.css' %}">
 <script src="{% static 'core/theme.js' %}"></script>
 </head>
-<body class="pos">
+<body class="pos" data-till="{{ till.number }}">
 <header>
   <span class="brand">{{ shop_name }}</span>
   <span class="meta">Till <b>{{ till.number }}</b></span>
@@ -16,6 +16,7 @@
   <span class="meta">Authorized by: <b>{{ authorized_by }}</b></span>
   <span class="who"><span id="clock" class="muted"></span>
     <button type="button" class="theme-toggle" data-theme-toggle title="Switch light / dark mode"><svg class="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg><svg class="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/></svg><span class="t-label">Dark</span></button>
+    <button type="button" class="ghost" id="b-lock" style="margin-left:8px;padding:8px 12px">Lock &amp; sleep <kbd>Ctrl+Alt+L</kbd></button>
     <button type="button" class="ghost" id="b-logout" style="margin-left:8px;padding:8px 12px">Log out</button></span>
 </header>
 
@@ -23,7 +24,7 @@
   <section class="left" aria-label="Current sale">
     <div class="scanrow">
       <input id="scan" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Scan or type a product code"
-             placeholder="Scan barcode or type code, then Enter  (3*code sells 3)">
+             placeholder="Scan barcode or type code, then Enter  (3*code sells 3)" autofocus>
       <button type="button" class="ghost search-btn" data-act="search">Search by name</button>
     </div>
     <div id="last" class="card" style="margin:0" aria-live="polite"><span class="hint">Scan the first item to start a sale.</span></div>
@@ -64,6 +65,7 @@
   <p class="sub">Everything on this screen works from the keyboard and the scanner.</p>
   <ul class="keys-list">{% for key, label in key_labels %}<li><span>{{ label }}</span><kbd>{{ key }}</kbd></li>{% endfor %}
     <li><span>Sell several at once</span><kbd>3*code</kbd></li><li><span>Move between lines</span><kbd>Up / Down</kbd></li>
+    <li><span>Lock POS and sleep the desktop</span><kbd>Ctrl+Alt+L</kbd></li>
     <li><span>Close a box</span><kbd>Esc</kbd></li><li><span>Confirm</span><kbd>Enter</kbd></li></ul>
   <p class="sub" style="margin-top:14px">Esc only closes a box. It never skips a supervisor approval: removing an item, lowering a quantity, voiding a sale and large discounts are checked by the server.</p>
 </dialog>

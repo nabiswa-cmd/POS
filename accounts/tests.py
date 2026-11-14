@@ -43,6 +43,7 @@ class PermissionTests(BaseCase):
 
     def test_supervisor_is_not_manager(self):
         self.assertTrue(self.supervisor.can("approve.refund"))
+        self.assertTrue(self.supervisor.can("approve.negative_stock_sale"))
         self.assertFalse(self.supervisor.can("staff.manage"))
         self.assertFalse(self.supervisor.can("products.change_cost"))
 

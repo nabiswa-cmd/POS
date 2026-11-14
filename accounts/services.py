@@ -111,7 +111,7 @@ def is_required(action):
     """Does this action need approval? Opening the POS always does; others follow the manager's policy."""
     if action not in RESTRICTED_ACTIONS:
         raise ValueError(f"Unknown restricted action: {action}")
-    if action == "open_pos":
+    if action in ("open_pos", "negative_stock_sale"):
         return True
     policy = ApprovalPolicy.objects.filter(action=action).first()
     return True if policy is None else policy.required

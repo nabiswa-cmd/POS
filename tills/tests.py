@@ -59,6 +59,46 @@ class PosOpeningFlowTests(BaseCase):
         self.client.logout()
         self.assertEqual(self.cashier_login(username="cash2", secret="Str0ng-pass!").status_code, 403)
 
+    def test_supervisor_can_cancel_authorization_before_cashier_login(self):
+        self.authorize()
+        authorization = PosAuthorization.objects.get()
+
+        response = self.post("/api/pos/authorization/cancel/", {})
+
+        self.assertEqual(response.status_code, 200)
+        authorization.refresh_from_db()
+        self.assertIsNotNone(authorization.cancelled_at)
+        self.assertEqual(self.cashier_login().status_code, 403)
+        self.assertTrue(AuditLog.objects.filter(action="pos.authorization_cancelled").exists())
+
+    def test_cashier_can_be_changed_before_float_without_losing_authorization(self):
+        self.authorize()
+        self.assertEqual(self.cashier_login().status_code, 200)
+        authorization = PosAuthorization.objects.get()
+
+        response = self.post("/api/pos/cashier/change/", {})
+
+        self.assertEqual(response.status_code, 200)
+        authorization.refresh_from_db()
+        self.assertIsNone(authorization.cashier)
+        self.assertIsNone(authorization.cashier_logged_in_at)
+        self.assertNotIn("_auth_user_id", self.client.session)
+        second = self.cashier_login(username="cash2", secret="Str0ng-pass!")
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(self.post("/api/pos/shift/open/", {"opening_float": "500"}).status_code, 200)
+        shift = CashierShift.objects.get()
+        self.assertEqual((shift.cashier, shift.authorized_by), (self.cashier2, self.supervisor))
+        self.assertTrue(AuditLog.objects.filter(action="pos.cashier_changed_before_shift").exists())
+
+    def test_open_shift_makes_authorization_and_cashier_irreversible(self):
+        self.authorize()
+        self.cashier_login()
+        self.assertEqual(self.post("/api/pos/shift/open/", {"opening_float": "500"}).status_code, 200)
+
+        self.assertEqual(self.post("/api/pos/cashier/change/", {}).status_code, 409)
+        self.assertEqual(self.post("/api/pos/authorization/cancel/", {}).status_code, 409)
+        self.assertEqual(CashierShift.objects.count(), 1)
+
     def test_expired_authorization_refused(self):
         self.authorize()
         Approval.objects.update(expires_at=timezone.now() - timedelta(seconds=1))
@@ -127,6 +167,41 @@ class PosOpeningFlowTests(BaseCase):
         self.client.logout()
         self.assertEqual(self.cashier_login().status_code, 403)
 
+    def test_locked_shift_unlocks_for_same_cashier_without_new_authorization(self):
+        self.authorize()
+        self.cashier_login()
+        self.assertEqual(self.post("/api/pos/shift/open/", {"opening_float": "1000"}).status_code, 200)
+
+        locked = self.post("/api/pos/lock/", {})
+        self.assertEqual(locked.status_code, 200)
+        shift = CashierShift.objects.get()
+        self.assertIsNotNone(shift.locked_at)
+        self.assertNotIn("_auth_user_id", self.client.session)
+        self.assertEqual(self.client.get("/api/pos/state/?till=1").json()["locked_shift"], {"till": 1})
+
+        unlocked = self.post("/api/pos/unlock/", {"till": 1, "username": "cash1", "secret": "1111"})
+        self.assertEqual(unlocked.status_code, 200)
+        shift.refresh_from_db()
+        self.assertIsNone(shift.locked_at)
+        self.assertEqual(PosAuthorization.objects.count(), 1)
+        self.assertTrue(AuditLog.objects.filter(action="pos.session_locked").exists())
+        self.assertTrue(AuditLog.objects.filter(action="pos.session_unlocked").exists())
+
+    def test_only_the_cashier_on_a_locked_shift_can_unlock_it(self):
+        self.authorize()
+        self.cashier_login()
+        self.post("/api/pos/shift/open/", {"opening_float": "1000"})
+        self.post("/api/pos/lock/", {})
+
+        denied = self.post("/api/pos/unlock/", {
+            "till": 1, "username": "cash2", "secret": "Str0ng-pass!"
+        })
+        self.assertEqual(denied.status_code, 403)
+        self.assertIsNotNone(CashierShift.objects.get().locked_at)
+        self.assertEqual(self.post("/api/pos/unlock/", {
+            "till": 1, "username": "cash1", "secret": "1111"
+        }).status_code, 200)
+
     def test_second_open_shift_on_same_till_blocked_by_database(self):
         from django.db import IntegrityError, transaction
         from tills.models import Till
@@ -143,5 +218,8 @@ class PagesTests(TestCase):
         for mode in ("pos", "manager", "receiving"):
             res = self.client.get(f"/app/{mode}/")
             self.assertEqual(res.status_code, 200)
+        pos_page = self.client.get("/app/pos/")
+        for element_id in ("b-back-authorize", "b-back-cashier", "b-change-authorizer", "f-unlock"):
+            self.assertContains(pos_page, f'id="{element_id}"')
         self.assertEqual(self.client.get("/app/nope/").status_code, 404)
         self.assertEqual(self.client.get("/health/").status_code, 200)

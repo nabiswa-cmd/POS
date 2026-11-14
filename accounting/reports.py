@@ -112,7 +112,8 @@ def figures(day_from, day_to):
     sales_gross, sales_vat = _sum(sales, "total"), _sum(sales, "tax_total")
     refunds_gross, refunds_vat = _sum(refunds, "total"), _sum(refunds, "tax_total")
     cogs = _sum(items, "cost_total")
-    cogs_returned = _sum(_moves(day_from, day_to, mr.REFUND_RETURN, mr.VOLUME_REFUND), "total_cost")
+    cogs_returned = _sum(_moves(day_from, day_to, mr.REFUND_RETURN, mr.VOLUME_REFUND,
+                                mr.PARTIAL_DEFICIT_OFFSET), "total_cost")
     adjust_out = _sum(_moves(day_from, day_to, mr.ADJUST).filter(quantity__lt=0), "total_cost")
     adjust_in = _sum(_moves(day_from, day_to, mr.ADJUST).filter(quantity__gt=0), "total_cost")
     damaged = _sum(_moves(day_from, day_to, mr.DAMAGED), "total_cost")
@@ -206,7 +207,7 @@ def by_product(day_from, day_to):
         d["partial_refunds"] += refunded
         d["partial_sales"] -= refunded
 
-    for r in (_moves(day_from, day_to, mr.REFUND_RETURN, mr.VOLUME_REFUND)
+    for r in (_moves(day_from, day_to, mr.REFUND_RETURN, mr.VOLUME_REFUND, mr.PARTIAL_DEFICIT_OFFSET)
               .values("product_id", "product__name").annotate(c=Sum("total_cost"))):
         d = row(r["product_id"], r["product__name"])
         d["cost"] -= r["c"] or ZERO

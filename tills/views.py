@@ -2,7 +2,7 @@
 from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
-from django.contrib.auth import login
+from django.contrib.auth import login, logout
 from django.db import IntegrityError, transaction
 from django.http import JsonResponse
 from django.utils import timezone
@@ -43,8 +43,18 @@ def _till_from(data):
 def state(request):
     shop = ShopSettings.load()
     tills = list(Till.objects.filter(active=True).order_by("number").values("number", "name"))
+    locked_shift = None
+    try:
+        requested_number = request.GET.get("till") or request.session.get("pos_till")
+        requested_till = Till.objects.filter(number=int(requested_number), active=True).first()
+    except (TypeError, ValueError):
+        requested_till = None
+    if requested_till:
+        shift = _open_shift(requested_till)
+        if shift is not None and shift.locked_at is not None:
+            locked_shift = {"till": requested_till.number}
     return JsonResponse({"ok": True, "shop": shop.shop_name, "tills": tills,
-                         "biometric": settings.BIOMETRIC_ENABLED})
+                         "biometric": settings.BIOMETRIC_ENABLED, "locked_shift": locked_shift})
 
 
 @post_json
@@ -53,6 +63,8 @@ def authorize(request, data):
     till = _till_from(data)
     if till is None:
         return bad("Choose a valid till.")
+    if (shift := _open_shift(till)) is not None and shift.locked_at is not None:
+        return bad("This till is locked. The cashier on the open shift must unlock it.", 409)
     try:
         _raw, approval = services.grant_approval(
             action="open_pos",
@@ -90,12 +102,15 @@ def cashier_login(request, data):
     auth_id = request.session.get("pos_auth_id")
     if auth_id:
         authorization = (PosAuthorization.objects.select_related("approval__approver", "till")
-                         .filter(pk=auth_id, cashier__isnull=True).first())
+                         .filter(pk=auth_id, cashier__isnull=True, cancelled_at__isnull=True).first())
         if authorization and timezone.now() >= authorization.approval.expires_at:
             authorization = None
 
     if authorization is not None:
         till = authorization.till
+        open_shift = _open_shift(till)
+        if open_shift is not None and open_shift.locked_at is not None:
+            return bad("This till is locked. The cashier on the open shift must unlock it.", 409)
         if authorization.approval.approver_id == user.pk and not services.is_exempt(user):
             return bad("The authorizing supervisor cannot also be the cashier. Ask another supervisor to authorize.", 403)
         with transaction.atomic():
@@ -115,6 +130,8 @@ def cashier_login(request, data):
         if till is None:
             return bad("Choose a valid till.")
         shift = _open_shift(till)
+        if shift is not None and shift.locked_at is not None:
+            return bad("This till is locked. The cashier on the open shift must unlock it.", 409)
         if shift is not None and shift.cashier_id != user.pk:
             return bad(f"This till already has an open shift for {shift.cashier.display_name}.", 409)
         now = timezone.now()
@@ -138,6 +155,8 @@ def cashier_login(request, data):
                      and shift is not None and shift.cashier_id == user.pk)
         if not resume_ok:
             return bad("Supervisor authorization is required first.", 403)
+        if shift.locked_at is not None:
+            return bad("This till is locked. The cashier on the open shift must unlock it.", 409)
         authorized_by = shift.authorized_by
         audit.record("pos.session_resumed", actor=user, approver=authorized_by, object_type="till",
                      object_ref=till.number, ip=ip, till_number=till.number)
@@ -156,6 +175,122 @@ def cashier_login(request, data):
 
 @login_required_json
 @post_json
+def lock_pos(request, data):
+    """Lock the open cashier shift before the desktop shell sleeps."""
+    till_number = request.session.get("pos_till")
+    with transaction.atomic():
+        shift = (CashierShift.objects.select_for_update().select_related("till", "authorized_by")
+                 .filter(till__number=till_number, cashier=request.user, closed_at__isnull=True).first())
+        if shift is None:
+            return bad("There is no open shift to lock.", 409)
+        if shift.locked_at is None:
+            shift.locked_at = timezone.now()
+            shift.save(update_fields=["locked_at"])
+            audit.record("pos.session_locked", actor=request.user, approver=shift.authorized_by,
+                         object_type="shift", object_ref=shift.pk, till_number=shift.till.number)
+        locked_shift_id, locked_till = shift.pk, shift.till.number
+    logout(request)
+    request.session["pos_locked_shift"] = locked_shift_id
+    request.session["pos_till"] = locked_till
+    return JsonResponse({"ok": True, "till": locked_till})
+
+
+@post_json
+def unlock_pos(request, data):
+    """Re-authenticate the same cashier for a locked shift without opening a new supervisor authorization."""
+    try:
+        till_number = int(data.get("till"))
+    except (TypeError, ValueError):
+        return bad("Choose the locked till again.")
+    till = Till.objects.filter(number=till_number, active=True).first()
+    shift = _open_shift(till) if till else None
+    if shift is None or shift.locked_at is None:
+        return bad("This till is no longer locked.", 409)
+    try:
+        user, _method = services.authenticate(
+            data.get("username"), data.get("secret"), data.get("biometric"), context="cashier",
+            ip=client_ip(request))
+    except services.AuthError as exc:
+        return bad(str(exc), 401)
+    if user.pk != shift.cashier_id or not user.can("sales.make"):
+        return bad("Only the cashier on this locked shift can unlock it.", 403)
+    with transaction.atomic():
+        shift = CashierShift.objects.select_for_update().select_related("authorized_by", "till").get(pk=shift.pk)
+        if shift.closed_at is not None or shift.locked_at is None:
+            return bad("This till is no longer locked.", 409)
+        shift.locked_at = None
+        shift.save(update_fields=["locked_at"])
+        audit.record("pos.session_unlocked", actor=user, approver=shift.authorized_by,
+                     object_type="shift", object_ref=shift.pk, till_number=shift.till.number)
+    login(request, user, backend=BACKEND)
+    authorization = (PosAuthorization.objects.filter(till=shift.till, cashier=user, cancelled_at__isnull=True)
+                     .order_by("-created_at").first())
+    request.session["pos_till"] = shift.till.number
+    request.session["pos_auth_id"] = authorization.pk if authorization else None
+    request.session.pop("pos_locked_shift", None)
+    return JsonResponse({"ok": True, "user": user_payload(user), "till": shift.till.number,
+                         "shift": _shift_payload(shift)})
+
+
+@post_json
+def cancel_authorization(request, data):
+    """Cancel a pending POS opening before its cashier shift has been opened."""
+    auth_id = request.session.get("pos_auth_id")
+    if not auth_id:
+        return JsonResponse({"ok": True})
+    with transaction.atomic():
+        authorization = (PosAuthorization.objects.select_for_update()
+                         .select_related("approval__approver", "till").filter(pk=auth_id).first())
+        if authorization is None or authorization.cancelled_at is not None:
+            request.session.pop("pos_auth_id", None)
+            request.session.pop("pos_till", None)
+            return JsonResponse({"ok": True})
+        if _open_shift(authorization.till) is not None:
+            return bad("This till already has an open shift and its opening cannot be changed.", 409)
+        if authorization.cashier_id and (
+                not request.user.is_authenticated or authorization.cashier_id != request.user.pk):
+            return bad("Only the logged-in cashier can change this pending opening.", 403)
+        authorization.cancelled_at = timezone.now()
+        authorization.save(update_fields=["cancelled_at"])
+        audit.record("pos.authorization_cancelled", actor=request.user if request.user.is_authenticated else None,
+                     approver=authorization.approval.approver, object_type="till",
+                     object_ref=authorization.till.number, reason="POS opening cancelled before shift open.",
+                     till_number=authorization.till.number)
+    if request.user.is_authenticated:
+        logout(request)
+    request.session.pop("pos_auth_id", None)
+    request.session.pop("pos_till", None)
+    return JsonResponse({"ok": True})
+
+
+@login_required_json
+@post_json
+def change_cashier(request, data):
+    """Release a cashier login so another cashier can sign in before the float opens the shift."""
+    auth_id = request.session.get("pos_auth_id")
+    with transaction.atomic():
+        authorization = (PosAuthorization.objects.select_for_update()
+                         .select_related("approval__approver", "till")
+                         .filter(pk=auth_id, cashier=request.user, cancelled_at__isnull=True).first())
+        if authorization is None:
+            return bad("There is no pending POS opening to change.", 409)
+        if _open_shift(authorization.till) is not None:
+            return bad("The shift is already open; the cashier cannot be changed.", 409)
+        authorization.cashier = None
+        authorization.cashier_logged_in_at = None
+        authorization.save(update_fields=["cashier", "cashier_logged_in_at"])
+        audit.record("pos.cashier_changed_before_shift", actor=request.user,
+                     approver=authorization.approval.approver, object_type="till",
+                     object_ref=authorization.till.number, till_number=authorization.till.number)
+        saved_auth_id, saved_till = authorization.pk, authorization.till.number
+    logout(request)
+    request.session["pos_auth_id"] = saved_auth_id
+    request.session["pos_till"] = saved_till
+    return JsonResponse({"ok": True, "till": saved_till})
+
+
+@login_required_json
+@post_json
 def open_shift(request, data):
     """Step 3: open the cashier's shift on this till with an opening float."""
     till_number = request.session.get("pos_till")
@@ -163,7 +298,7 @@ def open_shift(request, data):
     if not till_number or not request.user.can("sales.make"):
         return bad("Open the POS from the cashier shortcut first.", 403)
     authorization = (PosAuthorization.objects.select_related("approval__approver")
-                     .filter(pk=auth_id, cashier=request.user).first()) if auth_id else None
+                     .filter(pk=auth_id, cashier=request.user, cancelled_at__isnull=True).first()) if auth_id else None
     if authorization is None:
         return bad("Supervisor authorization is required to open a shift.", 403)
     try:
@@ -193,6 +328,8 @@ def shift_state(request):
     till_number = request.session.get("pos_till")
     till = Till.objects.filter(number=till_number).first() if till_number else None
     shift = _open_shift(till) if till else None
+    if shift is not None and shift.locked_at is not None:
+        return bad("This till is locked.", 409)
     mine = shift if shift and shift.cashier_id == request.user.pk else None
     return JsonResponse({"ok": True, "till": till_number, "shift": _shift_payload(mine)})
 
