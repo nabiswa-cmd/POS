@@ -189,12 +189,27 @@ eTIMS credit-note handling are unchanged.
 ### Phase 6A limitations
 
 Validation ran on SQLite. PostgreSQL row-lock and concurrent-cashier behavior, and manual browser interaction,
-were not verified. Accounting and sales reports still need a separately scoped treatment for measure quantities
-and millilitres; no payment-processing change was required for partial stock restoration.
+were not verified. No payment-processing change was required for partial stock restoration.
+
+## Phase 6B: accounting and stock valuation
+
+Accounting uses each immutable `SaleItem` / `RefundItem` snapshot to report full base units, partial measures,
+partial millilitres, and full/partial net-of-VAT revenue. Approved refunds reduce the corresponding type's
+revenue and quantities/volume. The existing reporting dates are preserved: sales count on completion date and
+refunds count on approval date.
+
+Restocked partial refunds create `VOLUME_REFUND` movements with cost; accounting now includes these alongside
+whole-unit `REFUND_RETURN` movements when reversing COGS. A refund not restocked still reduces revenue and
+sold volume, but does not restore stock or reverse COGS. Partial sales' line costs remain the frozen sale-time
+costs. These rules avoid counting `BOTTLE_OPEN` as a sale or adding stock movements to sale-line quantities.
+
+Stock-list value now includes remaining liquid in open bottles, valued at the bottle's recorded opening cost per
+millilitre, in addition to the existing average-cost value of sealed stock. A missing opening-cost movement is
+reported as an error rather than silently treated as zero. Cash-up remains payment-based: partial lines affect
+drawer totals only through their actual payment amounts, as before.
 
 ## Known follow-ups for later phases
-- `accounting/reports.py` sums `quantity * units_per_sale_unit` for units sold. Partial lines would be counted
-  as whole units there; give them their own treatment when reports are touched.
+- Validate the Phase 6B reports and opened-bottle valuation against PostgreSQL and manual browser use.
 - PostgreSQL append-only triggers are unaffected by these changes; verify on PostgreSQL (tests ran on SQLite).
 - Wastage is only taken from opened bottles. Writing off a whole sealed bottle still uses the Damaged/Expired
   stock adjustment.

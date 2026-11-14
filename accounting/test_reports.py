@@ -1,14 +1,19 @@
 """Phase 5B: profit and loss, by product, by day, and the report screen."""
+import csv
 from datetime import timedelta
 from decimal import Decimal as D
 
+from django.db.models import Sum
 from django.test import Client, override_settings
 from django.utils import timezone
 
+from catalog.models import SellingUnit
 from core.models import ShopSettings
 from inventory import movement_rules as mr
 from inventory import services as stock_services
+from inventory.models import StockMovement
 from sales import refunds, services
+from sales.models import Sale
 from sales.test_phase4a import CFG
 from sales.tests import SalesCase
 from tills import cashup
@@ -37,6 +42,22 @@ class ProfitCase(SalesCase):
         item = sale.items.get()
         r = refunds.request_refund(self.cashier, self.shift, sale.pk,
                                    [{"item_id": item.pk, "quantity": qty, "restock": restock}], "Customer returned it", "CASH")
+        refunds.approve_refund(self.cashier, r.pk, approval_token=self.approval("refund", refunds.ref(r.pk)))
+        return r
+
+    def partial_sale(self, *, volume="30", price="100", qty=2):
+        self.product.bottle_capacity_ml = D("750")
+        self.product.save(update_fields=["bottle_capacity_ml"])
+        unit = SellingUnit.objects.create(product=self.product, name=f"Measure {volume}",
+                                          volume_ml=D(volume), selling_price=D(price))
+        sale, item = services.add_item(self.cashier, self.shift, selling_unit_id=unit.pk, quantity=qty)
+        done = services.checkout_cash(self.cashier, self.shift, str(sale.total))
+        return done, item
+
+    def refund_item(self, sale, item, qty, restock=True):
+        r = refunds.request_refund(self.cashier, self.shift, sale.pk,
+                                   [{"item_id": item.pk, "quantity": qty, "restock": restock}],
+                                   "Customer returned it", "CASH")
         refunds.approve_refund(self.cashier, r.pk, approval_token=self.approval("refund", refunds.ref(r.pk)))
         return r
 
@@ -95,6 +116,113 @@ class GrossProfitTests(ProfitCase):
         self.assertGreater(sale.tax_total, 0)
         self.assertEqual((f["sales_vat"], f["net_sales"]), (sale.tax_total, sale.total - sale.tax_total))
         self.assertEqual(f["gross_profit"], sale.total - sale.tax_total - D("4800.00"))
+
+    def test_partial_revenue_is_reported_net_of_its_saved_vat(self):
+        shop = ShopSettings.load()
+        shop.vat_registered, shop.kra_pin = True, "P051234567X"
+        shop.save()
+        sale, item = self.partial_sale(qty=2)
+        item.refresh_from_db()
+        f = self.f()
+
+        self.assertEqual(f["partial_sales"], item.line_total - item.tax_amount)
+        self.assertEqual(f["net_sales"], sale.total - sale.tax_total)
+
+    def test_partial_tot_revenue_is_not_counted_as_a_full_bottle(self):
+        sale, _item = self.partial_sale(qty=2)
+        f = self.f()
+
+        self.assertEqual((f["net_sales"], f["full_units_sold"], f["partial_units_sold"],
+                          f["partial_volume_sold_ml"], f["full_sales"], f["partial_sales"]),
+                         (sale.total, 0, 2, D("60.00"), D("0.00"), D("200.00")))
+
+    def test_half_bottle_uses_its_saved_partial_price_and_volume(self):
+        sale, _item = self.partial_sale(volume="375", price="1750", qty=1)
+        f = self.f()
+
+        self.assertEqual((f["net_sales"], f["full_units_sold"], f["partial_units_sold"],
+                          f["partial_volume_sold_ml"], f["partial_sales"], f["cogs"]),
+                         (sale.total, 0, 1, D("375.00"), D("1750.00"), D("1200.00")))
+
+    def test_mixed_full_and_partial_sale_splits_revenue_units_and_keeps_cashup_amount(self):
+        _sale, _full_item = self.scan()
+        sale, _partial_item = self.partial_sale(qty=2)
+        f = self.f()
+        snapshot = cashup.snapshot(self.shift)
+
+        self.assertEqual((f["net_sales"], f["full_units_sold"], f["partial_units_sold"],
+                          f["partial_volume_sold_ml"], f["full_sales"], f["partial_sales"]),
+                         (D("3700.00"), 1, 2, D("60.00"), D("3500.00"), D("200.00")))
+        self.assertEqual((snapshot["sales_total"], snapshot["cash_sales"], snapshot["expected_cash"]),
+                         (D("3700.00"), D("3700.00"), D("8700.00")))
+
+    def test_partial_refund_reverses_revenue_volume_and_restocked_cost(self):
+        sale, item = self.partial_sale(qty=2)
+        self.refund_item(sale, item, 1)
+        f = self.f()
+        row = reports.by_product(self.today, self.today)[0]
+
+        self.assertEqual((f["net_sales"], f["partial_refunds"], f["net_partial_units"],
+                          f["net_partial_volume_ml"], f["cogs"], f["cogs_returned"], f["net_cogs"]),
+                         (D("100.00"), D("100.00"), 1, D("30.00"),
+                          D("192.00"), D("96.00"), D("96.00")))
+        self.assertEqual((row["units"], row["partial_units"], row["partial_volume_ml"],
+                          row["partial_units_refunded"], row["partial_volume_refunded_ml"],
+                          row["net_partial_units"], row["net_partial_volume_ml"],
+                          row["partial_sales"], row["sales"], row["cost"]),
+                         (0, 2, D("60.00"), 1, D("30.00"), 1, D("30.00"),
+                          D("100.00"), D("100.00"), D("96.00")))
+
+    def test_partial_refund_without_restock_does_not_reverse_cost_of_goods(self):
+        sale, item = self.partial_sale(qty=2)
+        self.refund_item(sale, item, 1, restock=False)
+        f = self.f()
+
+        self.assertEqual((f["net_sales"], f["partial_volume_refunded_ml"],
+                          f["cogs_returned"], f["net_cogs"]),
+                         (D("100.00"), D("30.00"), D("0.00"), D("192.00")))
+
+    def test_full_refund_reverses_full_bottle_revenue_and_returned_cost(self):
+        sale = self.sell(1)
+        self.refund(sale, 1)
+        f = self.f()
+
+        self.assertEqual((f["net_sales"], f["full_units_sold"], f["full_units_refunded"],
+                          f["net_full_units"], f["cogs_returned"], f["net_cogs"]),
+                         (D("0.00"), 1, 1, 0, D("2400.00"), D("0.00")))
+
+    def test_full_refund_of_partial_line_restores_all_volume_and_cost(self):
+        sale, item = self.partial_sale(qty=2)
+        self.refund_item(sale, item, 2)
+        f = self.f()
+
+        self.assertEqual((f["net_sales"], f["partial_units_refunded"], f["net_partial_units"],
+                          f["partial_volume_refunded_ml"], f["net_partial_volume_ml"],
+                          f["cogs_returned"], f["net_cogs"]),
+                         (D("0.00"), 2, 0, D("60.00"), D("0.00"), D("192.00"), D("0.00")))
+
+    def test_partial_sale_volume_reconciles_to_stock_movements_without_double_counting_opening(self):
+        sale, _item = self.partial_sale(qty=2)
+        self.refund_item(sale, sale.items.get(), 1)
+        f = self.f()
+        volume_moves = StockMovement.objects.filter(
+            movement_type__in=(mr.PARTIAL_SALE, mr.VOLUME_REFUND)).aggregate(t=Sum("volume_ml"))["t"]
+        stock = stock_services.partial_stock(self.product.pk)
+
+        self.assertEqual((volume_moves, f["net_partial_volume_ml"], stock["total_volume_ml"]),
+                         (D("-30.00"), D("30.00"), D("7470.00")))
+
+    def test_partial_sales_follow_sale_day_and_daily_report_breakdown(self):
+        sale, _item = self.partial_sale(qty=2)
+        yesterday = self.today - timedelta(days=1)
+        Sale.objects.filter(pk=sale.pk).update(
+            completed_at=timezone.now() - timedelta(days=1))
+
+        self.assertEqual(self.f()["partial_sales"], D("0.00"))
+        prior = reports.figures(yesterday, yesterday)
+        self.assertEqual((prior["partial_sales"], prior["partial_volume_sold_ml"]),
+                         (D("200.00"), D("60.00")))
+        self.assertIn("200.00", reports.csv_days(yesterday, yesterday))
 
 
 class NetProfitTests(ProfitCase):
@@ -181,3 +309,29 @@ class ScreenTests(ProfitCase):
         self.assertIn("Net profit,1700.00", m.get("/manage/reports/?csv=summary").content.decode())
         self.assertIn("Gross profit", m.get("/manage/reports/?csv=products").content.decode())
         self.assertIn("Net profit", m.get("/manage/reports/?csv=days").content.decode())
+
+    def test_stock_value_includes_remaining_liquid_in_open_bottles(self):
+        self.partial_sale(qty=2)
+        manager = self.login(self.manager)
+        response = manager.get("/manage/stock/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["value"], D("23808.00"))
+        self.assertEqual(response.context["page"][0].value, D("23808.00"))
+
+    def test_partial_sales_are_distinguished_in_report_page_and_csv_exports(self):
+        self.partial_sale(qty=2)
+        manager = self.login(self.manager)
+        page = manager.get("/manage/reports/")
+        products = manager.get("/manage/reports/?csv=products").content.decode()
+        summary = manager.get("/manage/reports/?csv=summary").content.decode()
+        days = manager.get("/manage/reports/?csv=days").content.decode()
+        summary_rows = {row[0]: row[1] for row in csv.reader(summary.splitlines()) if len(row) == 2}
+
+        self.assertContains(page, "Partial measures sold / refunded / net")
+        self.assertContains(page, "Partial volume sold / refunded / net (ml)")
+        self.assertIn("Partial measures sold", products)
+        self.assertIn("60.00", products)
+        self.assertEqual(summary_rows["Partial sales revenue (excl. VAT, net of refunds)"], "200.00")
+        self.assertIn("Partial sales (excl. VAT)", days)
+        self.assertIn(",200.00,60.00,", days)

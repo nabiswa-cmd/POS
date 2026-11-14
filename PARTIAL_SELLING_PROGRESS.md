@@ -163,3 +163,54 @@ Known limitations and Phase 6B
 - No payment-processing integration was necessary for inventory correctness; existing cash and M-PESA refund
   settlement remains unchanged.
 
+## Phase 6B: partial selling accounting integration (done)
+
+Modified
+- `accounting/reports.py`: report-period and by-product totals now split full base units from partial measures
+  and millilitres using immutable sale/refund snapshots. Full/partial revenue is reported net of VAT and
+  approved refunds; net quantities and partial volume are also exposed. `VOLUME_REFUND` cost movements now
+  reverse COGS alongside full-unit `REFUND_RETURN` movements, but only when goods were actually restocked.
+  Summary, product, and daily CSV exports include the same breakdowns.
+- `accounting/templates/accounting/financial_report.html`: added sales-mix totals and full/partial product and
+  daily breakdowns.
+- `inventory/views.py`, `inventory/templates/inventory/stock_list.html`: stock valuation now includes the cost
+  of liquid remaining in open bottles, using their recorded opening cost per millilitre, as well as sealed
+  stock at the existing average cost. Missing opening cost is surfaced as an error, not counted as zero.
+- `accounting/test_reports.py`: added full-bottle regression, TOT, half-bottle, mixed sale, full and partial
+  refunds (restocked and not restocked), net revenue, movement/volume reconciliation, VAT, daily/range,
+  cash-up, stock valuation, and report/CSV coverage.
+- `PARTIAL_SELLING_ARCHITECTURE.md`: documented reporting dates, refund cost treatment, and inventory value.
+
+Calculations corrected
+- Partial lines are no longer included in full-unit counts. Their quantity and frozen `total_volume_ml` are
+  tracked separately; full and partial net revenue are split from saved line totals and tax snapshots.
+- Refunded quantities and partial volumes are subtracted from net sold amounts. Approved refund revenue is
+  dated by approval as before. Cost is reversed only for restocked goods, from the cost-bearing stock movement,
+  avoiding duplicate cost or volume counting.
+- Cash-up remains based on actual payment methods and amounts. Full-bottle payment behavior is unchanged.
+- No new accounting policy was introduced: existing sale-completion dates, refund-approval dates, VAT handling,
+  and frozen cost snapshots are preserved.
+
+Verification (SQLite)
+- `python manage.py test accounting.test_reports -v 1`: **30 passed**.
+- `python manage.py test inventory.test_partial_admin -v 1`: **31 passed**.
+- Integrated accounting, partial POS/refund, and partial inventory suites: **88 passed**.
+- `python manage.py check`: no issues.
+- `python manage.py makemigrations --check --dry-run`: no changes detected.
+- Stock movement reconciliation verified: a 60 ml partial sale with a 30 ml restocked refund reports net
+  30 ml sold and leaves the expected sealed-plus-open liquid volume; bottle opening is not double-counted.
+- Full bottle profit/revenue and cash-up regression tests pass. Report exports and day/range behavior are covered.
+
+Known limitations / unresolved decisions
+- Tests ran on SQLite only. PostgreSQL-specific locking/triggers and a manual browser review were not run.
+- Financial reports intentionally keep the established dates: sale on completion day, refund on approval day.
+  Thus a refund approved in a later period can make that period's product net units/volume negative for an item
+  sold earlier. This is the existing accounting period rule, not a sale-cohort report.
+- No unresolved accounting rule was needed for Phase 6B. Stock valuation uses the movement's frozen opening
+  cost per millilitre; incomplete/corrupt opening movement history now raises an error rather than showing a
+  partial total.
+
+Recommended next phase
+- Phase 6C: PostgreSQL and manual UAT of full/partial checkout, refund, reports/CSV, cash-up, and opened-bottle
+  valuation, including a one-time audit of any existing historical partial-sale/refund records.
+

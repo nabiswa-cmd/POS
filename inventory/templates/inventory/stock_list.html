@@ -1,6 +1,6 @@
 {% extends "core/base.html" %}{% block title %}Stock{% endblock %}
 {% block content %}<h1>Stock</h1>
-<p class="sub">{{ page.paginator.count }} product{{ page.paginator.count|pluralize }}{% if show_cost %} &middot; Stock value at average cost: <b>KES {{ value|floatformat:2 }}</b>{% endif %}</p>
+<p class="sub">{{ page.paginator.count }} product{{ page.paginator.count|pluralize }}{% if show_cost %} &middot; Stock value at cost, including opened bottles: <b>KES {{ value|floatformat:2 }}</b>{% endif %}</p>
 <form method="get" class="card row noprint"><div style="flex:3"><label for="q">Search or scan</label><input id="q" type="search" name="q" value="{{ q }}" data-search data-autofocus></div>
 <div style="flex:0 0 auto"><label style="color:var(--text)"><input type="checkbox" name="low" value="1"{% if low_only %} checked{% endif %}>Low stock only</label></div><div style="flex:0 0 auto"><button type="submit">Search</button></div></form>
 <table><tr><th>Product</th><th>Shelf</th><th class="num">In stock</th><th class="num">Reorder at</th>{% if show_cost %}<th class="num">Value</th>{% endif %}<th></th></tr>

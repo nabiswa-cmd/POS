@@ -37,6 +37,15 @@
 </table>
 <p class="muted">Stock bought in the period: KES {{ f.stock_bought }} (cash spent on stock; it becomes a cost only when the goods are sold, so it is not subtracted above).</p>
 
+<h2>Sales mix</h2>
+<table style="max-width:760px">
+<tr><th></th><th class="num">Sold</th><th class="num">Refunded</th><th class="num">Net</th><th class="num">Revenue (excl. VAT)</th></tr>
+<tr><td>Full units</td><td class="num">{{ f.full_units_sold }}</td><td class="num">{{ f.full_units_refunded }}</td><td class="num">{{ f.net_full_units }}</td><td class="num">{{ f.full_sales }}</td></tr>
+<tr><td>Partial measures</td><td class="num">{{ f.partial_units_sold }}</td><td class="num">{{ f.partial_units_refunded }}</td><td class="num">{{ f.net_partial_units }}</td><td class="num">{{ f.partial_sales }}</td></tr>
+<tr><td>Partial volume (ml)</td><td class="num">{{ f.partial_volume_sold_ml }}</td><td class="num">{{ f.partial_volume_refunded_ml }}</td><td class="num">{{ f.net_partial_volume_ml }}</td><td class="num">-</td></tr>
+</table>
+<p class="muted">Revenue by type is net of VAT and approved refunds. Refunds reduce the period they are approved; restocked goods also reverse cost of sales.</p>
+
 <h2>Money taken in</h2>
 <table style="max-width:640px">
 <tr><td>Cash</td><td class="num">{{ r.collections.cash }}</td></tr>
@@ -52,14 +61,14 @@
 <h2>By product</h2>
 <p><a class="btn ghost" href="?from={{ day_from|date:'Y-m-d' }}&amp;to={{ day_to|date:'Y-m-d' }}&amp;csv=products">Download (CSV)</a>
 <a class="btn ghost" href="?from={{ day_from|date:'Y-m-d' }}&amp;to={{ day_to|date:'Y-m-d' }}&amp;csv=summary">Summary (CSV)</a></p>
-<table><tr><th>Product</th><th class="num">Units</th><th class="num">Net sales</th><th class="num">Cost</th><th class="num">Gross profit</th><th class="num">Margin</th></tr>
-{% for p in r.products %}<tr><td>{{ p.name }}</td><td class="num">{{ p.units }}</td><td class="num">{{ p.sales }}</td><td class="num">{{ p.cost }}</td><td class="num">{{ p.profit }}</td><td class="num">{% if p.margin != None %}{{ p.margin }}%{% else %}-{% endif %}</td></tr>
-{% empty %}<tr><td colspan="6" class="muted">No sales in this period.</td></tr>{% endfor %}</table>
+<table><tr><th>Product</th><th class="num">Full units sold / refunded / net</th><th class="num">Partial measures sold / refunded / net</th><th class="num">Partial volume sold / refunded / net (ml)</th><th class="num">Full revenue</th><th class="num">Partial revenue</th><th class="num">Net sales</th><th class="num">Cost</th><th class="num">Gross profit</th><th class="num">Margin</th></tr>
+{% for p in r.products %}<tr><td>{{ p.name }}</td><td class="num">{{ p.units }} / {{ p.full_units_refunded }} / {{ p.net_units }}</td><td class="num">{{ p.partial_units }} / {{ p.partial_units_refunded }} / {{ p.net_partial_units }}</td><td class="num">{{ p.partial_volume_ml }} / {{ p.partial_volume_refunded_ml }} / {{ p.net_partial_volume_ml }}</td><td class="num">{{ p.full_sales }}</td><td class="num">{{ p.partial_sales }}</td><td class="num">{{ p.sales }}</td><td class="num">{{ p.cost }}</td><td class="num">{{ p.profit }}</td><td class="num">{% if p.margin != None %}{{ p.margin }}%{% else %}-{% endif %}</td></tr>
+{% empty %}<tr><td colspan="10" class="muted">No sales in this period.</td></tr>{% endfor %}</table>
 
 <h2>By day</h2>
 {% if r.days %}<p><a class="btn ghost" href="?from={{ day_from|date:'Y-m-d' }}&amp;to={{ day_to|date:'Y-m-d' }}&amp;csv=days">Download (CSV)</a></p>
-<table><tr><th>Day</th><th class="num">Net sales</th><th class="num">Cost</th><th class="num">Gross profit</th><th class="num">Losses</th><th class="num">Expenses</th><th class="num">Till diff.</th><th class="num">Net profit</th></tr>
-{% for d in r.days %}<tr><td>{{ d.day_from|date:"D d M" }}</td><td class="num">{{ d.net_sales }}</td><td class="num">{{ d.net_cogs }}</td><td class="num">{{ d.gross_profit }}</td><td class="num">{{ d.stock_losses }}</td><td class="num">{{ d.expenses }}</td><td class="num">{{ d.till_difference }}</td><td class="num"><b>{{ d.net_profit }}</b></td></tr>{% endfor %}</table>
+<table><tr><th>Day</th><th class="num">Net sales</th><th class="num">Full revenue</th><th class="num">Partial revenue</th><th class="num">Net partial volume (ml)</th><th class="num">Cost</th><th class="num">Gross profit</th><th class="num">Losses</th><th class="num">Expenses</th><th class="num">Till diff.</th><th class="num">Net profit</th></tr>
+{% for d in r.days %}<tr><td>{{ d.day_from|date:"D d M" }}</td><td class="num">{{ d.net_sales }}</td><td class="num">{{ d.full_sales }}</td><td class="num">{{ d.partial_sales }}</td><td class="num">{{ d.net_partial_volume_ml }}</td><td class="num">{{ d.net_cogs }}</td><td class="num">{{ d.gross_profit }}</td><td class="num">{{ d.stock_losses }}</td><td class="num">{{ d.expenses }}</td><td class="num">{{ d.till_difference }}</td><td class="num"><b>{{ d.net_profit }}</b></td></tr>{% endfor %}</table>
 {% else %}<p class="muted">The day-by-day table is shown for ranges of up to {{ r.day_table_limit }} days that contain activity.</p>{% endif %}
 {% endwith %}
 {% endblock %}

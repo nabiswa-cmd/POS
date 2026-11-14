@@ -8,7 +8,7 @@ import io
 from datetime import timedelta
 from decimal import Decimal as D
 
-from django.db.models import F, Sum
+from django.db.models import Case, DecimalField, F, IntegerField, Sum, Value, When
 
 from . import profit_rules as pr
 from . import services as expense_services
@@ -39,20 +39,80 @@ def _moves(day_from, day_to, *types):
                                         created_at__date__lte=day_to)
 
 
+def _sales_mix(sale_items, refund_items):
+    """Split report-period sales and approved refunds by their frozen full/partial line snapshots."""
+    money_field = DecimalField(max_digits=14, decimal_places=2)
+    sold = sale_items.aggregate(
+        full_units=Sum(Case(
+            When(total_volume_ml__isnull=True, then=F("quantity") * F("units_per_sale_unit")),
+            default=Value(0), output_field=IntegerField())),
+        partial_units=Sum(Case(
+            When(total_volume_ml__isnull=False, then=F("quantity")),
+            default=Value(0), output_field=IntegerField())),
+        partial_volume=Sum("total_volume_ml"),
+        full_sales=Sum(Case(
+            When(total_volume_ml__isnull=True, then=F("line_total") - F("tax_amount")),
+            default=Value(0), output_field=money_field)),
+        partial_sales=Sum(Case(
+            When(total_volume_ml__isnull=False, then=F("line_total") - F("tax_amount")),
+            default=Value(0), output_field=money_field)),
+    )
+    returned = refund_items.aggregate(
+        full_units=Sum(Case(
+            When(sale_item__total_volume_ml__isnull=True,
+                 then=F("quantity") * F("sale_item__units_per_sale_unit")),
+            default=Value(0), output_field=IntegerField())),
+        partial_units=Sum(Case(
+            When(sale_item__total_volume_ml__isnull=False, then=F("quantity")),
+            default=Value(0), output_field=IntegerField())),
+        partial_volume=Sum("volume_ml"),
+        full_refunds=Sum(Case(
+            When(sale_item__total_volume_ml__isnull=True, then=F("amount") - F("tax_amount")),
+            default=Value(0), output_field=money_field)),
+        partial_refunds=Sum(Case(
+            When(sale_item__total_volume_ml__isnull=False, then=F("amount") - F("tax_amount")),
+            default=Value(0), output_field=money_field)),
+    )
+    full_units = sold["full_units"] or 0
+    partial_units = sold["partial_units"] or 0
+    full_units_refunded = returned["full_units"] or 0
+    partial_units_refunded = returned["partial_units"] or 0
+    partial_volume = sold["partial_volume"] or D("0.00")
+    partial_volume_refunded = returned["partial_volume"] or D("0.00")
+    full_refunds = pr.money(returned["full_refunds"] or 0)
+    partial_refunds = pr.money(returned["partial_refunds"] or 0)
+    return {
+        "full_units_sold": full_units,
+        "full_units_refunded": full_units_refunded,
+        "net_full_units": full_units - full_units_refunded,
+        "partial_units_sold": partial_units,
+        "partial_units_refunded": partial_units_refunded,
+        "net_partial_units": partial_units - partial_units_refunded,
+        "partial_volume_sold_ml": partial_volume,
+        "partial_volume_refunded_ml": partial_volume_refunded,
+        "net_partial_volume_ml": partial_volume - partial_volume_refunded,
+        "full_refunds": full_refunds,
+        "partial_refunds": partial_refunds,
+        "full_sales": pr.money((sold["full_sales"] or 0) - full_refunds),
+        "partial_sales": pr.money((sold["partial_sales"] or 0) - partial_refunds),
+    }
+
+
 def figures(day_from, day_to):
     """The profit and loss for the period, plus the supporting numbers."""
     from inventory import movement_rules as mr
-    from sales.models import SaleItem
+    from sales.models import RefundItem, SaleItem
     from tills.models import CashUp
 
     sales = _sales(day_from, day_to)
     refunds = _refunds(day_from, day_to)
     items = SaleItem.objects.filter(sale__in=sales)
+    refund_items = RefundItem.objects.filter(refund__in=refunds)
 
     sales_gross, sales_vat = _sum(sales, "total"), _sum(sales, "tax_total")
     refunds_gross, refunds_vat = _sum(refunds, "total"), _sum(refunds, "tax_total")
     cogs = _sum(items, "cost_total")
-    cogs_returned = _sum(_moves(day_from, day_to, mr.REFUND_RETURN), "total_cost")
+    cogs_returned = _sum(_moves(day_from, day_to, mr.REFUND_RETURN, mr.VOLUME_REFUND), "total_cost")
     adjust_out = _sum(_moves(day_from, day_to, mr.ADJUST).filter(quantity__lt=0), "total_cost")
     adjust_in = _sum(_moves(day_from, day_to, mr.ADJUST).filter(quantity__gt=0), "total_cost")
     damaged = _sum(_moves(day_from, day_to, mr.DAMAGED), "total_cost")
@@ -72,6 +132,7 @@ def figures(day_from, day_to):
         "net_sales": nsales, "cogs": cogs, "cogs_returned": cogs_returned, "net_cogs": ncogs,
         "damaged": damaged, "expired": expired, "adjust_out": adjust_out, "adjust_in": adjust_in, "stock_losses": losses,
         "expenses": expenses, "till_difference": till_diff, "stock_bought": pr.money(bought),
+        **_sales_mix(items, refund_items),
         **pl,
         # Lines sold with no recorded cost make COGS too low. Should never happen; shown loudly if it does.
         "unknown_cost_lines": items.filter(cost_total__isnull=True).count(),
@@ -95,30 +156,74 @@ def by_product(day_from, day_to):
     from inventory import movement_rules as mr
     from sales.models import RefundItem, SaleItem
 
-    sold = (SaleItem.objects.filter(sale__in=_sales(day_from, day_to)).values("product_id", "product_name")
-            .annotate(units=Sum(F("quantity") * F("units_per_sale_unit")), gross=Sum("line_total"),
-                      vat=Sum("tax_amount"), cost=Sum("cost_total")))
+    def row(pid, name):
+        return data.setdefault(pid, {
+            "name": name, "units": 0, "partial_units": 0, "partial_volume_ml": D("0.00"),
+            "full_units_refunded": 0, "partial_units_refunded": 0,
+            "partial_volume_refunded_ml": D("0.00"),
+            "full_sales": ZERO, "partial_sales": ZERO, "full_refunds": ZERO, "partial_refunds": ZERO,
+            "cost": ZERO,
+        })
+
     data = {}
-    for r in sold:
-        d = data.setdefault(r["product_id"], {"name": r["product_name"], "units": 0, "sales": ZERO, "cost": ZERO})
+    sales = SaleItem.objects.filter(sale__in=_sales(day_from, day_to))
+    for r in (sales.filter(total_volume_ml__isnull=True)
+              .values("product_id", "product_name")
+              .annotate(units=Sum(F("quantity") * F("units_per_sale_unit")),
+                        gross=Sum("line_total"), vat=Sum("tax_amount"), cost=Sum("cost_total"))):
+        d = row(r["product_id"], r["product_name"])
         d["units"] += r["units"] or 0
-        d["sales"] += (r["gross"] or ZERO) - (r["vat"] or ZERO)
+        d["full_sales"] += (r["gross"] or ZERO) - (r["vat"] or ZERO)
         d["cost"] += r["cost"] or ZERO
-    back = (RefundItem.objects.filter(refund__in=_refunds(day_from, day_to))
-            .values("sale_item__product_id", "sale_item__product_name")
-            .annotate(gross=Sum("amount"), vat=Sum("tax_amount")))
-    for r in back:
-        d = data.setdefault(r["sale_item__product_id"], {"name": r["sale_item__product_name"], "units": 0, "sales": ZERO, "cost": ZERO})
-        d["sales"] -= (r["gross"] or ZERO) - (r["vat"] or ZERO)
-    for r in _moves(day_from, day_to, mr.REFUND_RETURN).values("product_id", "product__name").annotate(c=Sum("total_cost")):
-        d = data.setdefault(r["product_id"], {"name": r["product__name"], "units": 0, "sales": ZERO, "cost": ZERO})
+    for r in (sales.filter(total_volume_ml__isnull=False)
+              .values("product_id", "product_name")
+              .annotate(units=Sum("quantity"), volume=Sum("total_volume_ml"),
+                        gross=Sum("line_total"), vat=Sum("tax_amount"), cost=Sum("cost_total"))):
+        d = row(r["product_id"], r["product_name"])
+        d["partial_units"] += r["units"] or 0
+        d["partial_volume_ml"] += r["volume"] or D("0.00")
+        d["partial_sales"] += (r["gross"] or ZERO) - (r["vat"] or ZERO)
+        d["cost"] += r["cost"] or ZERO
+
+    refunds = RefundItem.objects.filter(refund__in=_refunds(day_from, day_to))
+    for r in (refunds.filter(sale_item__total_volume_ml__isnull=True)
+              .values("sale_item__product_id", "sale_item__product_name")
+              .annotate(units=Sum(F("quantity") * F("sale_item__units_per_sale_unit")),
+                        gross=Sum("amount"), vat=Sum("tax_amount"))):
+        d = row(r["sale_item__product_id"], r["sale_item__product_name"])
+        d["full_units_refunded"] += r["units"] or 0
+        refunded = (r["gross"] or ZERO) - (r["vat"] or ZERO)
+        d["full_refunds"] += refunded
+        d["full_sales"] -= refunded
+    for r in (refunds.filter(sale_item__total_volume_ml__isnull=False)
+              .values("sale_item__product_id", "sale_item__product_name")
+              .annotate(units=Sum("quantity"), volume=Sum("volume_ml"),
+                        gross=Sum("amount"), vat=Sum("tax_amount"))):
+        d = row(r["sale_item__product_id"], r["sale_item__product_name"])
+        d["partial_units_refunded"] += r["units"] or 0
+        d["partial_volume_refunded_ml"] += r["volume"] or D("0.00")
+        refunded = (r["gross"] or ZERO) - (r["vat"] or ZERO)
+        d["partial_refunds"] += refunded
+        d["partial_sales"] -= refunded
+
+    for r in (_moves(day_from, day_to, mr.REFUND_RETURN, mr.VOLUME_REFUND)
+              .values("product_id", "product__name").annotate(c=Sum("total_cost"))):
+        d = row(r["product_id"], r["product__name"])
         d["cost"] -= r["c"] or ZERO
     rows = []
     for pid, d in data.items():
-        sales, cost = pr.money(d["sales"]), pr.money(d["cost"])
+        d["full_sales"] = pr.money(d["full_sales"])
+        d["partial_sales"] = pr.money(d["partial_sales"])
+        d["full_refunds"] = pr.money(d["full_refunds"])
+        d["partial_refunds"] = pr.money(d["partial_refunds"])
+        d["sales"] = pr.money(d["full_sales"] + d["partial_sales"])
+        d["net_units"] = d["units"] - d["full_units_refunded"]
+        d["net_partial_units"] = d["partial_units"] - d["partial_units_refunded"]
+        d["net_partial_volume_ml"] = d["partial_volume_ml"] - d["partial_volume_refunded_ml"]
+        sales, cost = d["sales"], pr.money(d["cost"])
         profit = pr.money(sales - cost)
         rows.append({"product_id": pid, "name": d["name"], "units": d["units"], "sales": sales, "cost": cost,
-                     "profit": profit, "margin": pr.margin_pct(profit, sales)})
+                     "profit": profit, "margin": pr.margin_pct(profit, sales), **d})
     rows.sort(key=lambda r: (-r["profit"], r["name"]))
     return rows
 
@@ -146,7 +251,7 @@ def csv_summary(day_from, day_to):
     f = figures(day_from, day_to)
     out = io.StringIO()
     w = csv.writer(out)
-    w.writerow(["Line", "KES"])
+    w.writerow(["Line", "Value"])
     for label, key in [("Sales (incl. VAT)", "sales_gross"), ("VAT in sales", "sales_vat"), ("Refunds (incl. VAT)", "refunds_gross"),
                        ("VAT in refunds", "refunds_vat"), ("Net sales (excl. VAT)", "net_sales"),
                        ("Cost of goods sold", "cogs"), ("Refunded goods put back (cost)", "cogs_returned"),
@@ -154,6 +259,17 @@ def csv_summary(day_from, day_to):
                        ("Stock losses", "stock_losses"), ("Expenses", "expenses"), ("Till cash differences", "till_difference"),
                        ("Net profit", "net_profit"), ("Stock bought (not a cost of sales)", "stock_bought")]:
         w.writerow([label, f[key]])
+    w.writerow(["Full units sold", f["full_units_sold"]])
+    w.writerow(["Full units refunded", f["full_units_refunded"]])
+    w.writerow(["Net full units", f["net_full_units"]])
+    w.writerow(["Partial measures sold", f["partial_units_sold"]])
+    w.writerow(["Partial measures refunded", f["partial_units_refunded"]])
+    w.writerow(["Net partial measures", f["net_partial_units"]])
+    w.writerow(["Partial volume sold (ml)", f["partial_volume_sold_ml"]])
+    w.writerow(["Partial volume refunded (ml)", f["partial_volume_refunded_ml"]])
+    w.writerow(["Net partial volume (ml)", f["net_partial_volume_ml"]])
+    w.writerow(["Full sales revenue (excl. VAT, net of refunds)", f["full_sales"]])
+    w.writerow(["Partial sales revenue (excl. VAT, net of refunds)", f["partial_sales"]])
     w.writerow([])
     w.writerow(["Expenses by category", "KES"])
     for name, amount in expense_services.by_category(day_from, day_to):
@@ -164,17 +280,28 @@ def csv_summary(day_from, day_to):
 def csv_products(day_from, day_to):
     out = io.StringIO()
     w = csv.writer(out)
-    w.writerow(["Product", "Units sold", "Net sales", "Cost of goods", "Gross profit", "Margin %"])
+    w.writerow(["Product", "Full units sold", "Full units refunded", "Net full units",
+                "Partial measures sold", "Partial measures refunded", "Net partial measures",
+                "Partial volume sold (ml)", "Partial volume refunded (ml)", "Net partial volume (ml)",
+                "Full sales (excl. VAT, net of refunds)", "Partial sales (excl. VAT, net of refunds)",
+                "Net sales (excl. VAT)", "Cost of goods", "Gross profit", "Margin %"])
     for r in by_product(day_from, day_to):
-        w.writerow([r["name"], r["units"], r["sales"], r["cost"], r["profit"], r["margin"] if r["margin"] is not None else ""])
+        w.writerow([r["name"], r["units"], r["full_units_refunded"], r["net_units"],
+                    r["partial_units"], r["partial_units_refunded"], r["net_partial_units"],
+                    r["partial_volume_ml"], r["partial_volume_refunded_ml"], r["net_partial_volume_ml"],
+                    r["full_sales"], r["partial_sales"], r["sales"], r["cost"], r["profit"],
+                    r["margin"] if r["margin"] is not None else ""])
     return out.getvalue()
 
 
 def csv_days(day_from, day_to):
     out = io.StringIO()
     w = csv.writer(out)
-    w.writerow(["Date", "Net sales", "Net cost of goods", "Gross profit", "Stock losses", "Expenses", "Till differences", "Net profit"])
+    w.writerow(["Date", "Net sales", "Full sales (excl. VAT)", "Partial sales (excl. VAT)",
+                "Net partial volume (ml)", "Net cost of goods", "Gross profit", "Stock losses",
+                "Expenses", "Till differences", "Net profit"])
     for f in by_day(day_from, day_to):
-        w.writerow([f["day_from"].isoformat(), f["net_sales"], f["net_cogs"], f["gross_profit"], f["stock_losses"],
+        w.writerow([f["day_from"].isoformat(), f["net_sales"], f["full_sales"], f["partial_sales"],
+                    f["net_partial_volume_ml"], f["net_cogs"], f["gross_profit"], f["stock_losses"],
                     f["expenses"], f["till_difference"], f["net_profit"]])
     return out.getvalue()

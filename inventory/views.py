@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from django.contrib import messages
 from django.core.paginator import Paginator
-from django.db.models import DecimalField, ExpressionWrapper, F, Q, Sum
+from django.db.models import DecimalField, ExpressionWrapper, F, OuterRef, Q, Subquery, Sum
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
@@ -15,6 +15,7 @@ from core.http import client_ip
 
 from . import services
 from . import movement_rules as mr
+from . import costing
 from .forms import AdjustForm, BottleAdjustForm, ReceivingForm, ReceivingItemForm, WastageForm
 from .models import Bottle, Receiving, StockMovement
 
@@ -35,9 +36,27 @@ def stock_list(request):
         qs = qs.filter(reorder_level__gt=0, stock_qty__lte=F("reorder_level"))
     show_cost = can_see_cost(request.user)
     value = None
+    bottle_values = {}
     if show_cost:
-        value = qs.aggregate(v=Sum(VALUE))["v"] or Decimal("0")
+        sealed_value = qs.aggregate(v=Sum(VALUE))["v"] or Decimal("0")
+        opening_cost = Subquery(
+            StockMovement.objects.filter(bottle_id=OuterRef("pk"), movement_type=mr.BOTTLE_OPEN)
+            .order_by("pk").values("total_cost")[:1],
+            output_field=DecimalField(max_digits=14, decimal_places=2))
+        bottles = (Bottle.objects.filter(product_id__in=qs.values("pk"), status=Bottle.OPENED)
+                   .annotate(opening_cost=opening_cost)
+                   .values("pk", "product_id", "capacity_ml", "remaining_ml", "opening_cost"))
+        for bottle in bottles:
+            if bottle["opening_cost"] is None:
+                raise ValueError(f"Opened bottle {bottle['pk']} has no recorded opening cost.")
+            per_ml = costing.q4(bottle["opening_cost"] / bottle["capacity_ml"])
+            bottle_value = costing.q2(per_ml * bottle["remaining_ml"])
+            bottle_values[bottle["product_id"]] = bottle_values.get(bottle["product_id"], Decimal("0.00")) + bottle_value
+        value = sealed_value + sum(bottle_values.values(), Decimal("0.00"))
     page = Paginator(qs.annotate(value=VALUE).order_by("name"), PAGE_SIZE).get_page(request.GET.get("page"))
+    if show_cost:
+        for product in page:
+            product.value += bottle_values.get(product.pk, Decimal("0.00"))
     return render(request, "inventory/stock_list.html", {
         "page": page, "q": q, "low_only": low_only, "show_cost": show_cost, "value": value})
 
