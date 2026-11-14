@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Brand, Category, Packaging, Product, ProductCode, Shelf, ShelfTransfer, Supplier
+from .models import Brand, Category, Packaging, Product, ProductCode, SellingUnit, Shelf, ShelfTransfer, Supplier
 
 
 class ReadOnlyAdmin(admin.ModelAdmin):
@@ -24,5 +24,5 @@ class ProductAdmin(ReadOnlyAdmin):
     search_fields = ("name", "sku", "codes__code")
 
 
-for _model in (Category, Brand, Supplier, Shelf, Packaging, ProductCode, ShelfTransfer):
+for _model in (Category, Brand, Supplier, Shelf, Packaging, SellingUnit, ProductCode, ShelfTransfer):
     admin.site.register(_model, ReadOnlyAdmin)

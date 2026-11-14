@@ -180,6 +180,33 @@ class Packaging(models.Model):
         return units.pack_price(self.product.selling_price, self.units_per_pack, self.selling_price)
 
 
+class SellingUnit(models.Model):
+    """A measure a product can be sold in, taken from an open bottle: Tot 25 ml, Single 50 ml, Double 100 ml.
+
+    Separate from Packaging (which groups whole bottles upward). Stock for these comes from inventory.Bottle.
+    """
+
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="selling_units")
+    name = models.CharField(max_length=40)
+    volume_ml = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(Decimal("0.01"))])
+    selling_price = models.DecimalField(**MONEY)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["volume_ml", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["product", "name"], name="uniq_selling_unit_name_per_product"),
+            models.UniqueConstraint(fields=["product", "volume_ml"], condition=Q(active=True),
+                                    name="uniq_active_selling_unit_volume_per_product"),
+            models.CheckConstraint(condition=Q(volume_ml__gt=0), name="selling_unit_volume_positive"),
+            models.CheckConstraint(condition=Q(selling_price__gte=0), name="selling_unit_price_not_negative"),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.volume_ml} ml)"
+
+
 class ProductCode(models.Model):
     """Everything a scanner can read for a product. Unique across the whole shop."""
 

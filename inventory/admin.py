@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Receiving, ReceivingItem, StockLot, StockMovement
+from .models import Bottle, Receiving, ReceivingItem, StockLot, StockMovement
 
 
 class ReadOnlyAdmin(admin.ModelAdmin):
@@ -16,7 +16,7 @@ class ReadOnlyAdmin(admin.ModelAdmin):
 
 @admin.register(StockMovement)
 class StockMovementAdmin(ReadOnlyAdmin):
-    list_display = ("created_at", "product", "movement_type", "quantity", "balance_after", "user", "approved_by", "reference")
+    list_display = ("created_at", "product", "movement_type", "quantity", "volume_ml", "balance_after", "user", "approved_by", "reference")
     list_filter = ("movement_type",)
     search_fields = ("product__name", "reference", "reason")
     date_hierarchy = "created_at"
@@ -42,3 +42,4 @@ class ReceivingAdmin(ReadOnlyAdmin):
 
 
 admin.site.register(StockLot, ReadOnlyAdmin)
+admin.site.register(Bottle, ReadOnlyAdmin)

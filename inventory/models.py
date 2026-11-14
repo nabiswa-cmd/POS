@@ -19,8 +19,16 @@ class StockMovement(models.Model):
 
     product = models.ForeignKey("catalog.Product", on_delete=models.PROTECT, related_name="movements")
     movement_type = models.CharField(max_length=16, choices=TYPE_CHOICES, db_index=True)
-    quantity = models.IntegerField()
+    quantity = models.IntegerField(help_text="Signed whole base units. Zero only for volume-only bottle movements.")
     balance_after = models.IntegerField()
+    # Partial quantity selling: set only for bottle movements (see movement_rules.BOTTLE_TYPES).
+    bottle = models.ForeignKey("inventory.Bottle", null=True, blank=True, on_delete=models.PROTECT,
+                               related_name="movements")
+    volume_ml = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True,
+                                    help_text="Signed millilitres added to (+) or removed from (-) the bottle.")
+    bottle_remaining_after_ml = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    operation_key = models.CharField(max_length=80, null=True, blank=True)
+    operation_sequence = models.PositiveIntegerField(default=0)
     unit_cost = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
     total_cost = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="stock_movements")
@@ -32,8 +40,18 @@ class StockMovement(models.Model):
 
     class Meta:
         ordering = ["-created_at", "-id"]
-        indexes = [models.Index(fields=["product", "-created_at"])]
-        constraints = [models.CheckConstraint(condition=~Q(quantity=0), name="movement_quantity_not_zero")]
+        indexes = [models.Index(fields=["product", "-created_at"]), models.Index(fields=["bottle", "-created_at"])]
+        constraints = [
+            models.CheckConstraint(
+                condition=~Q(quantity=0) | (Q(volume_ml__isnull=False) & ~Q(volume_ml=0)),
+                name="movement_has_quantity_or_volume"),
+            models.CheckConstraint(
+                condition=Q(volume_ml__isnull=True) | Q(bottle__isnull=False),
+                name="movement_volume_needs_bottle"),
+            models.UniqueConstraint(fields=["operation_key", "operation_sequence"],
+                                    condition=Q(operation_key__isnull=False),
+                                    name="uniq_stock_movement_operation_sequence"),
+        ]
 
     def __str__(self):
         return f"{self.get_movement_type_display()} {self.quantity:+d} {self.product_id}"
@@ -45,6 +63,46 @@ class StockMovement(models.Model):
 
     def delete(self, *args, **kwargs):
         raise PermissionError("Stock movements cannot be deleted.")
+
+
+class Bottle(models.Model):
+    """One open (or about-to-be-opened) bottle whose liquid is sold in measures.
+
+    Sealed bottles stay counted in Product.stock_qty; they do NOT get a row here. A row is created when a
+    sealed bottle is opened (BOTTLE_OPEN movement takes one bottle out of stock_qty and puts its volume here).
+    SEALED exists for completeness and for bottles that are individually tracked; the opening workflow
+    (a later phase) is what moves a bottle to OPENED.
+    """
+
+    SEALED, OPENED, EMPTY = "SEALED", "OPENED", "EMPTY"
+    STATUS = [(SEALED, "Sealed"), (OPENED, "Opened"), (EMPTY, "Empty")]
+
+    product = models.ForeignKey("catalog.Product", on_delete=models.PROTECT, related_name="bottles")
+    capacity_ml = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(Decimal("0.01"))])
+    remaining_ml = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(Decimal("0"))])
+    status = models.CharField(max_length=6, choices=STATUS, default=SEALED, db_index=True)
+    opened_at = models.DateTimeField(null=True, blank=True)
+    opened_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT,
+                                  related_name="bottles_opened")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["opened_at", "id"]  # oldest opened first, so the oldest bottle is finished first
+        indexes = [models.Index(fields=["product", "status", "opened_at"])]
+        constraints = [
+            models.CheckConstraint(condition=Q(capacity_ml__gt=0), name="bottle_capacity_positive"),
+            models.CheckConstraint(condition=Q(remaining_ml__gte=0) & Q(remaining_ml__lte=F("capacity_ml")),
+                                   name="bottle_remaining_within_capacity"),
+            models.CheckConstraint(condition=Q(status__in=["SEALED", "OPENED", "EMPTY"]), name="bottle_status_valid"),
+            models.CheckConstraint(
+                condition=(Q(status="SEALED") & Q(remaining_ml=F("capacity_ml")) & Q(opened_at__isnull=True))
+                | (Q(status="OPENED") & Q(remaining_ml__gt=0) & Q(opened_at__isnull=False))
+                | (Q(status="EMPTY") & Q(remaining_ml=0)),
+                name="bottle_status_matches_volume"),
+        ]
+
+    def __str__(self):
+        return f"{self.product_id} bottle {self.remaining_ml}/{self.capacity_ml} ml ({self.get_status_display()})"
 
 
 class StockLot(models.Model):

@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.db import models
-from django.db.models import Q
+from django.db.models import F, Q
 
 # A sale in these states is history: it can never be edited or deleted. The only fields that may
 # still change on a completed sale are the receipt-print counters (core.db_hardening enforces the
@@ -93,6 +93,15 @@ class SaleItem(models.Model):
     pack_name = models.CharField(max_length=40, blank=True)
     units_per_sale_unit = models.PositiveIntegerField(default=1)
 
+    # Partial quantity sale (a measure poured from an open bottle). All null/blank for ordinary full-bottle
+    # and pack lines. quantity is then the number of measures and unit_price the price per measure.
+    selling_unit = models.ForeignKey("catalog.SellingUnit", null=True, blank=True, on_delete=models.PROTECT,
+                                     related_name="sale_items")
+    selling_unit_name = models.CharField(max_length=40, blank=True)
+    volume_per_unit_ml = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    total_volume_ml = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True,
+                                          help_text="quantity x volume_per_unit_ml, fixed at sale time.")
+
     quantity = models.PositiveIntegerField()
     list_price = models.DecimalField(max_digits=12, decimal_places=2, help_text="Catalogue price when added.")
     unit_price = models.DecimalField(max_digits=12, decimal_places=2, help_text="Price actually charged per unit.")
@@ -122,13 +131,31 @@ class SaleItem(models.Model):
             models.CheckConstraint(condition=Q(quantity__gte=1), name="sale_item_quantity_positive"),
             models.CheckConstraint(condition=Q(discount__gte=0), name="sale_item_discount_not_negative"),
             models.CheckConstraint(condition=Q(line_total__gte=0), name="sale_item_total_not_negative"),
+            # Partial lines: volume snapshot is all-or-nothing, positive, and consistent with quantity.
+            models.CheckConstraint(
+                condition=(Q(volume_per_unit_ml__isnull=True) & Q(total_volume_ml__isnull=True)
+                           & Q(selling_unit__isnull=True) & Q(selling_unit_name=""))
+                | (Q(volume_per_unit_ml__isnull=False) & Q(total_volume_ml__isnull=False)
+                   & Q(volume_per_unit_ml__gt=0) & ~Q(selling_unit_name="")
+                   & Q(total_volume_ml=F("quantity") * F("volume_per_unit_ml"))),
+                name="sale_item_partial_fields_consistent"),
+            models.CheckConstraint(condition=Q(volume_per_unit_ml__isnull=True) | Q(packaging__isnull=True),
+                                   name="sale_item_partial_not_a_pack"),
         ]
 
     def __str__(self):
         return f"{self.quantity} x {self.product_name}"
 
     @property
+    def is_partial(self):
+        return self.volume_per_unit_ml is not None
+
+    @property
     def base_qty(self):
+        """Whole base units (bottles) leaving sealed stock. A partial line takes liquid from an open bottle
+        and never removes whole bottles here, so existing stock and cost code sees 0 for it."""
+        if self.is_partial:
+            return 0
         return self.quantity * self.units_per_sale_unit
 
     @property
