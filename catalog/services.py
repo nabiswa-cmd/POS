@@ -142,11 +142,15 @@ def generate_internal_code(product, user, *, packaging=None, ip=None):
 
 def find_by_code(raw_code):
     """What the POS and receiving screens call after a scan. Returns ProductCode or None."""
-    code = codes.normalize(raw_code)
-    if not code:
+    candidates = codes.lookup_candidates(raw_code)
+    if not candidates:
         return None
-    return (ProductCode.objects.select_related("product", "packaging")
-            .filter(code=code, product__active=True).first())
+    hits = {hit.code: hit for hit in (ProductCode.objects.select_related("product", "packaging")
+                                      .filter(code__in=candidates, product__active=True))}
+    for candidate in candidates:             # the code exactly as scanned always wins over its UPC/EAN twin
+        if candidate in hits:
+            return hits[candidate]
+    return None
 
 
 def label_code_for(product):

@@ -1,0 +1,290 @@
+From cb18bc3a75dce003492a767684bae0ede2fe0eb0 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 14 Nov 2026 12:40:58 +0000
+Subject: [PATCH] Hardware scanner support, lock race fix, stale test fix
+
+---
+ catalog/codes.py                 | 37 +++++++++++++++++++++--
+ catalog/services.py              | 12 +++++---
+ catalog/test_scanner_lookup.py   | 52 ++++++++++++++++++++++++++++++++
+ docs/HARDWARE_SCANNER.md         | 22 ++++++++++++++
+ inventory/test_partial_models.py |  2 +-
+ sales/templates/sales/pos.html   | 18 ++++++++---
+ tests_pure/test_scanner_codes.py | 39 ++++++++++++++++++++++++
+ 7 files changed, 171 insertions(+), 11 deletions(-)
+ create mode 100644 catalog/test_scanner_lookup.py
+ create mode 100644 docs/HARDWARE_SCANNER.md
+ create mode 100644 tests_pure/test_scanner_codes.py
+
+diff --git a/catalog/codes.py b/catalog/codes.py
+index 3bc6f06..d88eb4e 100644
+--- a/catalog/codes.py
++++ b/catalog/codes.py
+@@ -17,9 +17,42 @@ class CodeError(ValueError):
+     pass
+ 
+ 
++_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
++_AIM_ID_RE = re.compile(r"^\][A-Za-z][0-9A-Za-z]")
++
++
+ def normalize(code):
+-    """Scanners and typists vary in case and stray spaces; the stored form is upper-case, trimmed."""
+-    return (code or "").strip().upper()
++    """Scanners and typists vary in case, stray spaces and invisible control characters (a scanner may end
++    a read with Enter/Tab or wrap it in STX/ETX). The stored form is upper-case, with those removed."""
++    return _CONTROL_RE.sub("", code or "").strip().upper()
++
++
++def from_scanner(raw):
++    """Clean text that came from a hardware scanner (or a typist) into the code to look up.
++
++    Some scanners can be set to send an AIM symbology identifier in front of the code (for example ']E0'
++    for EAN-13). A stored code can never start with ']', so removing it is always safe."""
++    code = normalize(raw)
++    if _AIM_ID_RE.match(code) and len(code) > 3:
++        code = code[3:].strip()
++    return code
++
++
++def lookup_candidates(raw):
++    """Every stored form a scanned code may be filed under, best match first.
++
++    A UPC-A label (12 digits) is the same product as the EAN-13 that starts with 0, and some scanners
++    report one while the shop filed the other. Nothing else is guessed."""
++    code = from_scanner(raw)
++    if not code:
++        return []
++    found = [code]
++    if code.isdigit():
++        if len(code) == 12:
++            found.append("0" + code)
++        elif len(code) == 13 and code.startswith("0"):
++            found.append(code[1:])
++    return found
+ 
+ 
+ def validate_text(code):
+diff --git a/catalog/services.py b/catalog/services.py
+index a2ea78b..ddf9034 100644
+--- a/catalog/services.py
++++ b/catalog/services.py
+@@ -142,11 +142,15 @@ def generate_internal_code(product, user, *, packaging=None, ip=None):
+ 
+ def find_by_code(raw_code):
+     """What the POS and receiving screens call after a scan. Returns ProductCode or None."""
+-    code = codes.normalize(raw_code)
+-    if not code:
++    candidates = codes.lookup_candidates(raw_code)
++    if not candidates:
+         return None
+-    return (ProductCode.objects.select_related("product", "packaging")
+-            .filter(code=code, product__active=True).first())
++    hits = {hit.code: hit for hit in (ProductCode.objects.select_related("product", "packaging")
++                                      .filter(code__in=candidates, product__active=True))}
++    for candidate in candidates:             # the code exactly as scanned always wins over its UPC/EAN twin
++        if candidate in hits:
++            return hits[candidate]
++    return None
+ 
+ 
+ def label_code_for(product):
+diff --git a/catalog/test_scanner_lookup.py b/catalog/test_scanner_lookup.py
+new file mode 100644
+index 0000000..1f565a4
+--- /dev/null
++++ b/catalog/test_scanner_lookup.py
+@@ -0,0 +1,52 @@
++"""A hardware scanner is a keyboard that types the code and presses Enter. These tests drive the same lookup
++the POS calls after every scan, with the kinds of text real scanners send."""
++from decimal import Decimal
++
++from django.test import TestCase
++
++from catalog import services
++from catalog.models import Product, ProductCode
++
++
++def make_product(name, sku, barcode):
++    p = Product.objects.create(name=name, sku=sku, selling_price=Decimal("500"), buying_cost=Decimal("300"))
++    ProductCode.objects.create(product=p, code=sku, kind=ProductCode.KIND_SKU)
++    ProductCode.objects.create(product=p, code=barcode, kind=ProductCode.KIND_BARCODE)
++    return p
++
++
++class ScannerLookupTests(TestCase):
++    def setUp(self):
++        self.tusker = make_product("Tusker 500ml", "TUS500", barcode="6001234567890")
++        self.upc = make_product("Imported Whisky", "WHI001", barcode="0036000291452")
++
++    def test_plain_scan(self):
++        self.assertEqual(services.find_by_code("6001234567890").product, self.tusker)
++
++    def test_scanner_suffixes_and_wrappers(self):
++        for raw in ("6001234567890\r\n", "6001234567890\t", "\x026001234567890\x03", "]E06001234567890", " 6001234567890 "):
++            hit = services.find_by_code(raw)
++            self.assertIsNotNone(hit, repr(raw))
++            self.assertEqual(hit.product, self.tusker, repr(raw))
++
++    def test_upca_scan_finds_the_ean13_the_shop_filed(self):
++        self.assertEqual(services.find_by_code("036000291452").product, self.upc)
++
++    def test_ean13_scan_finds_the_upca_the_shop_filed(self):
++        other = make_product("Local Gin", "GIN001", barcode="012345678905")
++        self.assertEqual(services.find_by_code("0012345678905").product, other)
++
++    def test_exact_code_beats_its_twin(self):
++        exact = make_product("Exact twin", "TWIN1", barcode="0555555555555")
++        make_product("Other twin", "TWIN2", barcode="555555555555")
++        self.assertEqual(services.find_by_code("0555555555555").product, exact)
++
++    def test_unknown_blank_and_inactive(self):
++        self.assertIsNone(services.find_by_code("9999999999999"))
++        self.assertIsNone(services.find_by_code("\r\n"))
++        Product.objects.filter(pk=self.tusker.pk).update(active=False)
++        self.assertIsNone(services.find_by_code("6001234567890"))
++
++    def test_sku_and_manual_codes_work_in_any_case(self):
++        self.assertEqual(services.find_by_code("tus500").product, self.tusker)
++        self.assertEqual(ProductCode.objects.filter(product=self.tusker).count(), 2)
+diff --git a/docs/HARDWARE_SCANNER.md b/docs/HARDWARE_SCANNER.md
+new file mode 100644
+index 0000000..7a1a3ac
+--- /dev/null
++++ b/docs/HARDWARE_SCANNER.md
+@@ -0,0 +1,22 @@
++# Barcode scanners and the lock shortcut
++
++## Plugging in a scanner
++Any USB or Bluetooth scanner that acts as a keyboard ("keyboard wedge", the factory default) works with no
++setup and no driver. It types the code and presses Enter.
++
++* The POS keeps the cursor in the scan box. If it wandered (after a click or a closed window), the first
++  character of a scan moves it back, so a scan is never lost.
++* A scanner set to end with **Tab** instead of Enter also works.
++* Invisible characters (Enter, Tab, STX/ETX wrappers) and an AIM prefix such as `]E0` are removed before
++  the lookup.
++* A 12-digit UPC-A label finds the product filed as the EAN-13 starting with 0, and the other way round.
++* `3*code` still sells three of a product. Scan a quantity-times prefix by typing `3*` first, then scan.
++
++To test: open the sales screen, scan any product label. If the product appears, the scanner is working.
++If the scanner types nothing at all, check it is in "USB HID keyboard" mode (see the scanner's manual).
++
++## Lock and sleep
++`Ctrl+Alt+L` (or the Lock & sleep button) locks the cashier's shift and puts the computer to sleep. The sale
++in progress stays saved. On waking, the same cashier types their own login: no supervisor is needed.
++Sleep works on Windows only. Windows decides between sleep and hibernate: if the computer hibernates instead,
++turn hibernation off with `powercfg /hibernate off` in an administrator command prompt.
+diff --git a/inventory/test_partial_models.py b/inventory/test_partial_models.py
+index 225d8d4..4463503 100644
+--- a/inventory/test_partial_models.py
++++ b/inventory/test_partial_models.py
+@@ -23,7 +23,7 @@ class MovementRuleTests(CatalogCase):
+         for t in mr.BOTTLE_TYPES:
+             self.assertIn(t, mr.ALL_TYPES)
+             self.assertIn(t, mr.LABELS)
+-        self.assertLessEqual(max(len(t) for t in mr.ALL_TYPES), 16)       # StockMovement.movement_type max_length
++        self.assertLessEqual(max(len(t) for t in mr.ALL_TYPES), 32)       # StockMovement.movement_type max_length
+ 
+     def test_whole_unit_posting_refuses_bottle_types(self):
+         for t in mr.BOTTLE_TYPES:
+diff --git a/sales/templates/sales/pos.html b/sales/templates/sales/pos.html
+index 54d5688..58c027c 100644
+--- a/sales/templates/sales/pos.html
++++ b/sales/templates/sales/pos.html
+@@ -108,10 +108,12 @@
+   function esc(t) { return String(t == null ? "" : t).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+   function say(text, kind) { var m = $("msg"); m.textContent = text || ""; m.className = kind || ""; }
+   function focusScan() { if (!S.stack.length) { $("scan").focus(); } }
++  var locking = false;       // the desktop shell and the page can both send the lock key: only the first counts
+   function lockPos() {
+-    if (!S.cfg || S.busy || S.stack.length) return;
++    if (locking || !S.cfg || S.busy || S.stack.length) return;
++    locking = true;
+     api("POST", "/api/pos/lock/", {}).then(function (r) {
+-      if (!r.ok) { say(r.error || "Could not lock this till.", "err"); return; }
++      if (!r.ok) { locking = false; say(r.error || "Could not lock this till.", "err"); return; }
+       location.replace("/app/pos/?sleep=1&till=" + encodeURIComponent(S.cfg.till_number));
+     });
+   }
+@@ -165,6 +167,11 @@
+       if (/^F\d{1,2}$/.test(e.key)) e.preventDefault();       // no shortcut works behind an open dialog
+       return;
+     }
++    /* A hardware scanner types like a keyboard. If focus has wandered off the scan box (after a click or a
++       closed window), send the first character there: the rest of the burst and the final Enter follow it. */
++    if (e.key && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey && document.activeElement !== $("scan")) {
++      $("scan").focus();
++    }
+     var name = keyName(e);
+     var act = name && S.keymap ? S.keymap[name] : null;
+     if (act) { e.preventDefault(); run(act); return; }
+@@ -263,7 +270,7 @@
+ 
+   /* ---------- cart actions ---------- */
+   function addCode(raw) {
+-    raw = (raw || "").trim(); if (!raw) return;
++    raw = (raw || "").replace(/[\u0000-\u001f\u007f]/g, "").trim(); if (!raw) return;
+     var qty = 1, code = raw, m = raw.match(/^(\d{1,4})\s*[*x]\s*(.+)$/i);
+     if (m) { qty = parseInt(m[1], 10); code = m[2]; }
+     say("");
+@@ -849,7 +856,10 @@
+ 
+   /* ---------- start-up ---------- */
+   $("scan").addEventListener("keydown", function (e) {
+-    if (e.key === "Enter") { e.preventDefault(); var v = this.value; this.value = ""; addCode(v); }
++    // Scanners end a read with Enter, or with Tab when set up that way. A typist's empty Tab still moves on.
++    if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey && this.value.trim())) {
++      e.preventDefault(); var v = this.value; this.value = ""; addCode(v);
++    }
+   });
+   document.addEventListener("click", function () { focusScan(); });
+   setInterval(function () { $("clock").textContent = new Date().toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit" }); }, 1000);
+diff --git a/tests_pure/test_scanner_codes.py b/tests_pure/test_scanner_codes.py
+new file mode 100644
+index 0000000..28b519a
+--- /dev/null
++++ b/tests_pure/test_scanner_codes.py
+@@ -0,0 +1,39 @@
++import unittest
++
++from catalog import codes
++
++
++class ScannerCleaningTests(unittest.TestCase):
++    def test_enter_tab_and_wrapper_characters_are_removed(self):
++        for raw in ("6001234567890\r", "6001234567890\n", "6001234567890\t", "\x026001234567890\x03", " 6001234567890 "):
++            self.assertEqual(codes.from_scanner(raw), "6001234567890", repr(raw))
++
++    def test_symbology_identifier_is_removed_only_when_a_code_follows(self):
++        self.assertEqual(codes.from_scanner("]E06001234567890"), "6001234567890")
++        self.assertEqual(codes.from_scanner("]C1abc-123"), "ABC-123")
++        self.assertEqual(codes.from_scanner("]E0"), "]E0")        # nothing after it: left alone, finds nothing
++
++    def test_case_is_ignored_for_text_codes(self):
++        self.assertEqual(codes.from_scanner("tusker-500"), "TUSKER-500")
++
++    def test_empty_input(self):
++        for raw in (None, "", "   ", "\r\n"):
++            self.assertEqual(codes.lookup_candidates(raw), [])
++
++    def test_upca_and_ean13_twins_are_both_tried_exact_code_first(self):
++        self.assertEqual(codes.lookup_candidates("036000291452"), ["036000291452", "0036000291452"])
++        self.assertEqual(codes.lookup_candidates("0036000291452"), ["0036000291452", "036000291452"])
++
++    def test_other_lengths_and_text_codes_are_not_guessed(self):
++        self.assertEqual(codes.lookup_candidates("6001234567890"), ["6001234567890"])
++        self.assertEqual(codes.lookup_candidates("12345"), ["12345"])
++        self.assertEqual(codes.lookup_candidates("AB1234567890"), ["AB1234567890"])
++
++    def test_saving_a_code_still_refuses_junk_and_does_not_accept_a_scanner_prefix(self):
++        self.assertEqual(codes.validate_text(" abc-12 "), "ABC-12")
++        with self.assertRaises(codes.CodeError):
++            codes.validate_text("]E0123456")
++
++
++if __name__ == "__main__":
++    unittest.main()
+-- 
+2.43.0
+

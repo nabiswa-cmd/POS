@@ -17,9 +17,42 @@ class CodeError(ValueError):
     pass
 
 
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+_AIM_ID_RE = re.compile(r"^\][A-Za-z][0-9A-Za-z]")
+
+
 def normalize(code):
-    """Scanners and typists vary in case and stray spaces; the stored form is upper-case, trimmed."""
-    return (code or "").strip().upper()
+    """Scanners and typists vary in case, stray spaces and invisible control characters (a scanner may end
+    a read with Enter/Tab or wrap it in STX/ETX). The stored form is upper-case, with those removed."""
+    return _CONTROL_RE.sub("", code or "").strip().upper()
+
+
+def from_scanner(raw):
+    """Clean text that came from a hardware scanner (or a typist) into the code to look up.
+
+    Some scanners can be set to send an AIM symbology identifier in front of the code (for example ']E0'
+    for EAN-13). A stored code can never start with ']', so removing it is always safe."""
+    code = normalize(raw)
+    if _AIM_ID_RE.match(code) and len(code) > 3:
+        code = code[3:].strip()
+    return code
+
+
+def lookup_candidates(raw):
+    """Every stored form a scanned code may be filed under, best match first.
+
+    A UPC-A label (12 digits) is the same product as the EAN-13 that starts with 0, and some scanners
+    report one while the shop filed the other. Nothing else is guessed."""
+    code = from_scanner(raw)
+    if not code:
+        return []
+    found = [code]
+    if code.isdigit():
+        if len(code) == 12:
+            found.append("0" + code)
+        elif len(code) == 13 and code.startswith("0"):
+            found.append(code[1:])
+    return found
 
 
 def validate_text(code):

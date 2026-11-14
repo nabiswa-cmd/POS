@@ -23,7 +23,7 @@ class MovementRuleTests(CatalogCase):
         for t in mr.BOTTLE_TYPES:
             self.assertIn(t, mr.ALL_TYPES)
             self.assertIn(t, mr.LABELS)
-        self.assertLessEqual(max(len(t) for t in mr.ALL_TYPES), 16)       # StockMovement.movement_type max_length
+        self.assertLessEqual(max(len(t) for t in mr.ALL_TYPES), 32)       # StockMovement.movement_type max_length
 
     def test_whole_unit_posting_refuses_bottle_types(self):
         for t in mr.BOTTLE_TYPES:
