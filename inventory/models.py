@@ -24,6 +24,10 @@ class StockMovement(models.Model):
     # Partial quantity selling: set only for bottle movements (see movement_rules.BOTTLE_TYPES).
     bottle = models.ForeignKey("inventory.Bottle", null=True, blank=True, on_delete=models.PROTECT,
                                related_name="movements")
+    source_movement = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT,
+                                        related_name="volume_returns")
+    refund_item = models.ForeignKey("sales.RefundItem", null=True, blank=True, on_delete=models.PROTECT,
+                                    related_name="stock_movements")
     volume_ml = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True,
                                     help_text="Signed millilitres added to (+) or removed from (-) the bottle.")
     bottle_remaining_after_ml = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
@@ -48,6 +52,12 @@ class StockMovement(models.Model):
             models.CheckConstraint(
                 condition=Q(volume_ml__isnull=True) | Q(bottle__isnull=False),
                 name="movement_volume_needs_bottle"),
+            models.CheckConstraint(
+                condition=(Q(movement_type=mr.VOLUME_REFUND, source_movement__isnull=False,
+                            refund_item__isnull=False)
+                           | (~Q(movement_type=mr.VOLUME_REFUND) & Q(source_movement__isnull=True)
+                              & Q(refund_item__isnull=True))),
+                name="volume_refund_has_provenance"),
             models.UniqueConstraint(fields=["operation_key", "operation_sequence"],
                                     condition=Q(operation_key__isnull=False),
                                     name="uniq_stock_movement_operation_sequence"),

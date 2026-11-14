@@ -716,9 +716,14 @@
   }
   function refundLines(sale, lines) {
     var rows = lines.map(function (l) {
-      return "<tr><td>" + esc(l.name) + (l.pack ? " <small>" + esc(l.pack) + "</small>" : "") + "</td><td>" + l.sold + "</td><td>" + l.left + "</td><td>" +
+      var unit = l.selling_unit ? " <small>" + esc(l.selling_unit) + " · " + esc(l.volume_per_unit_ml) + " ml each</small>" : "";
+      var remainingVolume = l.left_volume_ml != null ? " <small>" + esc(l.left_volume_ml) + " ml</small>" : "";
+      return "<tr><td>" + esc(l.name) + (l.pack ? " <small>" + esc(l.pack) + "</small>" : "") + unit + "</td><td>" + l.sold + "</td><td>" + l.left + remainingVolume + "</td><td>" +
         (l.left > 0 ? '<input class="rl-q" data-id="' + l.item_id + '" inputmode="numeric" autocomplete="off" value="0" style="width:56px">' : "done") + "</td></tr>";
     }).join("");
+    var requestKey = window.crypto && typeof window.crypto.randomUUID === "function"
+      ? window.crypto.randomUUID()
+      : "rf-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
     var d = openDialog("<h2>Refund for " + esc(sale.number) + "</h2><p class=\"note\">Sale total " + fmt(sale.total) + (sale.customer ? " | " + esc(sale.customer) : "") +
       '. Type how many of each item come back.</p><table class="rl"><tr><th>Item</th><th>Sold</th><th>Left</th><th>Refund</th></tr>' + rows + "</table>" +
       '<label>Pay the customer back by</label><select id="rl-method"><option value="CASH">Cash</option><option value="MPESA">M-PESA</option></select>' +
@@ -732,10 +737,15 @@
         .filter(function (x) { return x.quantity > 0; });
       if (!picked.length) { $("rl-err").textContent = "Type how many of at least one item are coming back."; return; }
       S.busy = true;
-      api("POST", "/api/sales/refund/request/", { sale_id: sale.id, lines: picked, method: $("rl-method").value, reason: $("rl-reason").value, restock: $("rl-back").checked }).then(function (r) {
+      api("POST", "/api/sales/refund/request/", { sale_id: sale.id, lines: picked, method: $("rl-method").value, reason: $("rl-reason").value, restock: $("rl-back").checked, request_key: requestKey }).then(function (r) {
         S.busy = false;
         if (!r.ok) { $("rl-err").textContent = r.error || "Could not start the refund."; return; }
-        closeDialog(d); say("Refund " + r.refund.number + " for " + fmt(r.refund.total) + " is waiting for a supervisor.", "ok");
+        closeDialog(d);
+        if (r.refund.status !== "REQUESTED") {
+          say("Refund " + r.refund.number + " already exists: " + r.refund.status_label + ".", "ok");
+          return;
+        }
+        say("Refund " + r.refund.number + " for " + fmt(r.refund.total) + " is waiting for a supervisor.", "ok");
         refundApprove(r.refund);
       });
     };
@@ -779,7 +789,9 @@
   function refundActions(rf) {
     var c = rf.can, btn = function (id, label, on) { return on ? '<button class="ghost" id="' + id + '" type="button">' + label + "</button>" : ""; };
     var d = openDialog("<h2>" + esc(rf.number) + "</h2><p class=\"note\">Sale " + esc(rf.sale) + " | " + esc(rf.status_label) + " | by " + esc(rf.by) + "</p>" +
-      '<ul class="opts">' + rf.items.map(function (i) { return "<li><span>" + i.quantity + " x " + esc(i.name) + (i.restock ? "" : " <small>(not for resale)</small>") + "</span><span>" + fmt(i.amount) + "</span></li>"; }).join("") +
+      '<ul class="opts">' + rf.items.map(function (i) { return "<li><span>" + i.quantity + " x " + esc(i.name) +
+        (i.volume_ml != null ? " <small>(" + esc(i.volume_ml) + " ml)</small>" : "") +
+        (i.restock ? "" : " <small>(not for resale)</small>") + "</span><span>" + fmt(i.amount) + "</span></li>"; }).join("") +
       '<li class="on"><span><b>Total refund</b></span><span><b>' + fmt(rf.total) + "</b></span></li></ul><p class=\"note\">Reason: " + esc(rf.reason) + "</p>" +
       '<div class="btns" style="flex-wrap:wrap">' + btn("ra-approve", "Approve (A)", c.approve) + btn("ra-reject", "Reject (R)", c.reject) + btn("ra-cancel", "Cancel request (C)", c.cancel) +
       btn("ra-cash", "Hand over cash (H)", c.pay_cash) + btn("ra-mpesa", "Record M-PESA payback (M)", c.mark_mpesa) +

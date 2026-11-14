@@ -409,8 +409,11 @@ def refund_request(request, data, shift):
     lines = data.get("lines")
     if not isinstance(lines, list):
         return bad("Choose what to refund.")
+    if not isinstance(data.get("request_key"), str) or not data["request_key"].strip():
+        return bad("This refund request is not valid. Reopen the refund form and try again.")
     refund = refunds.request_refund(request.user, shift, data.get("sale_id"), lines, data.get("reason"),
-                                    data.get("method"), restock=bool(data.get("restock", True)))
+                                    data.get("method"), restock=bool(data.get("restock", True)),
+                                    request_key=data["request_key"])
     return _refund_reply(refunds_reload(refund.pk), request.user)
 
 

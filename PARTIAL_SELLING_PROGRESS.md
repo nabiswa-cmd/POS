@@ -115,5 +115,51 @@ Verification (SQLite)
 - `manage.py check`: no issues. `makemigrations --check --dry-run`: no changes detected.
 - PostgreSQL concurrency behavior and manual browser interaction were not verified.
 
-Payment processing was not changed. Partial refunds and accounting/report treatment remain follow-ups.
+Payment processing was not changed. Partial refunds are implemented below; accounting/report treatment remains a follow-up.
+
+## Phase 6A: partial quantity refunds (done)
+
+Created
+- `sales/migrations/0010_refund_request_key_refunditem_requested_restock_and_more.py`
+- `inventory/migrations/0004_stockmovement_refund_item_and_more.py`
+- `sales/test_partial_refunds.py`
+
+Modified
+- `sales/models.py`: immutable refund request key and refund-line selling-unit/volume snapshots; retained the
+  original refund amount, quantity, approval, and payout model.
+- `sales/refunds.py`: calculate amounts from original sale-line totals; restore partial volume during approval;
+  include unit and millilitre snapshots in refund JSON and receipts; preserve whole-bottle `REFUND_RETURN`.
+- `sales/views.py`, `sales/templates/sales/pos.html`: require the request idempotency key, show selling-unit
+  volume in the existing refund dialog, and avoid re-approving an already recorded request.
+- `inventory/models.py`, `inventory/movement_rules.py`, `inventory/services.py`: add positive
+  `VOLUME_REFUND` movements linked to their original partial-sale movement and refund line; lock and restore
+  the original bottles with per-source volume caps and transaction rollback.
+- `sales/test_refunds.py`: exercise request-key retries through the existing refund endpoint.
+- `PARTIAL_SELLING_ARCHITECTURE.md`
+
+Refund behaviour
+- Partial refunds retain the original sale-item quantity, unit name, volume, and price basis; the refund amount
+  is prorated from the original `SaleItem.line_total`, not current catalogue configuration.
+- Approval restores liquid to the same bottles used by the original partial sale, including restoring empty
+  bottles to `OPENED`. It refuses missing source movements, excessive restored volume, and bottle-capacity
+  violations without leaving partial ledger or bottle updates behind.
+- Each return movement stores its source sale movement, refund line, cashier, authorizing approver, refund
+  reference, volume, and resulting balance. Full-bottle returns still use the existing `REFUND_RETURN` flow.
+- Exact idempotency-key retries return the original refund. Reusing the key with a different payload is rejected;
+  the existing status lock and operation-key uniqueness prevent duplicate stock restoration.
+- Existing permissions, approval rules, payout processing, and eTIMS credit-note handling were not changed.
+
+Verification (SQLite)
+- Focused refund, full-bottle regression, credit-note, partial POS, and partial inventory model/service tests:
+  **91 passed**.
+- `manage.py check`: no issues.
+- `manage.py makemigrations --check --dry-run`: no changes detected.
+- PostgreSQL concurrency behavior and manual browser use were not verified.
+
+Known limitations and Phase 6B
+- Accounting and sales reports still need a scoped update so partial units and millilitres are not reported as
+  whole bottles. That is the next known partial-selling follow-up (Phase 6B).
+- PostgreSQL locking and concurrent request behavior remain unverified; the tests above ran on SQLite.
+- No payment-processing integration was necessary for inventory correctness; existing cash and M-PESA refund
+  settlement remains unchanged.
 

@@ -48,8 +48,9 @@ Constraints: `capacity_ml > 0`; `0 <= remaining_ml <= capacity_ml`; status must 
 
 ### `inventory.StockMovement` (extended)
 New nullable columns: `bottle` FK (PROTECT), `volume_ml` (signed), `bottle_remaining_after_ml`.
-New types in `movement_rules`: `BOTTLE_OPEN`, `PARTIAL_SALE`, `VOLUME_WASTAGE`, `VOLUME_ADJUST`
-(`BOTTLE_TYPES`).
+New types in `movement_rules`: `BOTTLE_OPEN`, `PARTIAL_SALE`, `VOLUME_WASTAGE`, `VOLUME_ADJUST`, and
+`VOLUME_REFUND` (`BOTTLE_TYPES`). Refund movements also point to the source `PARTIAL_SALE` movement and
+the immutable `sales.RefundItem` snapshot; other movement types cannot set those provenance links.
 
 | Type | `quantity` | `volume_ml` |
 |---|---|---|
@@ -57,6 +58,7 @@ New types in `movement_rules`: `BOTTLE_OPEN`, `PARTIAL_SALE`, `VOLUME_WASTAGE`, 
 | `PARTIAL_SALE` | 0 | negative |
 | `VOLUME_WASTAGE` | 0 | negative |
 | `VOLUME_ADJUST` | 0 | either sign, non-zero |
+| `VOLUME_REFUND` | 0 | positive; linked to the source sale movement and refund line |
 
 Constraint `movement_quantity_not_zero` was replaced by `movement_has_quantity_or_volume` (quantity is non-zero
 OR volume is non-zero), plus `movement_volume_needs_bottle`. `check_quantity` now refuses bottle types, so they
@@ -166,10 +168,33 @@ partial `sell_volume` movements using each line's stored millilitre snapshot, wi
 sale line. This preserves the price/volume displayed when the item entered the cart and leaves payment handling
 unchanged. Receipt item names now include the selling-unit snapshot.
 
+## Phase 6A: partial quantity refunds
+
+The existing refund request, approval, and payout lifecycle is retained. `RefundItem` snapshots the original
+selling-unit name, returned millilitres, quantity, and refund amount. The amount is prorated from the completed
+`SaleItem.line_total`; neither current selling-unit prices nor today's product configuration are used.
+
+Approval restores returned millilitres to the same tracked bottles that supplied the original sale. The
+transaction locks the product and those bottles, caps each restoration at the original `PARTIAL_SALE` volume,
+and records one append-only `VOLUME_REFUND` movement per affected source bottle. Each movement records the
+source movement, refund line, refund reference, cashier, authorizing approver, volume, and resulting bottle
+balance. Empty bottles return to `OPENED`; capacity violations or incomplete source history abort the entire
+approval transaction. Existing full-unit returns continue to use `REFUND_RETURN`.
+
+The cashier request includes a unique idempotency key. Exact retries return the existing refund, key reuse with
+a different payload is rejected, and refund status locking plus unique movement operation keys prevent repeated
+approval from restoring stock again. Existing permissions, manager approval, cash payout, M-PESA payout, and
+eTIMS credit-note handling are unchanged.
+
+### Phase 6A limitations
+
+Validation ran on SQLite. PostgreSQL row-lock and concurrent-cashier behavior, and manual browser interaction,
+were not verified. Accounting and sales reports still need a separately scoped treatment for measure quantities
+and millilitres; no payment-processing change was required for partial stock restoration.
+
 ## Known follow-ups for later phases
 - `accounting/reports.py` sums `quantity * units_per_sale_unit` for units sold. Partial lines would be counted
   as whole units there; give them their own treatment when reports are touched.
-- `sales/refunds.py` refunds in whole base units; refunding a partial line needs volume handling.
 - PostgreSQL append-only triggers are unaffected by these changes; verify on PostgreSQL (tests ran on SQLite).
 - Wastage is only taken from opened bottles. Writing off a whole sealed bottle still uses the Damaged/Expired
   stock adjustment.

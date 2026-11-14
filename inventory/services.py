@@ -2,6 +2,7 @@
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 
 from accounts import services as auth_services
@@ -135,13 +136,15 @@ def _check_bottle_movement(movement_type, quantity, volume_ml):
 
 def _record_bottle_movement(*, product, bottle, movement_type, quantity, volume_ml, user, operation_key,
                             operation_sequence, reference="", reason="", balance_after=None,
-                            remaining_after=None, unit_cost=None, total_cost=None):
+                            remaining_after=None, unit_cost=None, total_cost=None, source_movement=None,
+                            refund_item_id=None, approved_by=None):
     _check_bottle_movement(movement_type, quantity, volume_ml)
     return StockMovement.objects.create(
         product=product, bottle=bottle, movement_type=movement_type, quantity=quantity,
         balance_after=product.stock_qty if balance_after is None else balance_after,
         volume_ml=volume_ml, bottle_remaining_after_ml=remaining_after, user=user,
         operation_key=operation_key, operation_sequence=operation_sequence,
+        source_movement=source_movement, refund_item_id=refund_item_id, approved_by=approved_by,
         reference=(reference or "")[:60], reason=(reason or "")[:250],
         unit_cost=unit_cost, total_cost=total_cost)
 
@@ -173,7 +176,8 @@ def _volume_cost(product, bottle, volume_ml):
 
 
 def _change_bottle_volume(*, product, bottle, volume_ml, movement_type, user, operation_key,
-                          operation_sequence, reference="", reason=""):
+                          operation_sequence, reference="", reason="", source_movement=None,
+                          refund_item_id=None, approved_by=None):
     new_remaining = bottle.remaining_ml + volume_ml
     if new_remaining < 0:
         raise StockError(f"Only {bottle.remaining_ml} ml remain in this bottle.")
@@ -190,7 +194,8 @@ def _change_bottle_volume(*, product, bottle, volume_ml, movement_type, user, op
         product=product, bottle=bottle, movement_type=movement_type, quantity=0, volume_ml=volume_ml,
         user=user, operation_key=operation_key, operation_sequence=operation_sequence,
         reference=reference, reason=reason, remaining_after=new_remaining, unit_cost=unit_cost,
-        total_cost=total_cost)
+        total_cost=total_cost, source_movement=source_movement, refund_item_id=refund_item_id,
+        approved_by=approved_by)
     return movement
 
 
@@ -303,6 +308,68 @@ def sell_volume(*, product_id, volume_ml, user, operation_key, bottle_capacity_m
     if not shop.costing_locked:
         shop.costing_locked = True
         shop.save(update_fields=["costing_locked"])
+    return movements
+
+
+@transaction.atomic
+def restore_refunded_volume(*, refund_item_id, user, approved_by):
+    """Return one partial refund to the same bottles that supplied the sale, during approval."""
+    from sales.models import Refund, RefundItem
+
+    try:
+        refund_item = (RefundItem.objects.select_related("refund__sale", "sale_item")
+                       .get(pk=refund_item_id))
+    except (RefundItem.DoesNotExist, TypeError, ValueError):
+        raise StockError("The partial refund line is not available for stock restoration.") from None
+    sale_item = refund_item.sale_item
+    if not sale_item.is_partial or refund_item.volume_ml is None or refund_item.volume_ml <= 0:
+        raise StockError("This refund line has no partial volume to restore.")
+    if refund_item.refund.status != Refund.REQUESTED or refund_item.restocked:
+        raise StockError("This refund line is not eligible for another stock restoration.")
+
+    refund = refund_item.refund
+    sale = refund.sale
+    operation_key = _operation_key(f"refund-{refund.number}-item-{refund_item.pk}")
+    source_key = f"sale-{sale.number}-item-{sale_item.pk}"
+    product = _lock_product(sale_item.product_id)
+    _ensure_operation_unused(operation_key)
+    sources = list(StockMovement.objects.filter(
+        product=product, movement_type=mr.PARTIAL_SALE, operation_key=source_key,
+        volume_ml__lt=0, bottle__isnull=False).order_by("operation_sequence", "pk"))
+    if not sources:
+        raise StockError("The original partial-sale bottle movements are missing; volume cannot be restored.")
+
+    already_returned = dict(
+        StockMovement.objects.filter(movement_type=mr.VOLUME_REFUND, source_movement__in=sources)
+        .values("source_movement_id").annotate(total=Sum("volume_ml"))
+        .values_list("source_movement_id", "total"))
+    bottles = {
+        bottle.pk: bottle
+        for bottle in Bottle.objects.select_for_update().filter(
+            product=product, pk__in={source.bottle_id for source in sources})
+    }
+
+    remaining = refund_item.volume_ml
+    movements = []
+    for source in sources:
+        sold_from_source = -source.volume_ml
+        available_to_return = sold_from_source - already_returned.get(source.pk, Decimal("0.00"))
+        if available_to_return <= 0:
+            continue
+        bottle = bottles.get(source.bottle_id)
+        if bottle is None:
+            raise StockError("An original bottle for this partial sale is no longer available.")
+        amount = min(remaining, available_to_return)
+        movements.append(_change_bottle_volume(
+            product=product, bottle=bottle, volume_ml=amount, movement_type=mr.VOLUME_REFUND,
+            user=user, operation_key=operation_key, operation_sequence=len(movements),
+            reference=refund.number, reason=f"Partial refund of sale {sale.number}",
+            source_movement=source, refund_item_id=refund_item.pk, approved_by=approved_by))
+        remaining -= amount
+        if remaining <= 0:
+            break
+    if remaining > 0:
+        raise StockError("This refund volume exceeds the partial liquid originally sold.")
     return movements
 
 

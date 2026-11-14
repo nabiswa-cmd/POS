@@ -307,9 +307,13 @@ class RefundEndpointTests(SalesCase):
     def test_whole_journey_through_the_screen_endpoints(self):
         found = self.c.get("/api/sales/refund/find/", {"q": self.sale.number[-4:]}).json()
         self.assertEqual((found["sale"]["id"], found["lines"][0]["left"]), (self.sale.pk, 2))
-        made = self.post("/api/sales/refund/request/", {"sale_id": self.sale.pk, "reason": "Wrong item", "method": "CASH",
-                                                        "lines": [{"item_id": self.item.pk, "quantity": 1}]}).json()
+        request = {"sale_id": self.sale.pk, "reason": "Wrong item", "method": "CASH",
+                   "lines": [{"item_id": self.item.pk, "quantity": 1}],
+                   "request_key": "endpoint-refund-attempt"}
+        made = self.post("/api/sales/refund/request/", request).json()
         self.assertTrue(made["ok"], made)
+        retry = self.post("/api/sales/refund/request/", request).json()
+        self.assertEqual(retry["refund"]["id"], made["refund"]["id"])
         rid = made["refund"]["id"]
         first = self.post(f"/api/sales/refund/{rid}/approve/")
         self.assertEqual((first.status_code, first.json()["approval_required"], first.json()["object_ref"]), (409, "refund", f"refund:{rid}"))
@@ -325,6 +329,10 @@ class RefundEndpointTests(SalesCase):
 
     def test_errors_are_clean_json(self):
         res = self.post("/api/sales/refund/request/", {"sale_id": self.sale.pk, "reason": "x", "method": "CASH", "lines": "nope"})
+        self.assertEqual((res.status_code, res.json()["ok"]), (400, False))
+        res = self.post("/api/sales/refund/request/", {
+            "sale_id": self.sale.pk, "reason": "Wrong item", "method": "CASH",
+            "lines": [{"item_id": self.item.pk, "quantity": 1}]})
         self.assertEqual((res.status_code, res.json()["ok"]), (400, False))
         res = self.post("/api/sales/refund/999/approve/")
         self.assertEqual((res.status_code, res.json()["ok"]), (400, False))

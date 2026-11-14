@@ -1,7 +1,7 @@
 """Refunds: request -> approve -> pay back. The rules in one place:
 
-* A refund is ALWAYS against one completed sale and never edits it. Whole units of any line, full or partial,
-  and never more than was sold or paid (earlier refunds of the same line are counted).
+* A refund is ALWAYS against one completed sale and never edits it. Whole sold-unit quantities (including
+  configured measures) only, and never more than was sold or paid (earlier refunds of the same line are counted).
 * A cashier can ask, but cannot approve their own request. Someone else with refund authority approves,
   either by signing in on the screen (the usual approval window) or because they are signed in themselves.
   The shop owner is the one exception (as for every other approval).
@@ -10,7 +10,7 @@
   than the requester records the real M-PESA payback code. Both are separate, audited steps.
 * Cash refunds come out of the cashier's drawer figure; M-PESA refunds never touch it.
 """
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError, transaction
 from django.db.models import Q, Sum
@@ -60,9 +60,16 @@ def sale_lines(sale):
     out = []
     for item in sale.items.all():
         qty, amount = _refunded(item)
-        out.append({"item_id": item.pk, "name": item.product_name, "pack": item.pack_name, "sold": item.quantity,
+        left = item.quantity - qty
+        volume_per_unit = item.volume_per_unit_ml if item.is_partial else None
+        out.append({"item_id": item.pk, "name": item.product_name, "pack": item.pack_name,
+                    "selling_unit": item.selling_unit_name, "sold": item.quantity, "left": left,
+                    "volume_per_unit_ml": str(volume_per_unit) if volume_per_unit is not None else None,
+                    "sold_volume_ml": str(item.total_volume_ml) if item.is_partial else None,
+                    "left_volume_ml": str(volume_per_unit * left) if volume_per_unit is not None else None,
+                    "refunded_volume_ml": str(volume_per_unit * qty) if volume_per_unit is not None else None,
                     "unit_price": str(item.unit_price), "line_total": str(item.line_total),
-                    "refunded": qty, "left": item.quantity - qty})
+                    "refunded": qty, "refunded_amount": str(amount)})
     return out
 
 
@@ -85,8 +92,29 @@ def find_sale(user, query):
 
 # --- requesting ----------------------------------------------------------------------------------
 
+def _request_key(value):
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str):
+        raise SaleError("This refund request is not valid. Reopen the refund form and try again.")
+    key = value.strip()
+    if not key or len(key) > 80:
+        raise SaleError("This refund request is not valid. Reopen the refund form and try again.")
+    return key
+
+
+def _same_request(refund, user, sale, reason, method, wanted):
+    existing = {
+        line.sale_item_id: (line.quantity, line.requested_restock)
+        for line in refund.items.all()
+    }
+    return (refund.sale_id == sale.pk and refund.requested_by_id == user.pk
+            and refund.reason == reason and refund.method == method
+            and existing == wanted)
+
+
 @transaction.atomic
-def request_refund(user, shift, sale_id, lines, reason, method, restock=True):
+def request_refund(user, shift, sale_id, lines, reason, method, restock=True, request_key=None):
     """lines: [{"item_id": 5, "quantity": 1, "restock": True?}]. Returns the new REQUESTED refund."""
     sales_services._need(user, "refunds.request", "You are not allowed to start refunds.")
     sales_services._shift_still_open(shift)
@@ -97,14 +125,25 @@ def request_refund(user, shift, sale_id, lines, reason, method, restock=True):
         raise NotAllowed("You can only refund your own sales.")
     reason = _rule(rr.check_reason, reason)
     method = _rule(rr.check_method, method)
+    request_key = _request_key(request_key)
     wanted = {}
+    seen = set()
     for ln in lines or []:
         try:
-            item_id, qty = int(ln.get("item_id")), int(ln.get("quantity") or 0)
-        except (TypeError, ValueError, AttributeError):
+            raw_item_id = ln.get("item_id")
+            raw_qty = ln.get("quantity")
+            item_id_value = Decimal(str(raw_item_id))
+            quantity_value = Decimal(str(raw_qty or 0))
+            if (not item_id_value.is_finite() or item_id_value != item_id_value.to_integral_value()
+                    or item_id_value < 1 or not quantity_value.is_finite()
+                    or quantity_value != quantity_value.to_integral_value() or quantity_value < 0):
+                raise InvalidOperation
+            item_id, qty = int(item_id_value), int(quantity_value)
+        except (InvalidOperation, TypeError, ValueError, AttributeError):
             raise SaleError("A refund line is not valid.")
-        if item_id in wanted:
+        if item_id in seen:
             raise SaleError("The same line was chosen twice.")
+        seen.add(item_id)
         if qty > 0:
             wanted[item_id] = (qty, bool(ln.get("restock", restock)))
     if not wanted:
@@ -112,6 +151,13 @@ def request_refund(user, shift, sale_id, lines, reason, method, restock=True):
     items = {i.pk: i for i in SaleItem.objects.filter(sale=sale, pk__in=wanted)}
     if len(items) != len(wanted):
         raise SaleError("One of those items is not on this sale.")
+    if request_key:
+        existing = Refund.objects.select_for_update().filter(request_key=request_key).first()
+        if existing:
+            if _same_request(existing, user, sale, reason, method,
+                             {item_id: (qty, back) for item_id, (qty, back) in wanted.items()}):
+                return existing
+            raise SaleError("This refund request key was already used for a different request.")
 
     parts, total, tax_total = [], Decimal("0.00"), Decimal("0.00")
     for item_id in sorted(wanted):
@@ -119,7 +165,8 @@ def request_refund(user, shift, sale_id, lines, reason, method, restock=True):
         done_qty, done_amount = _refunded(item)
         amount = _rule(rr.line_refund, item.line_total, item.quantity, done_qty, done_amount, qty)
         taxable, vat = tax.split_line(amount, item.tax_rate) if item.tax_rate else (amount, Decimal("0.00"))
-        parts.append((item, qty, amount, taxable, vat, back))
+        volume = item.volume_per_unit_ml * qty if item.is_partial else None
+        parts.append((item, qty, amount, taxable, vat, back, volume))
         total += amount
         tax_total += vat
     if method == Refund.MPESA:
@@ -128,14 +175,28 @@ def request_refund(user, shift, sale_id, lines, reason, method, restock=True):
         _rule(rr.check_mpesa_room, total, paid, back)
 
     number = rr.refund_number(timezone.localdate(), CodeSequence.next(f"refund-{timezone.localdate():%Y%m%d}"))
-    refund = Refund.objects.create(number=number, sale=sale, method=method, reason=reason, total=total, tax_total=tax_total,
-                                   till=shift.till, shift=shift, requested_by=user)
-    for item, qty, amount, taxable, vat, back in parts:
+    try:
+        with transaction.atomic():
+            refund = Refund.objects.create(
+                number=number, sale=sale, method=method, request_key=request_key, reason=reason,
+                total=total, tax_total=tax_total, till=shift.till, shift=shift, requested_by=user)
+    except IntegrityError:
+        if request_key:
+            existing = Refund.objects.select_for_update().filter(request_key=request_key).first()
+            if existing and _same_request(existing, user, sale, reason, method,
+                                          {item_id: (qty, back) for item_id, (qty, back) in wanted.items()}):
+                return existing
+        raise SaleError("This refund request key is already in use.") from None
+    for item, qty, amount, taxable, vat, back, volume in parts:
         RefundItem.objects.create(refund=refund, sale_item=item, product_name=item.product_name, quantity=qty, amount=amount,
-                                  tax_class=item.tax_class, tax_rate=item.tax_rate, taxable_amount=taxable, tax_amount=vat,
-                                  restock=back)
+                                  selling_unit_name=item.selling_unit_name if item.is_partial else "",
+                                  requested_restock=back, volume_ml=volume, tax_class=item.tax_class,
+                                  tax_rate=item.tax_rate, taxable_amount=taxable, tax_amount=vat, restock=back)
     audit.record("refund.requested", actor=user, object_type="refund", object_ref=number,
-                 new={"sale": sale.number, "total": str(total), "method": method, "lines": len(parts)}, reason=reason,
+                 new={"sale": sale.number, "total": str(total), "method": method,
+                      "lines": [{"sale_item": item.pk, "quantity": qty, "volume_ml": str(volume) if volume else None,
+                                 "amount": str(amount), "restock": back}
+                                for item, qty, amount, _, _, back, volume in parts]}, reason=reason,
                  till_number=shift.till.number)
     return refund
 
@@ -178,14 +239,27 @@ def approve_refund(user, refund_id, approval_token=None, restock=None):
             it.restock = overrides[it.sale_item_id]
         if it.restock:
             si = it.sale_item
-            base = it.quantity * si.units_per_sale_unit
-            unit_cost = costing.q4(si.cost_total / si.base_qty) if si.cost_total and si.base_qty else None
-            try:
-                stock_services.post_movement(product_id=si.product_id, movement_type=mr.REFUND_RETURN, quantity=base,
-                                             user=user, reference=refund.number, reason=f"Refund of {refund.sale.number}",
-                                             unit_cost=unit_cost, approved_by=approver)
-            except stock_services.StockError as exc:
-                raise SaleError(str(exc)) from exc
+            if si.is_partial:
+                expected_volume = si.volume_per_unit_ml * it.quantity
+                if it.volume_ml != expected_volume or it.selling_unit_name != si.selling_unit_name:
+                    raise SaleError("The partial refund snapshot does not match the original sale line.")
+                try:
+                    stock_services.restore_refunded_volume(
+                        refund_item_id=it.pk, user=user, approved_by=approver)
+                except stock_services.StockError as exc:
+                    raise SaleError(str(exc)) from exc
+            else:
+                if it.volume_ml is not None or it.selling_unit_name:
+                    raise SaleError("A full-unit refund cannot contain a partial volume snapshot.")
+                base = it.quantity * si.units_per_sale_unit
+                unit_cost = costing.q4(si.cost_total / si.base_qty) if si.cost_total and si.base_qty else None
+                try:
+                    stock_services.post_movement(
+                        product_id=si.product_id, movement_type=mr.REFUND_RETURN, quantity=base,
+                        user=user, reference=refund.number, reason=f"Refund of {refund.sale.number}",
+                        unit_cost=unit_cost, approved_by=approver)
+                except stock_services.StockError as exc:
+                    raise SaleError(str(exc)) from exc
             it.restocked = True
         it.save(update_fields=["restock", "restocked"])
 
@@ -193,8 +267,11 @@ def approve_refund(user, refund_id, approval_token=None, restock=None):
     refund.approval_reason = approval.reason if approval else "Approved on screen"
     refund.save(update_fields=["status", "approved_by", "approved_at", "approval_reason"])
     audit.record("refund.approved", actor=user, approver=approver, object_type="refund", object_ref=refund.number,
-                 new={"total": str(refund.total), "method": refund.method,
-                      "restocked": [i.product_name for i in items if i.restocked]},
+                 new={"sale": refund.sale.number, "total": str(refund.total), "method": refund.method,
+                      "restocked": [{"product": i.product_name, "selling_unit": i.selling_unit_name,
+                                     "quantity": i.quantity, "volume_ml": str(i.volume_ml) if i.volume_ml else None,
+                                     "amount": str(i.amount)}
+                                    for i in items if i.restocked]},
                  reason=refund.approval_reason, till_number=refund.till.number)
     # The tax paperwork: a credit note for the invoice KRA signed. Created here so its number is gapless with the
     # approval; it is sent (and retried while offline) right after, never holding up the refund itself.
@@ -305,7 +382,9 @@ def refund_json(refund, user):
         "total": str(refund.total), "reason": refund.reason, "by": refund.requested_by.display_name,
         "etims": getattr(etims_note(refund), "status", ""),
         "time": timezone.localtime(refund.requested_at).strftime("%H:%M"),
-        "items": [{"name": i.product_name, "quantity": i.quantity, "amount": str(i.amount), "restock": i.restock}
+        "items": [{"name": (f"{i.product_name} ({i.selling_unit_name})" if i.selling_unit_name else i.product_name),
+                   "quantity": i.quantity, "volume_ml": str(i.volume_ml) if i.volume_ml is not None else None,
+                   "amount": str(i.amount), "restock": i.restock}
                   for i in refund.items.all()],
         "can": {
             "approve": refund.status == Refund.REQUESTED,                         # anyone may open the approval window
@@ -340,7 +419,10 @@ def build_receipt(refund, *, duplicate=False):
         "approved_by": refund.approved_by.display_name if refund.approved_by_id else "",
         "pay_reference": refund.pay_reference,
         "etims": _etims_block(refund),
-        "items": [{"name": i.product_name, "quantity": i.quantity, "amount": str(i.amount)} for i in refund.items.all()],
+        "items": [{"name": (f"{i.product_name} ({i.selling_unit_name})"
+                            if i.selling_unit_name else i.product_name),
+                   "quantity": i.quantity, "volume_ml": str(i.volume_ml) if i.volume_ml is not None else None,
+                   "amount": str(i.amount)} for i in refund.items.all()],
         "total": str(refund.total), "tax_total": str(refund.tax_total), "vat": refund.sale.vat_applied,
         "duplicate": duplicate, "copy_number": refund.print_count, "footer": cfg.footer_text, "paper_mm": cfg.paper_width_mm,
     }
@@ -366,7 +448,10 @@ def format_receipt(data):
     out += w(f"Reason: {data['reason']}", width) + [rule]
     for it in data["items"]:
         out += w(it["name"], width)
-        out.append(p(f"  {it['quantity']} returned", m(it["amount"]), width))
+        returned = f"  {it['quantity']} returned"
+        if it["volume_ml"] is not None:
+            returned += f" ({Decimal(it['volume_ml']):g} ml)"
+        out.append(p(returned, m(it["amount"]), width))
     out += [rule, p("TOTAL REFUND", m(data["total"]), width)]
     if data["vat"] and Decimal(data["tax_total"]) > 0:
         out.append(p("  of which VAT", m(data["tax_total"]), width))

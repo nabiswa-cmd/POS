@@ -463,6 +463,7 @@ class Refund(models.Model):
     sale = models.ForeignKey(Sale, on_delete=models.PROTECT, related_name="refunds")
     status = models.CharField(max_length=10, choices=STATUSES, default=REQUESTED, db_index=True)
     method = models.CharField(max_length=6, choices=METHODS)
+    request_key = models.CharField(max_length=80, unique=True, null=True, blank=True)
     reason = models.CharField(max_length=250)
     total = models.DecimalField(max_digits=12, decimal_places=2)
     tax_total = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
@@ -502,7 +503,8 @@ class Refund(models.Model):
     def from_db(cls, db, field_names, values):
         obj = super().from_db(db, field_names, values)
         obj._db_status = obj.__dict__.get("status")
-        obj._orig = (obj.__dict__.get("sale_id"), obj.__dict__.get("total"), obj.__dict__.get("method"), obj.__dict__.get("number"))
+        obj._orig = (obj.__dict__.get("sale_id"), obj.__dict__.get("total"), obj.__dict__.get("method"),
+                     obj.__dict__.get("number"), obj.__dict__.get("request_key"))
         return obj
 
     def save(self, *args, **kwargs):
@@ -511,11 +513,12 @@ class Refund(models.Model):
                 changed = kwargs.get("update_fields")
                 if changed is None or not set(changed) <= self.PRINT_FIELDS:
                     raise PermissionError("A finished refund cannot be changed.")
-            if getattr(self, "_orig", None) and (self.sale_id, self.total, self.method, self.number) != self._orig:
-                raise PermissionError("The sale, amount, method and number of a refund cannot be changed.")
+            if getattr(self, "_orig", None) and (self.sale_id, self.total, self.method,
+                                                 self.number, self.request_key) != self._orig:
+                raise PermissionError("The sale, amount, method, number and request key of a refund cannot be changed.")
         super().save(*args, **kwargs)
         self._db_status = self.status
-        self._orig = (self.sale_id, self.total, self.method, self.number)
+        self._orig = (self.sale_id, self.total, self.method, self.number, self.request_key)
 
     def delete(self, *args, **kwargs):
         raise PermissionError("Refunds cannot be deleted.")
@@ -527,7 +530,10 @@ class RefundItem(models.Model):
     refund = models.ForeignKey(Refund, on_delete=models.PROTECT, related_name="items")
     sale_item = models.ForeignKey(SaleItem, on_delete=models.PROTECT, related_name="refund_items")
     product_name = models.CharField(max_length=160)
+    selling_unit_name = models.CharField(max_length=40, blank=True)
+    requested_restock = models.BooleanField(default=True)
     quantity = models.PositiveIntegerField()
+    volume_ml = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     # Tax snapshot of the refunded amount (same rate as the original sale line), for the eTIMS credit note.
     tax_class = models.CharField(max_length=1, default="B")
@@ -543,10 +549,21 @@ class RefundItem(models.Model):
         constraints = [
             models.CheckConstraint(condition=Q(quantity__gte=1), name="refund_item_quantity_positive"),
             models.CheckConstraint(condition=Q(amount__gt=0), name="refund_item_amount_positive"),
+            models.CheckConstraint(
+                condition=(Q(volume_ml__isnull=True, selling_unit_name="")
+                           | (Q(volume_ml__isnull=False, volume_ml__gt=0) & ~Q(selling_unit_name=""))),
+                name="refund_item_volume_snapshot_consistent"),
         ]
 
     def __str__(self):
         return f"{self.quantity} x {self.product_name} (refund)"
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            fields = kwargs.get("update_fields")
+            if fields is None or not set(fields) <= {"restock", "restocked"}:
+                raise PermissionError("Refund line details cannot be changed after they are requested.")
+        super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
         raise PermissionError("Refund lines cannot be deleted.")
