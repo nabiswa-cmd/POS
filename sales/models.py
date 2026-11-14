@@ -101,6 +101,9 @@ class SaleItem(models.Model):
     volume_per_unit_ml = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     total_volume_ml = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True,
                                           help_text="quantity x volume_per_unit_ml, fixed at sale time.")
+    full_volume_per_sale_unit_ml = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text="Liquid volume in one full-bottle/pack sale unit, snapshotted when capacity is known.")
 
     quantity = models.PositiveIntegerField()
     list_price = models.DecimalField(max_digits=12, decimal_places=2, help_text="Catalogue price when added.")
@@ -141,6 +144,13 @@ class SaleItem(models.Model):
                 name="sale_item_partial_fields_consistent"),
             models.CheckConstraint(condition=Q(volume_per_unit_ml__isnull=True) | Q(packaging__isnull=True),
                                    name="sale_item_partial_not_a_pack"),
+            models.CheckConstraint(condition=(Q(total_volume_ml__isnull=True)
+                                              | Q(full_volume_per_sale_unit_ml__isnull=True)),
+                                   name="sale_item_full_partial_volume_exclusive"),
+            models.CheckConstraint(
+                condition=(Q(full_volume_per_sale_unit_ml__isnull=True)
+                           | Q(full_volume_per_sale_unit_ml__gt=0)),
+                name="sale_item_full_volume_positive"),
         ]
 
     def __str__(self):

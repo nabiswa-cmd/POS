@@ -606,6 +606,16 @@ def finish_sale(user, shift, *, payment=None, payments=None, customer_name=""):
                                    if movement.movement_type == mr.PARTIAL_SALE), Decimal("0.00"))
             line.save(update_fields=["cost_total"])
 
+    for product_id, lines in by_product.items():
+        capacity = stock_services.bottle_overview(product_id)["bottle_capacity_ml"]
+        if capacity is None:
+            continue
+        for line in lines:
+            if line.is_partial:
+                continue
+            line.full_volume_per_sale_unit_ml = capacity * line.units_per_sale_unit
+            line.save(update_fields=["full_volume_per_sale_unit_ml"])
+
     # VAT snapshot. Prices already include VAT; we only record how much of each line is tax. If the shop is
     # not VAT registered every figure stays zero and the receipt shows no VAT at all.
     shop = ShopSettings.load()

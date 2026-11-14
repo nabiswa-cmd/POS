@@ -261,3 +261,51 @@ Recommended next phase
 - Phase 7A: PostgreSQL concurrency and deployment-environment UAT, including Safaricom sandbox testing if the
   shop has a documented test account, and explicit confirmation of whether card/bank checkout is in scope.
 
+## Phase 8: partial-selling reports and dashboards (implemented)
+
+### Reports completed
+- Added `/manage/sales-report/` with today, week, month, and arbitrary date-range filters.
+- Reports full bottles/base units separately from configured partial measures; breaks out sales, refunds, and
+  net revenue by saved product and selling-unit snapshots.
+- Reports sold, refunded, and net liquid volume when known. Full sale lines snapshot liquid volume per sale unit
+  at checkout from configured or recorded bottle capacity; partial lines continue to use their saved millilitre
+  snapshots. Daily cashier/shift-authorizer and refund-approval-day tables include volume totals.
+- Shows approved refund quantities, volume, and amounts; current sealed/opened/empty stock; signed wastage,
+  spillage, adjustment and stock movement data; and sealed-unit/opened-bottle ledger reconciliation.
+- Shows audited manager/supervisor activity when audit records exist. `reports.sales.view` gates the report;
+  inventory, costs, and audit details retain their existing `stock.view`, cost visibility, and `audit.view`
+  restrictions.
+- Opening movements are explained as sealed-to-opened transfers and are not added to sales, avoiding duplicate
+  stock or volume totals. The existing financial report and exports were not replaced.
+
+### Files changed
+- `sales/reporting.py`, `sales/report_views.py`, `sales/templates/sales/sales_report.html`
+- `sales/test_reporting.py`
+- `sales/models.py`, `sales/services.py`, `sales/migrations/0011_saleitem_full_volume_per_sale_unit_ml_and_more.py`
+- `config/urls.py`, `core/context.py`
+- `PARTIAL_SELLING_ARCHITECTURE.md`, `PARTIAL_SELLING_PROGRESS.md`
+
+### Verification
+- `python manage.py test sales.test_reporting accounting.test_reports sales.test_partial_pos sales.test_partial_refunds -v 1`:
+  **56 passed**. Coverage includes full-bottle volume and refund regression, TOT snapshots/refunds, mixed
+  full/partial carts, unknown legacy volume without guessing, cashier/day and date-range reports, inventory
+  movement/volume reconciliation, and permissions/activity.
+- `python manage.py check`: no issues.
+- `python manage.py makemigrations --check --dry-run`: no changes detected.
+- `git diff --check`: passed.
+
+### Known limitations
+- Tests ran on SQLite only; PostgreSQL locking/triggers and production concurrency were not verified.
+- Existing full-bottle sale rows predate the full-volume snapshot and cannot be assigned a reliable historic
+  bottle capacity from their sale items. They remain reportable for quantity and revenue, but the report marks
+  total liquid volume incomplete rather than assuming today's capacity. The same applies to new sales where
+  bottle capacity is unknown.
+- The new operational report has no CSV export. Existing accounting CSV exports remain unchanged.
+- No manual browser review or production role/UAT was performed.
+
+### Recommended next phase
+- Apply the new sales migration in the deployment environment, then run PostgreSQL and browser UAT for cashier,
+  supervisor, and manager permissions, date presets/ranges, mixed sales/refunds, and inventory reconciliation.
+- Decide whether the operational report needs a CSV export and, if so, keep its fields and permission checks
+  aligned with the on-screen report.
+

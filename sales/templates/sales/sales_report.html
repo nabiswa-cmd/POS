@@ -1,0 +1,148 @@
+{% extends "core/base.html" %}{% block title %}Sales and stock reports{% endblock %}
+{% block content %}
+<h1>Sales and partial-stock reports</h1>
+<p class="sub">Sales and refunds use the saved line snapshots. Inventory position is current; movement and audit tables use the selected dates.</p>
+
+<form method="get" class="row" style="margin-bottom:10px">
+  <div><label for="from">From</label><input id="from" type="date" name="from" value="{{ day_from|date:'Y-m-d' }}"></div>
+  <div><label for="to">To</label><input id="to" type="date" name="to" value="{{ day_to|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}"></div>
+  <div style="flex:0 0 auto"><button type="submit">Show</button></div>
+</form>
+<p>{% for label, a, b in presets %}<a class="btn ghost" href="?from={{ a|date:'Y-m-d' }}&amp;to={{ b|date:'Y-m-d' }}">{{ label }}</a> {% endfor %}</p>
+<p class="muted">Report period: {{ day_from|date:"d M Y" }} to {{ day_to|date:"d M Y" }}.</p>
+
+<h2>Sales mix</h2>
+<div class="grid">
+  <div class="tile"><b>Full bottles / base units</b><span class="muted">{{ r.summary.full_bottles_sold }} sold<br>{{ r.summary.full_bottles_refunded }} refunded</span></div>
+  <div class="tile"><b>Partial measures</b><span class="muted">{{ r.summary.partial_measures_sold }} sold<br>{{ r.summary.partial_measures_refunded }} refunded</span></div>
+  <div class="tile"><b>Partial volume</b><span class="muted">{{ r.summary.partial_volume_sold_ml }} ml sold<br>{{ r.summary.partial_volume_refunded_ml }} ml refunded</span></div>
+  <div class="tile"><b>Total liquid volume</b><span class="muted">
+    {% if r.summary.volume_complete %}
+      {{ r.summary.total_liquid_volume_sold_ml }} ml sold<br>{{ r.summary.total_liquid_volume_refunded_ml }} ml refunded<br>{{ r.summary.net_liquid_volume_ml }} ml net
+    {% else %}
+      {% if r.summary.sales_volume_complete %}{{ r.summary.total_liquid_volume_sold_ml }} ml sold{% else %}Known sold: {{ r.summary.known_volume_sold_ml }} ml; {{ r.summary.unknown_full_units_sold }} full base units lack capacity snapshots{% endif %}<br>
+      {% if r.summary.refund_volume_complete %}{{ r.summary.total_liquid_volume_refunded_ml }} ml refunded{% else %}Known refunded: {{ r.summary.known_volume_refunded_ml }} ml; {{ r.summary.unknown_full_units_refunded }} full base units lack capacity snapshots{% endif %}<br>
+      Net volume: {% if r.summary.volume_complete %}{{ r.summary.net_liquid_volume_ml }} ml{% else %}incomplete{% endif %}
+    {% endif %}
+  </span></div>
+  <div class="tile"><b>Refunds</b><span class="muted">KES {{ r.summary.refunds_gross }} including VAT<br>KES {{ r.summary.refunds_net }} excluding VAT</span></div>
+</div>
+<table style="max-width:760px">
+  <tr><th>Revenue after approved refunds (excl. VAT)</th><th class="num">KES</th></tr>
+  <tr><td>Full bottles / base units</td><td class="num">{{ r.summary.full_revenue }}</td></tr>
+  <tr><td>Partial selling</td><td class="num">{{ r.summary.partial_revenue }}</td></tr>
+</table>
+<p class="muted">Refunds are included on their approval date. Full quantities and full-line volume use sale-time snapshots; partial volume uses saved millilitre snapshots. Volume totals are marked incomplete when a full line has no known capacity snapshot.</p>
+
+<h2>Revenue and refunds by selling unit</h2>
+<table>
+  <tr><th>Product</th><th>Selling unit</th><th class="num">Units sold / refunded</th><th class="num">Full bottles sold / refunded</th><th class="num">Liquid volume sold / refunded (ml)</th><th class="num">Unknown full units sold / refunded</th><th class="num">Sales (incl. VAT)</th><th class="num">Refunds (incl. VAT)</th><th class="num">Net revenue (excl. VAT)</th></tr>
+  {% for row in r.selling_units %}
+  <tr>
+    <td>{{ row.product_name }}</td><td>{{ row.selling_unit }}</td>
+    <td class="num">{{ row.quantity_sold }} / {{ row.quantity_refunded }}</td>
+    <td class="num">{{ row.full_bottles_sold }} / {{ row.full_bottles_refunded }}</td>
+    <td class="num">{{ row.volume_sold_ml }} / {{ row.volume_refunded_ml }}</td>
+    <td class="num">{{ row.unknown_full_units_sold }} / {{ row.unknown_full_units_refunded }}</td>
+    <td class="num">{{ row.sales_gross }}</td><td class="num">{{ row.refunds_gross }}</td><td class="num">{{ row.net_revenue }}</td>
+  </tr>
+  {% empty %}<tr><td colspan="9" class="muted">No completed sales or approved refunds in this period.</td></tr>{% endfor %}
+</table>
+
+<h2>Sales by day, cashier and POS authorizer</h2>
+<p class="muted">Sales revenue is shown before refunds; approved refunds are listed separately by approval day below.</p>
+<table>
+  <tr><th>Day</th><th>Cashier</th><th>Shift authorized by</th><th class="num">Sales</th><th class="num">Full bottles</th><th class="num">Partial measures</th><th class="num">Full volume (ml)</th><th class="num">Partial volume (ml)</th><th class="num">Total volume (ml)</th><th class="num">Full sales revenue</th><th class="num">Partial sales revenue</th><th class="num">Sales revenue (excl. VAT)</th></tr>
+  {% for row in r.sales_by_cashier %}
+  <tr><td>{{ row.day|date:"D d M Y" }}</td><td>{{ row.cashier }}</td><td>{{ row.authorized_by }}</td>
+    <td class="num">{{ row.sale_count }}</td><td class="num">{{ row.full_bottles }}</td>
+    <td class="num">{{ row.partial_measures }}</td><td class="num">{{ row.full_volume_ml }}</td>
+    <td class="num">{{ row.partial_volume_ml }}</td>
+    <td class="num">{% if row.volume_complete %}{{ row.total_volume_ml }}{% else %}incomplete ({{ row.unknown_full_units }} unknown){% endif %}</td>
+    <td class="num">{{ row.full_revenue }}</td><td class="num">{{ row.partial_revenue }}</td><td class="num">{{ row.sales_revenue }}</td></tr>
+  {% empty %}<tr><td colspan="12" class="muted">No sales in this period.</td></tr>{% endfor %}
+</table>
+
+<h2>Refunds by approval day</h2>
+<table>
+  <tr><th>Day</th><th>Requested by</th><th>Approved by</th><th class="num">Refunds</th><th class="num">Full bottles</th><th class="num">Partial measures</th><th class="num">Full volume (ml)</th><th class="num">Partial volume (ml)</th><th class="num">Total volume (ml)</th><th class="num">Refund amount (incl. VAT)</th></tr>
+  {% for row in r.refunds_by_day %}
+  <tr><td>{{ row.day|date:"D d M Y" }}</td><td>{{ row.requested_by }}</td><td>{{ row.approved_by }}</td>
+    <td class="num">{{ row.refund_count }}</td><td class="num">{{ row.full_bottles }}</td>
+    <td class="num">{{ row.partial_measures }}</td><td class="num">{{ row.full_volume_ml }}</td>
+    <td class="num">{{ row.partial_volume_ml }}</td>
+    <td class="num">{% if row.volume_complete %}{{ row.total_volume_ml }}{% else %}incomplete ({{ row.unknown_full_units }} unknown){% endif %}</td>
+    <td class="num">{{ row.gross }}</td></tr>
+  {% empty %}<tr><td colspan="10" class="muted">No approved refunds in this period.</td></tr>{% endfor %}
+</table>
+
+{% if show_stock %}
+<h2>Current inventory and ledger reconciliation</h2>
+<p class="muted">Current counts are not date-filtered. Sealed liquid is stock quantity multiplied by the configured or last recorded bottle capacity. Bottle volume is checked against its signed movement ledger; sealed base units are checked against the latest stock movement balance.</p>
+{% if inventory.unknown_capacity_count %}<div class="toast error" role="alert">{{ inventory.unknown_capacity_count }} product(s) have sealed stock with no known bottle capacity; total liquid volume is shown as unknown.</div>{% endif %}
+{% if inventory.unit_mismatch_count or inventory.bottle_mismatch_count %}
+<div class="toast error" role="alert">Reconciliation found {{ inventory.unit_mismatch_count }} sealed-stock mismatch(es) and {{ inventory.bottle_mismatch_count }} bottle-volume mismatch(es), totalling {{ inventory.bottle_mismatch_volume_ml }} ml absolute bottle variance.</div>
+{% else %}<p class="toast success" role="status">Sealed-unit and bottle-volume balances reconcile to their movement ledgers.</p>{% endif %}
+<table>
+  <tr><th>Product</th><th class="num">Sealed bottles / base units</th><th class="num">Opened bottles</th><th class="num">Empty bottles</th><th class="num">Opened liquid (ml)</th><th class="num">Sealed liquid (ml)</th><th class="num">Total liquid (ml)</th></tr>
+  {% for row in inventory.products %}
+  <tr><td>{{ row.product.name }}</td><td class="num">{{ row.sealed_bottles }}</td><td class="num">{{ row.opened_bottles }}</td>
+    <td class="num">{{ row.empty_bottles }}</td><td class="num">{{ row.opened_volume_ml }}</td>
+    <td class="num">{% if row.sealed_volume_ml is None %}unknown{% else %}{{ row.sealed_volume_ml }}{% endif %}</td>
+    <td class="num">{% if row.total_volume_ml is None %}unknown{% else %}{{ row.total_volume_ml }}{% endif %}</td></tr>
+  {% empty %}<tr><td colspan="7" class="muted">No products.</td></tr>{% endfor %}
+</table>
+
+{% if inventory.unit_mismatches %}
+<h3>Sealed-stock discrepancies</h3>
+<table><tr><th>Product</th><th class="num">Recorded stock</th><th class="num">Ledger balance</th><th class="num">Difference</th></tr>
+{% for row in inventory.unit_mismatches %}<tr><td>{{ row.product.name }}</td><td class="num">{{ row.stock_units }}</td><td class="num">{{ row.ledger_units }}</td><td class="num">{{ row.difference }}</td></tr>{% endfor %}</table>
+{% endif %}
+{% if inventory.bottle_mismatches %}
+<h3>Opened/empty bottle discrepancies</h3>
+<table><tr><th>Product</th><th>Bottle</th><th class="num">Recorded remaining (ml)</th><th class="num">Ledger balance (ml)</th><th class="num">Difference (ml)</th></tr>
+{% for row in inventory.bottle_mismatches %}<tr><td>{{ row.bottle.product.name }}</td><td>{{ row.bottle.pk }}</td><td class="num">{{ row.remaining_ml }}</td><td class="num">{{ row.ledger_volume_ml }}</td><td class="num">{{ row.difference_ml }}</td></tr>{% endfor %}</table>
+{% endif %}
+
+<h2>Stock movement summary, {{ day_from|date:"d M Y" }} to {{ day_to|date:"d M Y" }}</h2>
+<table>
+  <tr><th>Movement</th><th class="num">Events</th><th class="num">Base units (signed)</th><th class="num">Volume (ml, signed)</th>{% if show_cost %}<th class="num">Cost</th>{% endif %}</tr>
+  {% for row in movement_summary %}<tr><td>{{ row.label }}</td><td class="num">{{ row.events }}</td><td class="num">{{ row.units }}</td><td class="num">{{ row.volume_ml }}</td>{% if show_cost %}<td class="num">{{ row.cost }}</td>{% endif %}</tr>
+  {% empty %}<tr><td colspan="{% if show_cost %}5{% else %}4{% endif %}" class="muted">No stock movements in this period.</td></tr>{% endfor %}
+</table>
+<p class="muted">Movement values are signed ledger entries. Opening a bottle transfers liquid from sealed to opened stock; it is not additional liquid sold. Sales totals above come from sale snapshots and are not added to these movement totals.</p>
+
+<h3>Stock movement details</h3>
+<table>
+  <tr><th>When</th><th>Product</th><th>Movement</th><th class="num">Units</th><th class="num">Volume (ml)</th><th>By</th><th>Approved by</th><th>Reference / reason</th>{% if show_cost %}<th class="num">Cost</th>{% endif %}</tr>
+  {% for movement in movement_page %}
+  <tr><td>{{ movement.created_at|date:"d M Y H:i" }}</td><td>{{ movement.product.name }}</td>
+    <td>{{ movement.get_movement_type_display }}</td><td class="num">{{ movement.quantity }}</td>
+    <td class="num">{{ movement.volume_ml|default_if_none:"-" }}</td><td>{{ movement.user.display_name }}</td>
+    <td>{{ movement.approved_by.display_name|default:"-" }}</td><td>{{ movement.reference }} {{ movement.reason }}</td>
+    {% if show_cost %}<td class="num">{{ movement.total_cost|default_if_none:"-" }}</td>{% endif %}</tr>
+  {% empty %}<tr><td colspan="{% if show_cost %}9{% else %}8{% endif %}" class="muted">No stock movements in this period.</td></tr>{% endfor %}
+</table>
+{% if movement_page.paginator.num_pages > 1 %}
+<p>{% if movement_page.has_previous %}<a href="?from={{ day_from|date:'Y-m-d' }}&amp;to={{ day_to|date:'Y-m-d' }}&amp;movement_page={{ movement_page.previous_page_number }}">Previous movements</a> {% endif %}
+Page {{ movement_page.number }} of {{ movement_page.paginator.num_pages }}{% if movement_page.has_next %} <a href="?from={{ day_from|date:'Y-m-d' }}&amp;to={{ day_to|date:'Y-m-d' }}&amp;movement_page={{ movement_page.next_page_number }}">Next movements</a>{% endif %}</p>
+{% endif %}
+{% endif %}
+
+{% if show_audit %}
+<h2>Manager and supervisor activity</h2>
+<p class="muted">Sensitive actions are shown from the append-only audit log. The actor is the person who performed the action; the approver column is populated when the action required approval.</p>
+<table>
+  <tr><th>When</th><th>Action</th><th>Actor</th><th>Approver</th><th>Object</th><th>Reason</th></tr>
+  {% for event in activity_page %}
+  <tr><td>{{ event.created_at|date:"d M Y H:i" }}</td><td>{{ event.action }}</td>
+    <td>{{ event.actor.display_name|default:"System" }}</td><td>{{ event.approver.display_name|default:"-" }}</td>
+    <td>{{ event.object_type }} {{ event.object_ref }}</td><td>{{ event.reason }}</td></tr>
+  {% empty %}<tr><td colspan="6" class="muted">No audited activity in this period.</td></tr>{% endfor %}
+</table>
+{% if activity_page.paginator.num_pages > 1 %}
+<p>{% if activity_page.has_previous %}<a href="?from={{ day_from|date:'Y-m-d' }}&amp;to={{ day_to|date:'Y-m-d' }}&amp;activity_page={{ activity_page.previous_page_number }}">Previous activity</a> {% endif %}
+Page {{ activity_page.number }} of {{ activity_page.paginator.num_pages }}{% if activity_page.has_next %} <a href="?from={{ day_from|date:'Y-m-d' }}&amp;to={{ day_to|date:'Y-m-d' }}&amp;activity_page={{ activity_page.next_page_number }}">Next activity</a>{% endif %}</p>
+{% endif %}
+{% endif %}
+{% endblock %}

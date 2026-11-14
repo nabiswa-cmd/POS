@@ -20,8 +20,8 @@
 2. **One movement log.** Partial sales, openings, wastage and volume adjustments are `StockMovement` rows
    (new types), not a second ledger. Existing whole-bottle movements are untouched.
 3. **Money and volume are `DecimalField`.** Volumes are millilitres, 2 decimal places.
-4. **Full-bottle sales are unchanged.** All new `SaleItem` columns are null/blank for them, and a database
-   constraint enforces that.
+4. **Full-bottle accounting is unchanged.** Partial-selling fields stay null/blank for full-bottle lines.
+   The reporting-only full-volume snapshot added in Phase 8 does not change quantity, price, or stock handling.
 5. **Sealed capacity is configured per product.** `Product.bottle_capacity_ml` is the authoritative capacity
    for opening sealed stock; existing bottles retain their own capacity snapshots.
 
@@ -75,6 +75,12 @@ Constraints: volume snapshot is all-or-nothing, `volume_per_unit_ml > 0`, name p
 `total_volume_ml = quantity x volume_per_unit_ml`; a partial line cannot also carry a `packaging`.
 `SaleItem.is_partial` is new. `SaleItem.base_qty` returns **0** for partial lines so existing stock-deduction
 and costing code can never take whole bottles for a measure.
+
+Migration `sales/0011_saleitem_full_volume_per_sale_unit_ml_and_more` adds nullable
+`full_volume_per_sale_unit_ml`. At checkout it snapshots known bottle capacity multiplied by the saved sale
+unit's base-unit factor. It is used only for liquid-volume reporting; full-bottle stock, revenue and quantity
+calculations remain unchanged. Legacy sale lines and lines whose capacity was unknown remain null and are
+reported as incomplete volume rather than backfilled from today's product settings.
 
 ## Phase 3: inventory services
 
@@ -208,7 +214,28 @@ millilitre, in addition to the existing average-cost value of sealed stock. A mi
 reported as an error rather than silently treated as zero. Cash-up remains payment-based: partial lines affect
 drawer totals only through their actual payment amounts, as before.
 
+## Phase 8: operational reports and dashboards
+
+The permission-gated `/manage/sales-report/` page reports full base units and partial measures separately,
+including sales/refunds and net revenue by saved selling-unit and product snapshots. Full-bottle volume uses the
+new sale-time per-unit capacity snapshot; partial volume uses its existing millilitre snapshot. Daily cashier
+and POS-authorizer totals and approval-day refund totals include volume and revenue. Refunds retain the existing
+approval-date rule.
+
+Users need `reports.sales.view` for sales reports. Inventory and signed stock movement details additionally
+require `stock.view`, cost columns use the existing cost permission, and audit activity requires `audit.view`.
+Current sealed/opened/empty counts are reconciled against stock movement balances; opened-bottle balances are
+checked against signed volume movements. Opening a bottle is presented as a transfer, not additional sales or
+stock, so movement totals are not added to sale totals. Wastage, adjustments, and audited actions are shown from
+their existing ledgers.
+
+The report uses calendar date-range filters with today/week/month presets. Sales are dated by completion and
+refunds by approval. Old full-bottle sales do not have a capacity snapshot; reports explicitly mark total liquid
+volume incomplete when those full units occur rather than estimating with current capacity. The report is
+operational and does not replace the existing financial report or CSV exports.
+
 ## Known follow-ups for later phases
+- Run PostgreSQL and manual browser/UAT checks for the Phase 8 report, including date filters and role visibility.
 - Validate the Phase 6B reports and opened-bottle valuation against PostgreSQL and manual browser use.
 - PostgreSQL append-only triggers are unaffected by these changes; verify on PostgreSQL (tests ran on SQLite).
 - Wastage is only taken from opened bottles. Writing off a whole sealed bottle still uses the Damaged/Expired

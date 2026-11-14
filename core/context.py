@@ -7,6 +7,7 @@ NAV = [
     ("Shelves", "/manage/shelves/", ("shelves.manage", "products.view")),
     ("Labels", "/manage/labels/", ("labels.print",)),
     ("Tills & sales", "/manage/tills/", ("shifts.view_all", "sales.view_all")),
+    ("Sales reports", "/manage/sales-report/", ("reports.sales.view",)),
     ("Reconciliation", "/manage/reconciliation/", ("shifts.view_all", "payments.reconcile")),
     ("Refunds", "/manage/refunds/", ("shifts.view_all", "approve.refund")),
     ("Cash-ups", "/manage/cashups/", ("shifts.view_all",)),
