@@ -57,6 +57,15 @@ def _enrich(txn, name, payer_ref="", shortcode=""):
         txn.save(update_fields=fields + ["updated_at"])
 
 
+def _capture_stk_payment(p, payload):
+    txn, created = MpesaTransaction.objects.get_or_create(
+        trans_id=p["trans_id"],
+        defaults={"source": MpesaTransaction.STK, "amount": p["amount"], "payer_ref": p["payer_ref"],
+                  "trans_time": p["trans_time"], "raw": payload})
+    _enrich(txn, "", p["payer_ref"])
+    return txn, created
+
+
 def record_stk_callback(payload):
     """Result of an STK push. Returns the MpesaStkRequest, or None if we never asked for it (logged)."""
     p = rules.parse_stk_callback(payload)
@@ -68,21 +77,20 @@ def record_stk_callback(payload):
             if p["ok"]:
                 # Safaricom confirmed real money for a request this server did not make (this is the online server
                 # relaying for the shop PC). Keep it: it waits in the cashier's list and is relayed to the shop.
-                txn, _ = MpesaTransaction.objects.get_or_create(
-                    trans_id=p["trans_id"],
-                    defaults={"source": MpesaTransaction.STK, "amount": p["amount"], "payer_ref": p["payer_ref"],
-                              "trans_time": p["trans_time"], "raw": payload})
-                _enrich(txn, "", p["payer_ref"])
+                _capture_stk_payment(p, payload)
             return None
-        if stk.status in (MpesaStkRequest.CONFIRMED, MpesaStkRequest.FAILED, MpesaStkRequest.EXPIRED):
+        if stk.status == MpesaStkRequest.CONFIRMED:
             return stk                                   # Safaricom retried; nothing more to do
+        if stk.status in (MpesaStkRequest.FAILED, MpesaStkRequest.EXPIRED):
+            if p["ok"]:
+                _, created = _capture_stk_payment(p, payload)
+                if created:
+                    audit.record("mpesa.stk_late_payment", object_type="mpesa", object_ref=stk.checkout_request_id,
+                                 new={"receipt": p["trans_id"], "amount": str(p["amount"])})
+            return stk
         stk.result_code, stk.result_desc = p["result_code"], p["result_desc"]
         if p["ok"]:
-            txn, _ = MpesaTransaction.objects.get_or_create(
-                trans_id=p["trans_id"],
-                defaults={"source": MpesaTransaction.STK, "amount": p["amount"], "payer_ref": p["payer_ref"],
-                          "trans_time": p["trans_time"], "raw": payload})
-            _enrich(txn, "", p["payer_ref"])
+            txn, _ = _capture_stk_payment(p, payload)
             stk.status, stk.transaction = MpesaStkRequest.CONFIRMED, txn
         else:
             stk.status = rules.stk_failure_status(p["result_code"])
@@ -196,16 +204,18 @@ def stk_status(user, shift, stk_id):
         except daraja.DarajaError:
             code = None
         if code not in (None, 0):
-            stk.status, stk.result_code, stk.result_desc = rules.stk_failure_status(code), code, desc[:200]
-            stk.save(update_fields=["status", "result_code", "result_desc", "updated_at"])
+            MpesaStkRequest.objects.filter(pk=stk.pk, status=MpesaStkRequest.PROCESSING).update(
+                status=rules.stk_failure_status(code), result_code=code, result_desc=desc[:200],
+                updated_at=timezone.now())
         elif timezone.now() - stk.created_at > timedelta(minutes=3):
-            stk.status = MpesaStkRequest.EXPIRED
-            stk.result_desc = "No answer from the customer's phone."
-            stk.save(update_fields=["status", "result_desc", "updated_at"])
+            MpesaStkRequest.objects.filter(pk=stk.pk, status=MpesaStkRequest.PROCESSING).update(
+                status=MpesaStkRequest.EXPIRED, result_desc="No answer from the customer's phone.",
+                updated_at=timezone.now())
     elif stk.status == MpesaStkRequest.PROCESSING and timezone.now() - stk.created_at > timedelta(minutes=3):
-        stk.status, stk.result_desc = MpesaStkRequest.EXPIRED, "No answer from the customer's phone."
-        stk.save(update_fields=["status", "result_desc", "updated_at"])
-    return stk
+        MpesaStkRequest.objects.filter(pk=stk.pk, status=MpesaStkRequest.PROCESSING).update(
+            status=MpesaStkRequest.EXPIRED, result_desc="No answer from the customer's phone.",
+            updated_at=timezone.now())
+    return MpesaStkRequest.objects.select_related("transaction").get(pk=stk.pk)
 
 
 def recent_unmatched(user, shift, total=None):
@@ -237,12 +247,6 @@ def checkout_mpesa(user, shift, transaction_id):
     name = rules.pick_customer_name(txn.customer_name, sale.customer_name)
     done = sales_services.finish_sale(user, shift, payment={
         "method": Payment.MPESA, "reference": txn.trans_id, "mpesa_transaction": txn}, customer_name=name)
-    txn.status, txn.sale = MpesaTransaction.MATCHED, done
-    txn.matched_by, txn.matched_at = user, timezone.now()
-    txn.save(update_fields=["status", "sale", "matched_by", "matched_at", "updated_at"])
-    audit.record("mpesa.payment_applied", actor=user, object_type="sale", object_ref=done.number,
-                 new={"receipt": txn.trans_id, "amount": str(txn.amount), "name_from_mpesa": bool(txn.customer_name)},
-                 till_number=shift.till.number)
     return done
 
 
@@ -284,11 +288,4 @@ def checkout_split(user, shift, mpesa_ids, cash_tendered=None):
     name = rules.pick_customer_name(named, sale.customer_name)
     done = sales_services.finish_sale(user, shift, payments=parts, customer_name=name)
 
-    now = timezone.now()
-    for txn in txns:
-        txn.status, txn.sale, txn.matched_by, txn.matched_at = MpesaTransaction.MATCHED, done, user, now
-        txn.save(update_fields=["status", "sale", "matched_by", "matched_at", "updated_at"])
-        audit.record("mpesa.payment_applied", actor=user, object_type="sale", object_ref=done.number,
-                     new={"receipt": txn.trans_id, "amount": str(txn.amount), "name_from_mpesa": bool(txn.customer_name),
-                          "part_of_split": len(parts) > 1}, till_number=shift.till.number)
     return done, plan

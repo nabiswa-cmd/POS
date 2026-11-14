@@ -214,3 +214,50 @@ Recommended next phase
 - Phase 6C: PostgreSQL and manual UAT of full/partial checkout, refund, reports/CSV, cash-up, and opened-bottle
   valuation, including a one-time audit of any existing historical partial-sale/refund records.
 
+## Phase 7: payment and transaction integrity (done)
+
+Modified
+- `sales/services.py`: made `finish_sale` enforce payment and permission checks at the atomic completion boundary.
+  Completion now requires one supported payment or a non-empty list whose positive amounts exactly equal the sale
+  total. Cash parts must have valid tendered/change values; M-PESA parts must reference an unmatched, captured
+  C2B/STK receipt with the exact amount and receipt code. Unsupported methods, missing payment data, duplicate
+  receipt use, and invalid cash details are rejected before stock changes. Sale, payment rows, inventory movements,
+  M-PESA matching state, eTIMS submission, and audit events share the existing database transaction.
+- `sales/mpesa_services.py`: centralized M-PESA matching and `mpesa.payment_applied` audit writes in that
+  completion transaction, removing duplicate state changes from the single/split callers. STK status polling now
+  uses conditional updates so a late poll result cannot overwrite a callback's terminal result. Successful callbacks
+  arriving after a request failed/expired are retained once as unmatched receipts; they are not silently discarded
+  or automatically attached to a sale that may already have been paid another way.
+- `sales/tests.py`, `sales/test_partial_pos.py`, `sales/test_partial_refunds.py`, `sales/test_phase4a.py`: added
+  direct completion-guard and repeated-checkout tests; mixed full/partial cash and M-PESA-plus-cash checkout and
+  rollback tests; partial refund payout reconciliation; callback retries, failed/cancelled/pending outcomes,
+  late success capture, and an STK callback/status race regression.
+
+Payment flows checked
+- Full-bottle and mixed full/partial cash checkout preserve payment totals, cash change, and stock movement counts.
+- Mixed full/partial M-PESA-plus-cash checkout creates payment rows summing to the sale, matches each M-PESA receipt
+  once, and records the expected bottle opening, full-unit deduction, and partial-volume deduction.
+- Invalid/missing payment details and unsupported methods cannot complete a sale. Repeated cash checkout and
+  duplicate callbacks do not create a second sale, payment, or stock deduction.
+- Failed, cancelled, and pending STK requests do not create confirmed payments. Late successful callbacks are kept
+  as unused receipts. Cash refund payout retries are rejected; partial refund revenue and drawer totals reconcile.
+- Existing permission checks and electronic/cash refund approval/payout tests were rerun with the checkout changes.
+
+Verification (SQLite)
+- Focused checkout/callback/mixed-cart/refund selection: **69 passed**.
+- Expanded sales, payment, refund, reconciliation, callback, relay, and split-payment suites: **219 passed,
+  4 skipped**.
+- Provider behavior was not tested against Safaricom. STK/C2B tests use local callback fixtures and recorded
+  transaction rows only; no external payment success is claimed.
+
+Known limitations / remaining work
+- `Payment.CARD` and `Payment.BANK` remain model/report methods but have no checkout/capture integration in this
+  project. The completion guard refuses them instead of recording an unverified payment.
+- SQLite does not provide production-grade row-lock concurrency evidence. PostgreSQL concurrency, live Safaricom
+  callbacks/queries, and browser/manual cashier-supervisor-manager UAT remain unverified.
+- No migration or payment-provider replacement was introduced.
+
+Recommended next phase
+- Phase 7A: PostgreSQL concurrency and deployment-environment UAT, including Safaricom sandbox testing if the
+  shop has a documented test account, and explicit confirmation of whether card/bank checkout is in scope.
+

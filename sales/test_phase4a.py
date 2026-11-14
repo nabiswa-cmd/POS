@@ -1,8 +1,11 @@
 """Phase 4A tests: M-PESA capture, idempotent callbacks, customer name, exact-match checkout."""
 import json
+from datetime import timedelta
 from decimal import Decimal as D
+from unittest.mock import patch
 
 from django.test import Client, override_settings
+from django.utils import timezone
 
 from . import mpesa_services as ms
 from .models import MpesaStkRequest, MpesaTransaction, Payment, Sale
@@ -69,6 +72,81 @@ class MpesaCaptureTests(SalesCase):
         for _ in range(2):
             self.post("stk", stk_ok())
         self.assertEqual(MpesaTransaction.objects.count(), 1)
+
+    def test_duplicate_success_callback_then_checkout_posts_payment_once(self):
+        self.scan()
+        stk = MpesaStkRequest.objects.create(sale=Sale.objects.get(status=Sale.OPEN), cashier=self.cashier,
+                                             shift=self.shift, phone="254712345678", amount=D("3500"),
+                                             checkout_request_id="ws_CO_DUPLICATE", status=MpesaStkRequest.PROCESSING)
+        payload = stk_ok(checkout=stk.checkout_request_id)
+        self.post("stk", payload)
+        self.post("stk", payload)
+        txn = MpesaTransaction.objects.get()
+        sale = ms.checkout_mpesa(self.cashier, self.shift, txn.pk)
+        self.post("stk", payload)
+
+        txn.refresh_from_db()
+        self.assertEqual((MpesaTransaction.objects.count(), Payment.objects.count(),
+                          Sale.objects.filter(status=Sale.COMPLETED).count(), self.stock()),
+                         (1, 1, 1, 9))
+        self.assertEqual((txn.status, txn.sale_id), (MpesaTransaction.MATCHED, sale.pk))
+
+    def test_failed_cancelled_and_pending_stk_requests_do_not_complete_sale(self):
+        self.scan()
+        for checkout, code, status in (
+            ("ws_CO_FAILED", 1, MpesaStkRequest.FAILED),
+            ("ws_CO_CANCELLED", 1032, MpesaStkRequest.FAILED),
+        ):
+            stk = MpesaStkRequest.objects.create(sale=Sale.objects.get(status=Sale.OPEN), cashier=self.cashier,
+                                                 shift=self.shift, phone="254712345678", amount=D("3500"),
+                                                 checkout_request_id=checkout, status=MpesaStkRequest.PROCESSING)
+            payload = stk_ok(checkout=checkout)
+            payload["Body"]["stkCallback"].update(ResultCode=code, ResultDesc="failed")
+            payload["Body"]["stkCallback"].pop("CallbackMetadata")
+            self.post("stk", payload)
+            stk.refresh_from_db()
+            self.assertEqual(stk.status, status)
+        pending = MpesaStkRequest.objects.create(sale=Sale.objects.get(status=Sale.OPEN), cashier=self.cashier,
+                                                 shift=self.shift, phone="254712345678", amount=D("3500"),
+                                                 checkout_request_id="ws_CO_PENDING", status=MpesaStkRequest.PENDING)
+        with self.assertRaises(ms.SaleError):
+            ms.checkout_mpesa(self.cashier, self.shift, pending.transaction_id)
+
+        self.assertEqual(MpesaTransaction.objects.count(), 0)
+        self.assertEqual((Payment.objects.count(), Sale.objects.get().status, self.stock()), (0, Sale.OPEN, 10))
+
+    def test_late_success_after_expiry_is_kept_as_unused_payment(self):
+        self.scan()
+        stk = MpesaStkRequest.objects.create(sale=Sale.objects.get(status=Sale.OPEN), cashier=self.cashier,
+                                             shift=self.shift, phone="254712345678", amount=D("3500"),
+                                             checkout_request_id="ws_CO_LATE", status=MpesaStkRequest.EXPIRED)
+        payload = stk_ok(checkout=stk.checkout_request_id, receipt="LATEPAYMENT1")
+        for _ in range(2):
+            self.post("stk", payload)
+
+        stk.refresh_from_db()
+        txn = MpesaTransaction.objects.get()
+        self.assertEqual((stk.status, txn.status, MpesaTransaction.objects.count()), (
+            MpesaStkRequest.EXPIRED, MpesaTransaction.UNMATCHED, 1))
+        self.assertEqual((Payment.objects.count(), Sale.objects.get().status, self.stock()), (0, Sale.OPEN, 10))
+
+    def test_status_timeout_cannot_overwrite_concurrent_success_callback(self):
+        self.scan()
+        stk = MpesaStkRequest.objects.create(sale=Sale.objects.get(status=Sale.OPEN), cashier=self.cashier,
+                                             shift=self.shift, phone="254712345678", amount=D("3500"),
+                                             checkout_request_id="ws_CO_RACE", status=MpesaStkRequest.PROCESSING)
+        MpesaStkRequest.objects.filter(pk=stk.pk).update(created_at=timezone.now() - timedelta(seconds=30))
+
+        def callback_before_query_returns(_checkout_id):
+            self.post("stk", stk_ok(checkout=stk.checkout_request_id, receipt="RACECALLBACK1"))
+            return 1032, "cancelled"
+
+        with patch.object(ms.daraja, "configured", return_value=True), \
+                patch.object(ms.daraja, "stk_query", side_effect=callback_before_query_returns):
+            result = ms.stk_status(self.cashier, self.shift, stk.pk)
+
+        self.assertEqual(result.status, MpesaStkRequest.CONFIRMED)
+        self.assertEqual((MpesaTransaction.objects.count(), result.transaction.status), (1, MpesaTransaction.UNMATCHED))
 
     def test_unknown_failed_stk_callback_creates_no_payment(self):
         failed = stk_ok(checkout="never-asked")

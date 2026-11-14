@@ -26,7 +26,7 @@ from inventory import services as stock_services
 from tills.models import CashierShift
 
 from . import etims, rules, tax
-from .models import Payment, Sale, SaleItem
+from .models import MpesaTransaction, Payment, Sale, SaleItem
 
 
 class SaleError(Exception):
@@ -500,11 +500,14 @@ def checkout_cash(user, shift, tendered):
 
 @transaction.atomic
 def finish_sale(user, shift, *, payment=None, payments=None, customer_name=""):
-    """The shared end of every checkout (cash, M-PESA, split, later card and bank): stock, cost basis, VAT
+    """The shared end of every supported checkout (cash, confirmed M-PESA, split): stock, cost basis, VAT
     snapshot, the payment records and the gapless sale number, all in ONE transaction.
     `payment` = one method paying the whole total (the Payment fields that differ: method, reference, tendered,
     change_given, mpesa_transaction). `payments` = a list of such dicts, each with its own `amount`, for a sale
     paid in parts; their amounts must add up to the total exactly."""
+    _need(user, "sales.make")
+    _need(user, "payments.accept", "You are not allowed to accept payments.")
+    _shift_still_open(shift)
     sale = _locked_sale(user, shift)
     items = list(sale.items.select_related("product"))
     if not items:
@@ -512,6 +515,61 @@ def finish_sale(user, shift, *, payment=None, payments=None, customer_name=""):
     subtotal, discount, total = rules.totals((i.quantity, i.unit_price, i.discount) for i in items)
     if total <= 0:
         raise SaleError("The total must be more than zero.")
+
+    if payment is not None and payments is not None:
+        raise SaleError("Choose one payment or a list of payments, not both.")
+    if payment is not None:
+        if not isinstance(payment, dict):
+            raise SaleError("A valid payment is required.")
+        parts = [dict(payment, amount=total)]
+    elif payments is not None:
+        try:
+            parts = list(payments)
+        except TypeError:
+            raise SaleError("A valid payment list is required.") from None
+    else:
+        raise SaleError("A successful payment is required before completing the sale.")
+    if not parts:
+        raise SaleError("A successful payment is required before completing the sale.")
+
+    checked_parts, payment_total, used_transactions = [], Decimal("0.00"), set()
+    for raw_part in parts:
+        if not isinstance(raw_part, dict):
+            raise SaleError("A payment is not valid.")
+        part = dict(raw_part)
+        method = part.get("method")
+        amount = _rule(rules.parse_money, part.get("amount"), field="Payment amount")
+        if method == Payment.CASH:
+            if part.get("mpesa_transaction") is not None:
+                raise SaleError("Cash cannot be linked to an M-PESA payment.")
+            tendered = _rule(rules.parse_money, part.get("tendered"), field="Cash received")
+            change = _rule(rules.change_due, amount, tendered)
+            reported_change = _rule(rules.parse_money, part.get("change_given", "0"),
+                                    field="Change given", allow_zero=True)
+            if reported_change != change:
+                raise SaleError("Cash change does not match the amount received.")
+            part.update(amount=amount, tendered=tendered, change_given=change)
+        elif method == Payment.MPESA:
+            transaction_id = getattr(part.get("mpesa_transaction"), "pk", None)
+            txn = (MpesaTransaction.objects.select_for_update().filter(pk=transaction_id).first()
+                   if transaction_id else None)
+            if (txn is None or txn.status != MpesaTransaction.UNMATCHED
+                    or txn.source not in (MpesaTransaction.C2B, MpesaTransaction.STK)):
+                raise SaleError("A confirmed, unused M-PESA payment is required.")
+            if (amount != txn.amount or part.get("reference") != txn.trans_id
+                    or Payment.objects.filter(mpesa_transaction_id=txn.pk).exists()):
+                raise SaleError("The M-PESA payment details do not match the confirmed transaction.")
+            if txn.pk in used_transactions:
+                raise SaleError("The same M-PESA payment cannot be used twice.")
+            used_transactions.add(txn.pk)
+            part.update(amount=amount, mpesa_transaction=txn)
+        else:
+            raise SaleError("This payment method is not available for checkout.")
+        checked_parts.append(part)
+        payment_total += amount
+    if payment_total != total:
+        raise SaleError("The payments do not add up to the sale total.")
+    payments = checked_parts
 
     number_seq = CodeSequence.next(f"sale-{shift.till.number}-{timezone.localdate():%Y%m%d}")
     number = rules.sale_number(shift.till.number, timezone.localdate(), number_seq)
@@ -562,10 +620,6 @@ def finish_sale(user, shift, *, payment=None, payments=None, customer_name=""):
         tax_total += vat
 
     now = timezone.now()
-    if payments is None:
-        payments = [dict(payment, amount=total)]
-    if rules.money(sum((p["amount"] for p in payments), Decimal("0.00"))) != total:
-        raise SaleError("The payments do not add up to the sale total.")
     for part in payments:
         Payment.objects.create(sale=sale, status=Payment.CONFIRMED, received_by=user, **part)
     if customer_name:
@@ -575,6 +629,18 @@ def finish_sale(user, shift, *, payment=None, payments=None, customer_name=""):
     sale.vat_applied, sale.tax_total = vat_on, tax_total
     sale.save(update_fields=["number", "status", "completed_at", "subtotal", "discount_total", "total",
                              "vat_applied", "tax_total", "customer_name"])
+    for part in payments:
+        if part["method"] != Payment.MPESA:
+            continue
+        txn = part["mpesa_transaction"]
+        txn.status, txn.sale, txn.matched_by, txn.matched_at = MpesaTransaction.MATCHED, sale, user, now
+        txn.save(update_fields=["status", "sale", "matched_by", "matched_at", "updated_at"])
+        applied = {"receipt": txn.trans_id, "amount": str(txn.amount),
+                   "name_from_mpesa": bool(txn.customer_name)}
+        if len(payments) > 1:
+            applied["part_of_split"] = True
+        audit.record("mpesa.payment_applied", actor=user, object_type="sale", object_ref=number,
+                     new=applied, till_number=shift.till.number)
     etims.create_submission(sale)       # the invoice number is taken inside this same transaction
     audit.record("sale.completed", actor=user, object_type="sale", object_ref=number,
                  new={"total": str(total), "method": "+".join(dict.fromkeys(p["method"] for p in payments)),

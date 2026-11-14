@@ -114,6 +114,21 @@ class PartialRefundTests(SalesCase):
         self.assertEqual((retry_after_approval.pk, retry_after_approval.status), (first.pk, Refund.APPROVED))
         self.assertEqual(StockMovement.objects.filter(movement_type=mr.VOLUME_REFUND).count(), 1)
 
+    def test_partial_refund_payout_is_reconciled_and_cannot_be_paid_twice(self):
+        sale = self.sell(self.tot, 2)
+        refund = self.ask(sale, 1)
+        self.approve(refund)
+        refunds.pay_cash(self.cashier, self.shift, refund.pk)
+
+        with self.assertRaises(services.SaleError):
+            refunds.pay_cash(self.cashier, self.shift, refund.pk)
+
+        summary = services.shift_summary(self.shift)
+        self.assertEqual((refund.total, summary["cash_sales"], summary["cash_refunds"],
+                          summary["cash_in_drawer_expected"]),
+                         (D("100.00"), "200.00", "100.00", "5100.00"))
+        self.assertEqual(StockMovement.objects.filter(movement_type=mr.VOLUME_REFUND).count(), 1)
+
     def test_non_resalable_partial_refund_does_not_restore_liquid(self):
         sale = self.sell(self.tot, 1)
         refund = self.ask(sale, 1, restock=False)

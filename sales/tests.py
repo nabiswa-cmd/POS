@@ -231,6 +231,32 @@ class CheckoutTests(SalesCase):
         self.assertEqual(Sale.objects.get().status, Sale.OPEN)
         self.assertEqual(self.stock(), 10)
 
+    def test_finish_sale_requires_a_valid_payment_before_marking_completed(self):
+        self.scan()
+        for kwargs in (
+            {},
+            {"payment": {"method": Payment.MPESA, "reference": "NO-TRANSACTION"}},
+            {"payment": {"method": Payment.CASH, "tendered": "3500", "change_given": "1"}},
+            {"payment": {"method": Payment.CARD, "amount": "3500"}},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(services.SaleError):
+                services.finish_sale(self.cashier, self.shift, **kwargs)
+
+        self.assertEqual((self.stock(), Payment.objects.count(), Sale.objects.get().status),
+                         (10, 0, Sale.OPEN))
+
+    def test_repeated_cash_checkout_cannot_create_another_sale_or_stock_movement(self):
+        self.scan(qty=2)
+        done = services.checkout_cash(self.cashier, self.shift, "7000")
+
+        with self.assertRaises(services.SaleError):
+            services.checkout_cash(self.cashier, self.shift, "7000")
+
+        self.assertEqual((Sale.objects.filter(status=Sale.COMPLETED).count(), Payment.objects.count(),
+                          StockMovement.objects.filter(movement_type=mr.SALE).count(), self.stock()),
+                         (1, 1, 1, 8))
+        self.assertEqual(done.payments.get().amount, D("7000.00"))
+
     def test_empty_sale_cannot_be_completed(self):
         with self.assertRaises(services.SaleError):
             services.checkout_cash(self.cashier, self.shift, "100")

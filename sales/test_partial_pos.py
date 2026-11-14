@@ -3,10 +3,11 @@ from decimal import Decimal as D
 
 from catalog.models import SellingUnit
 from inventory import movement_rules as mr
+from inventory import services as stock_services
 from inventory.models import Bottle, StockMovement
 
 from . import rules
-from .models import SaleItem
+from .models import MpesaTransaction, Payment, Sale, SaleItem
 from .tests_screen import ScreenCase, post
 
 
@@ -108,6 +109,65 @@ class PartialSellingPosTests(ScreenCase):
         self.assertEqual(self.product.stock_qty, 9)
         self.assertFalse(Bottle.objects.filter(product=self.product).exists())
         self.assertEqual(StockMovement.objects.filter(reference=done["number"], movement_type=mr.SALE).count(), 1)
+
+    def test_mixed_full_and_partial_cash_checkout_and_retry_post_once(self):
+        full = post(self.c, "/api/sales/cart/add/", {"code": "6001111111111"})
+        partial = post(self.c, "/api/sales/cart/add/", {"selling_unit_id": self.tot.pk, "quantity": 2})
+        self.assertTrue(full.json()["ok"], full.json())
+        self.assertTrue(partial.json()["ok"], partial.json())
+
+        response = post(self.c, "/api/sales/checkout/cash/", {"tendered": "4000"})
+        done = response.json()
+        self.assertTrue(done["ok"], done)
+        retry = post(self.c, "/api/sales/checkout/cash/", {"tendered": "4000"})
+        self.assertEqual(retry.status_code, 400)
+
+        self.product.refresh_from_db()
+        bottle = Bottle.objects.get(product=self.product, status=Bottle.OPENED)
+        payment = Payment.objects.get(sale_id=done["sale_id"])
+        self.assertEqual((payment.amount, payment.tendered, payment.change_given),
+                         (D("3700.00"), D("4000.00"), D("300.00")))
+        self.assertEqual((self.product.stock_qty, bottle.remaining_ml), (8, D("690.00")))
+        self.assertEqual(StockMovement.objects.filter(reference=done["number"], movement_type=mr.SALE).count(), 1)
+        self.assertEqual(StockMovement.objects.filter(reference=done["number"], movement_type=mr.PARTIAL_SALE).count(), 1)
+        self.assertEqual(Sale.objects.filter(status=Sale.COMPLETED).count(), 1)
+
+    def test_mixed_mpesa_and_cash_checkout_reconciles_payment_and_inventory(self):
+        post(self.c, "/api/sales/cart/add/", {"code": "6001111111111"})
+        post(self.c, "/api/sales/cart/add/", {"selling_unit_id": self.tot.pk, "quantity": 2})
+        txn = MpesaTransaction.objects.create(trans_id="MIXEDPARTIAL1", source=MpesaTransaction.C2B,
+                                              amount=D("1000.00"))
+
+        response = post(self.c, "/api/sales/checkout/", {"mpesa_ids": [txn.pk], "cash_tendered": "2700"})
+        result = response.json()
+        self.assertTrue(result["ok"], result)
+
+        sale = Sale.objects.get(pk=result["sale_id"])
+        self.assertEqual(sum(p.amount for p in sale.payments.all()), sale.total)
+        self.assertEqual({p.method: p.amount for p in sale.payments.all()},
+                         {Payment.MPESA: D("1000.00"), Payment.CASH: D("2700.00")})
+        txn.refresh_from_db()
+        self.product.refresh_from_db()
+        self.assertEqual((txn.status, txn.sale_id), (MpesaTransaction.MATCHED, sale.pk))
+        self.assertEqual((self.product.stock_qty, Bottle.objects.get(product=self.product).remaining_ml),
+                         (8, D("690.00")))
+        self.assertEqual(StockMovement.objects.filter(reference=sale.number, movement_type=mr.PARTIAL_SALE).count(), 1)
+
+    def test_stock_shortage_after_full_movement_rolls_back_mixed_checkout(self):
+        post(self.c, "/api/sales/cart/add/", {"code": "6001111111111"})
+        post(self.c, "/api/sales/cart/add/", {"selling_unit_id": self.tot.pk, "quantity": 2})
+        stock_services.post_movement(product_id=self.product.pk, movement_type=mr.DAMAGED, quantity=-9,
+                                     user=self.manager, reason="Checkout rollback test")
+
+        response = post(self.c, "/api/sales/checkout/cash/", {"tendered": "3700"})
+        self.assertEqual(response.status_code, 400)
+        sale = Sale.objects.get()
+        self.product.refresh_from_db()
+        self.assertEqual((sale.status, sale.number, self.product.stock_qty), (Sale.OPEN, None, 1))
+        self.assertFalse(Payment.objects.exists())
+        self.assertEqual(StockMovement.objects.filter(movement_type__in=(mr.SALE, mr.BOTTLE_OPEN,
+                                                                         mr.PARTIAL_SALE)).count(), 0)
+        self.assertFalse(Bottle.objects.filter(product=self.product).exists())
 
     def test_cashier_screen_loads_configured_units_and_displays_volume(self):
         html = self.c.get("/pos/sell/").content.decode()
