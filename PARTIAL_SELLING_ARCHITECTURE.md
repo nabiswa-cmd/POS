@@ -83,6 +83,64 @@ cost basis where known. Wastage and volume adjustments follow the existing `stoc
 rules. When sealed bottles need opening, callers pass `bottle_capacity_ml`; after an opening exists, the
 service can infer capacity from the latest tracked bottle.
 
+## Phase 4: selling unit administration
+
+Managers configure measures per product and review bottle stock. Nothing here touches the POS cart, checkout
+or payments.
+
+### Where it lives
+The Django admin stays **read-only**, as it already was for every catalogue and stock model (see the docstring
+in `catalog/admin.py`): changes go through the manager screens, which check the project's role permissions and
+write the audit trail. Phase 4 improved the read-only admin (`SellingUnitAdmin`, a selling-unit inline on
+`ProductAdmin`, `BottleAdmin` with status/remaining/opened columns and a status filter) and added manager screens.
+
+| Screen | URL | Permission |
+|---|---|---|
+| Selling units list (+ add form) | `/manage/products/<id>/selling-units/` | `products.view` to look; forms need the rows below |
+| Add unit | `.../selling-units/new/` (POST) | `products.manage` + `products.change_price` |
+| Edit unit | `.../selling-units/<unit>/edit/` | `products.manage` (price field only with `products.change_price`) |
+| Turn unit on/off | `.../selling-units/<unit>/toggle/` (POST) | `products.manage` |
+| Bottles, opening history | `/manage/stock/<id>/bottles/` | `stock.view` |
+| Record wastage | `/manage/stock/<id>/bottles/wastage/` | `stock.adjust` + `stock_adjust` approval policy |
+| Adjust one bottle | `/manage/stock/<id>/bottles/<bottle>/adjust/` | `stock.adjust` + `stock_adjust` approval policy |
+| Cashier read-only list | `GET /api/catalog/products/<id>/selling-units/` | `sales.make` or `products.view` |
+
+No new permission codes and no new models or migrations: the existing codes already separate "edit products",
+"change prices", "view stock" and "adjust stock".
+
+### Rules (`catalog/services.py`: `create_selling_unit`, `update_selling_unit`, `set_selling_unit_active`)
+- Every rule is enforced in the service, not only the form; the forms only hide fields.
+- Name: required, trimmed, 40 characters, unique per product ignoring case.
+- Volume: greater than 0, at most 2 decimals, not larger than the largest bottle on record for the product
+  (no limit until a bottle has been opened). Two *active* units of one product cannot share a volume; a switched-off
+  unit does not block its volume, and turning one back on re-checks the clash.
+- Price: greater than 0 (stricter than the database, which allows 0), at most 2 decimals.
+- Units cannot be added to an inactive product or enabled while the product is inactive.
+- Units are never deleted, only switched off. Editing or disabling a unit does not alter past sales, because
+  `SaleItem` keeps its own snapshot of name, volume and price (Phase 2), and does not alter stock or bottles.
+- Unchanged values are not re-validated, so a form re-submitted with the same volume or price is a no-op with no audit entry.
+- Audit actions: `selling_unit.created`, `.updated` (name/volume), `.price_changed`, `.enabled`, `.disabled`.
+
+### Cashiers
+Default Cashier and Receiving Clerk roles hold none of the write permissions and Supervisor holds none of
+`products.manage`, `products.change_price` or `stock.adjust`, so they cannot change units, prices or inventory
+through screens or by calling the services. For selection, `catalog.services.sellable_units(product)` and
+`get_sellable_unit(unit_id)` return only active units of active products with the stored price. The Phase 5 POS
+should resolve the cashier's choice with `get_sellable_unit` and never accept a client-supplied price or volume.
+`inventory.services.sell_measures` now also refuses units of an inactive product.
+
+### Bottle screens
+`inventory.services.bottle_overview` (read-only, no lock, never raises) feeds the screen: sealed, opened and empty
+bottle counts, liquid left in opened bottles, and sealed/total liquid. Sealed liquid is reported as unknown until
+a first bottle fixes the bottle size. History lists the bottle movement types (opening, partial sale, wastage,
+adjustment) with who, approver, millilitres, remaining volume and reason, filterable by type; cost columns show
+only to people who may see costs.
+Wastage and adjustment forms call the Phase 3 `record_wastage` / `adjust_bottle_volume`, so they keep the
+reason requirement, capacity and non-negative limits, approval and audit. Each form carries a generated
+`operation_key`, so a double submit or refresh is recorded once. Approval follows `stock_adjust`: the shop owner
+(manager) acts alone and the audit log records that; everyone else needs a supervisor or manager to type their
+credentials, and nobody can approve their own request.
+
 ## Known follow-ups for later phases
 - `accounting/reports.py` sums `quantity * units_per_sale_unit` for units sold. Partial lines would be counted
   as whole units there; give them their own treatment when reports are touched.
@@ -92,3 +150,10 @@ service can infer capacity from the latest tracked bottle.
 - `Product` has no standard bottle capacity; use the explicit capacity on first opening or the capacity recorded
   by an earlier opening. Products containing mixed sealed bottle sizes need a per-product capacity source.
 - PostgreSQL append-only triggers are unaffected by these changes; verify on PostgreSQL (tests ran on SQLite).
+- `inventory.services.sell_volume` still accepts any millilitre quantity and has no permission check. The POS
+  must go through `get_sellable_unit` + `sell_measures`; consider restricting `sell_volume` when checkout is built
+  so that cashiers can only sell configured units.
+- Sealed-liquid totals stay "unknown" until a bottle has been opened once; a per-product bottle size would fix this
+  and would also allow validating selling units before the first opening.
+- Wastage is only taken from opened bottles. Writing off a whole sealed bottle still uses the Damaged/Expired
+  stock adjustment.

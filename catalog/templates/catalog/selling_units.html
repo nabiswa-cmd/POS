@@ -1,0 +1,19 @@
+{% extends "core/base.html" %}{% block title %}Selling units: {{ product.name }}{% endblock %}
+{% block content %}
+<h1>Selling units: {{ product.name }}{% if not product.active %} <span class="pill bad">inactive</span>{% endif %}</h1>
+<p class="sub">Measures this product can be sold in from an open bottle. Cashiers can only choose from the units that are turned on here, at the prices shown.</p>
+<p class="noprint"><a class="btn ghost" href="{% url 'product-detail' product.pk %}">Product</a>
+ {% if "stock.view" in perms %}<a class="btn ghost" href="{% url 'bottle-stock' product.pk %}">Bottles and opening history</a>{% endif %}</p>
+<table><tr><th>Name</th><th class="num">Volume (ml)</th><th class="num">Price</th><th>Status</th><th></th></tr>
+{% for u in units %}<tr><td><b>{{ u.name }}</b></td><td class="num">{{ u.volume_ml }}</td><td class="num">{{ u.selling_price }}</td>
+<td>{% if u.active %}<span class="pill ok">available</span>{% else %}<span class="pill bad">off</span>{% endif %}</td>
+<td class="noprint">{% if can_manage %}<a class="btn ghost" href="{% url 'selling-unit-edit' product.pk u.pk %}">Edit</a>
+<form method="post" action="{% url 'selling-unit-toggle' product.pk u.pk %}" style="display:inline">{% csrf_token %}<button class="ghost" type="submit">{% if u.active %}Turn off{% else %}Turn on{% endif %}</button></form>{% endif %}</td></tr>
+{% empty %}<tr><td colspan="5" class="muted">No selling units yet. This product can only be sold by the whole bottle.</td></tr>{% endfor %}</table>
+{% if form %}<h2>Add a selling unit</h2><div class="card noprint"><form method="post" action="{% url 'selling-unit-add' product.pk %}" class="row" autocomplete="off">{% csrf_token %}
+  <div>{{ form.name.label_tag }}{{ form.name }}</div><div>{{ form.volume_ml.label_tag }}{{ form.volume_ml }}</div><div>{{ form.selling_price.label_tag }}{{ form.selling_price }}</div>
+  <div><label style="color:var(--text)">{{ form.active }} {{ form.active.label }}</label></div>
+  <div style="flex:0 0 auto"><button type="submit">Add selling unit</button></div></form>
+  <div class="help">Examples: Bottle 750 ml, Half Bottle 375 ml, Tot 30 ml, Double Tot 60 ml, Custom Glass 100 ml. Two available units of one product cannot have the same volume.</div></div>
+{% elif can_manage and not can_price %}<p class="muted">You can rename units and turn them on or off, but setting prices needs the price permission.</p>{% endif %}
+{% endblock %}

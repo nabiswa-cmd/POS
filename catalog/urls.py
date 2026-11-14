@@ -12,6 +12,12 @@ urlpatterns = [
     path("manage/products/<int:pk>/packaging/", views.product_add_packaging, name="product-add-packaging"),
     path("manage/products/<int:pk>/packaging/<int:pack_id>/toggle/", views.product_toggle_packaging,
          name="product-toggle-packaging"),
+    path("manage/products/<int:pk>/selling-units/", views.selling_units, name="selling-units"),
+    path("manage/products/<int:pk>/selling-units/new/", views.selling_unit_add, name="selling-unit-add"),
+    path("manage/products/<int:pk>/selling-units/<int:unit_id>/edit/", views.selling_unit_edit,
+         name="selling-unit-edit"),
+    path("manage/products/<int:pk>/selling-units/<int:unit_id>/toggle/", views.selling_unit_toggle,
+         name="selling-unit-toggle"),
     path("manage/lists/", views.lists, name="lists"),
     path("manage/suppliers/", views.supplier_list, name="supplier-list"),
     path("manage/suppliers/new/", views.supplier_edit, name="supplier-new"),
@@ -24,4 +30,5 @@ urlpatterns = [
     path("manage/labels/print/", views.label_print, name="label-print"),
     path("api/catalog/lookup/", views.api_lookup, name="api-lookup"),
     path("api/catalog/search/", views.api_search, name="api-search"),
+    path("api/catalog/products/<int:pk>/selling-units/", views.api_selling_units, name="api-selling-units"),
 ]

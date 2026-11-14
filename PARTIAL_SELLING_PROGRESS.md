@@ -52,3 +52,37 @@ Verification:
 
 Next: connect the inventory service and `SaleItem` creation in checkout as a single transaction, then implement
 the POS workflow without changing payment processing.
+
+## Phase 4: selling unit administration (done)
+
+Created
+- `catalog/test_selling_units.py` (40 tests): configuration, validation, permissions, cashier selection, screens
+- `inventory/test_partial_admin.py` (31 tests): overview, bottle screens, authorized wastage and adjustments
+- `catalog/templates/catalog/selling_units.html`, `inventory/templates/inventory/bottle_stock.html`, `bottle_form.html`
+
+Modified
+- `catalog/services.py`: `create_selling_unit`, `update_selling_unit`, `set_selling_unit_active`, `sellable_units`, `get_sellable_unit`
+- `catalog/forms.py`, `catalog/views.py`, `catalog/urls.py`: `SellingUnitForm`, list/add/edit/toggle screens, read-only JSON list for cashiers
+- `catalog/admin.py`, `inventory/admin.py`: richer read-only admin (selling-unit inline, `BottleAdmin`)
+- `inventory/services.py`: `bottle_overview`; `sell_measures` refuses units of inactive products
+- `inventory/forms.py`, `inventory/views.py`, `inventory/urls.py`: bottle overview, wastage and bottle adjustment screens
+- `catalog/templates/catalog/product_detail.html`, `inventory/templates/inventory/stock_history.html`: links
+- `PARTIAL_SELLING_ARCHITECTURE.md`, `PARTIAL_SELLING_PROGRESS.md`
+
+Decisions to review
+- The Django admin was left read-only (the project's existing rule, so changes get permission checks and audit);
+  editing is on the manager screens. No new permission codes, models or migrations.
+- Prices must be above 0 in the service and form (the database only forbids negative).
+- Creating a unit needs both `products.manage` and `products.change_price`; renaming and switching on/off need only `products.manage`.
+
+Verification (SQLite, `DB_ENGINE=sqlite`)
+- `manage.py check`: no issues. `makemigrations --check`: no changes.
+- New tests: 71 pass. Full suite: 730 tests; the 24 failures/errors are exactly the same 24 as on an untouched
+  checkout (`sales.test_cashup`, `sales.test_phase4c`, `sales.tests_screen`), compared by test name.
+- Three rules (price permission, duplicate active volume, inactive-product sale) were deliberately broken to
+  confirm the tests fail when the rule is missing; one test that passed for the wrong reason was fixed.
+- Not verified: PostgreSQL (row locks, constraints) and manual use of the screens in a browser.
+
+Not done (by design): POS cart, checkout, refunds of partial lines, reports. Next: Phase 5, connect the unit
+selection (`get_sellable_unit`) and `sell_measures` to checkout in one transaction.
+

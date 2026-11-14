@@ -18,7 +18,7 @@ class ReadOnlyAdmin(admin.ModelAdmin):
 class StockMovementAdmin(ReadOnlyAdmin):
     list_display = ("created_at", "product", "movement_type", "quantity", "volume_ml", "balance_after", "user", "approved_by", "reference")
     list_filter = ("movement_type",)
-    search_fields = ("product__name", "reference", "reason")
+    search_fields = ("product__name", "reference", "reason", "operation_key")
     date_hierarchy = "created_at"
 
 
@@ -42,4 +42,11 @@ class ReceivingAdmin(ReadOnlyAdmin):
 
 
 admin.site.register(StockLot, ReadOnlyAdmin)
-admin.site.register(Bottle, ReadOnlyAdmin)
+
+
+@admin.register(Bottle)
+class BottleAdmin(ReadOnlyAdmin):
+    list_display = ("product", "status", "remaining_ml", "capacity_ml", "opened_at", "opened_by")
+    list_filter = ("status",)
+    search_fields = ("product__name", "product__sku")
+    date_hierarchy = "opened_at"

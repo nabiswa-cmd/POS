@@ -6,7 +6,9 @@
 <p class="noprint"><a class="btn ghost" data-back href="/manage/products/">Back to products</a>
  {% if "labels.print" in perms %}<a class="btn ghost" href="/manage/labels/?product={{ product.pk }}">Print labels</a>{% endif %}
  {% if "stock.view" in perms %}<a class="btn ghost" href="/manage/stock/{{ product.pk }}/">Stock history</a>{% endif %}
- {% if "stock.adjust" in perms %}<a class="btn ghost" href="/manage/stock/{{ product.pk }}/adjust/">Adjust stock</a>{% endif %}</p>
+ {% if "stock.adjust" in perms %}<a class="btn ghost" href="/manage/stock/{{ product.pk }}/adjust/">Adjust stock</a>{% endif %}
+ <a class="btn ghost" href="{% url 'selling-units' product.pk %}">Selling units</a>
+ {% if "stock.view" in perms %}<a class="btn ghost" href="{% url 'bottle-stock' product.pk %}">Bottles</a>{% endif %}</p>
 
 <h2>Codes the scanner can read</h2>
 <table><tr><th>Code</th><th>Type</th><th>Applies to</th></tr>

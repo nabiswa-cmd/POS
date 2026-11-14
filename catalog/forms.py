@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django import forms
 
 from . import codes
@@ -73,6 +75,27 @@ class PackagingForm(forms.ModelForm):
         if Packaging.objects.filter(product=self.product, name__iexact=name).exists():
             raise forms.ValidationError("This product already has a pack size with that name.")
         return name
+
+
+class SellingUnitForm(forms.Form):
+    """Add or edit a measure. The price field is removed (not just disabled) for people who may not set prices."""
+
+    name = forms.CharField(max_length=40, label="Name", help_text="For example Tot, Double Tot, Half Bottle.")
+    volume_ml = forms.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal("0.01"), label="Volume (ml)")
+    selling_price = forms.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"),
+                                       label="Selling price")
+    active = forms.BooleanField(required=False, initial=True, label="Available for sale")
+
+    def __init__(self, *args, user, unit=None, **kwargs):
+        self.unit = unit
+        if unit is not None and not args and "initial" not in kwargs:
+            kwargs["initial"] = {"name": unit.name, "volume_ml": unit.volume_ml,
+                                 "selling_price": unit.selling_price, "active": unit.active}
+        super().__init__(*args, **kwargs)
+        if unit is not None:
+            self.fields.pop("active")                 # enabling/disabling has its own button and audit entry
+        if not user.can("products.change_price"):
+            self.fields.pop("selling_price")
 
 
 class CodeForm(forms.Form):

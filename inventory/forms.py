@@ -1,3 +1,4 @@
+import uuid
 from decimal import Decimal
 
 from django import forms
@@ -33,6 +34,41 @@ class AdjustForm(forms.Form):
             elif kind in mr.POSITIVE_ONLY:
                 data["quantity"] = abs(qty)
         return data
+
+
+class _VolumeOperationForm(forms.Form):
+    """Shared by the volume wastage and bottle adjustment screens.
+
+    `operation_key` is generated when the form is first shown. Submitting the same form twice (double click,
+    browser refresh) therefore reaches the service with the same key and is recorded only once.
+    """
+
+    reason = forms.CharField(max_length=250, label="Reason")
+    reference = forms.CharField(max_length=60, required=False, label="Reference (optional)")
+    operation_key = forms.CharField(max_length=80, widget=forms.HiddenInput, initial=lambda: uuid.uuid4().hex)
+    approver_username = forms.CharField(max_length=150, required=False, label="Approver username")
+    approver_secret = forms.CharField(required=False, widget=forms.PasswordInput(render_value=False),
+                                      label="Approver password or PIN")
+
+
+class WastageForm(_VolumeOperationForm):
+    volume_ml = forms.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal("0.01"),
+                                   label="Liquid lost (ml)",
+                                   help_text="Taken from opened bottles, oldest first. Sealed bottles are never touched.")
+    field_order = ["volume_ml", "reason", "reference"]
+
+
+class BottleAdjustForm(_VolumeOperationForm):
+    volume_ml = forms.DecimalField(max_digits=10, decimal_places=2, label="Change in remaining liquid (ml)",
+                                   help_text="Plus adds liquid, minus removes it (-25 removes 25 ml). "
+                                             "The result must stay between empty and the bottle's capacity.")
+    field_order = ["volume_ml", "reason", "reference"]
+
+    def clean_volume_ml(self):
+        value = self.cleaned_data["volume_ml"]
+        if value == 0:
+            raise forms.ValidationError("The change cannot be zero.")
+        return value
 
 
 class ReceivingForm(forms.ModelForm):

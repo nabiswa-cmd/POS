@@ -12,8 +12,10 @@ from core.http import client_ip, login_required_json
 from core.models import ShopSettings
 
 from . import barcodes, labels, services
-from .forms import (BrandForm, CategoryForm, CodeForm, PackagingForm, ProductForm, ShelfForm, SupplierForm)
-from .models import Brand, Category, Packaging, Product, ProductCode, Shelf, ShelfTransfer, Supplier
+from .forms import (BrandForm, CategoryForm, CodeForm, PackagingForm, ProductForm, SellingUnitForm, ShelfForm,
+                    SupplierForm)
+from .models import (Brand, Category, Packaging, Product, ProductCode, SellingUnit, Shelf, ShelfTransfer,
+                     Supplier)
 
 PAGE_SIZE = 50
 
@@ -156,6 +158,72 @@ def product_toggle_packaging(request, pk, pack_id):
     audit.record("product.packaging_toggled", actor=request.user, object_type="product", object_ref=pk,
                  new={"packaging": pack.name, "active": pack.active}, ip=client_ip(request))
     return redirect("product-detail", pk=pk)
+
+
+# --- Selling units (measures sold from an open bottle) -----------------------------------------
+
+@perm_required("products.view")
+def selling_units(request, pk):
+    product = get_object_or_404(Product, pk=pk)
+    can_manage = request.user.can("products.manage")
+    can_create = can_manage and request.user.can("products.change_price")
+    return render(request, "catalog/selling_units.html", {
+        "product": product, "units": product.selling_units.all(), "can_manage": can_manage,
+        "can_create": can_create, "can_price": request.user.can("products.change_price"),
+        "form": SellingUnitForm(user=request.user) if can_create else None})
+
+
+@require_POST
+@perm_required("products.manage")
+def selling_unit_add(request, pk):
+    product = get_object_or_404(Product, pk=pk)
+    form = SellingUnitForm(request.POST, user=request.user)
+    if form.is_valid():
+        d = form.cleaned_data
+        try:
+            unit = services.create_selling_unit(
+                product, request.user, name=d["name"], volume_ml=d["volume_ml"],
+                selling_price=d.get("selling_price"), active=d["active"], ip=client_ip(request))
+        except services.CatalogError as exc:
+            _flash_errors(request, exc)
+        else:
+            messages.success(request, f"Added {unit.name} ({unit.volume_ml} ml).")
+    else:
+        messages.error(request, "; ".join(e for errs in form.errors.values() for e in errs))
+    return redirect("selling-units", pk=pk)
+
+
+@perm_required("products.manage")
+def selling_unit_edit(request, pk, unit_id):
+    unit = get_object_or_404(SellingUnit.objects.select_related("product"), pk=unit_id, product_id=pk)
+    form = SellingUnitForm(request.POST or None, user=request.user, unit=unit)
+    if request.method == "POST" and form.is_valid():
+        d = form.cleaned_data
+        try:
+            services.update_selling_unit(unit, request.user, name=d["name"], volume_ml=d["volume_ml"],
+                                         selling_price=d.get("selling_price"), ip=client_ip(request))
+        except services.CatalogError as exc:
+            form.add_error(None, str(exc))
+        else:
+            messages.success(request, "Selling unit saved.")
+            return redirect("selling-units", pk=pk)
+    return render(request, "core/form_page.html", {
+        "title": f"Edit {unit.name}: {unit.product.name}", "form": form, "back": f"/manage/products/{pk}/selling-units/",
+        "submit": "Save selling unit",
+        "subtitle": "Past sales keep the name, volume and price they were sold at. Changes apply to new sales only."})
+
+
+@require_POST
+@perm_required("products.manage")
+def selling_unit_toggle(request, pk, unit_id):
+    unit = get_object_or_404(SellingUnit, pk=unit_id, product_id=pk)
+    try:
+        unit = services.set_selling_unit_active(unit, request.user, not unit.active, ip=client_ip(request))
+    except services.CatalogError as exc:
+        _flash_errors(request, exc)
+    else:
+        messages.success(request, f"{unit.name} is now {'available' if unit.active else 'turned off'}.")
+    return redirect("selling-units", pk=pk)
 
 
 @perm_required("products.manage")
@@ -350,6 +418,18 @@ def api_lookup(request):
     if hit is None:
         return JsonResponse({"ok": False, "error": "Code not found."}, status=404)
     return JsonResponse({"ok": True, "item": _product_json(hit.product, hit.packaging, hit.code)})
+
+
+@require_GET
+@login_required_json
+def api_selling_units(request, pk):
+    """The measures a cashier may choose for a product: active units only, with their stored prices."""
+    if not (request.user.can("sales.make") or request.user.can("products.view")):
+        return JsonResponse({"ok": False, "error": "Not allowed."}, status=403)
+    product = get_object_or_404(Product, pk=pk)
+    units = services.sellable_units(product)
+    return JsonResponse({"ok": True, "product_id": product.pk, "units": [
+        {"id": u.pk, "name": u.name, "volume_ml": str(u.volume_ml), "price": str(u.selling_price)} for u in units]})
 
 
 @require_GET

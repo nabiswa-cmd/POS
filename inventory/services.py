@@ -223,7 +223,7 @@ def sell_measures(*, selling_unit_id, quantity, user, operation_key, bottle_capa
     except (InvalidOperation, TypeError, ValueError):
         raise StockError("Measure quantity must be a positive whole number.") from None
     selling_unit = SellingUnit.objects.select_for_update().select_related("product").get(pk=selling_unit_id)
-    if not selling_unit.active:
+    if not selling_unit.active or not selling_unit.product.active:
         raise StockError("That selling unit is inactive.")
     return sell_volume(
         product_id=selling_unit.product_id,
@@ -379,6 +379,29 @@ def partial_stock(product_id, *, bottle_capacity_ml=None):
         "opened_volume_ml": opened_volume,
         "sealed_volume_ml": sealed_volume,
         "total_volume_ml": sealed_volume + opened_volume,
+    }
+
+
+def bottle_overview(product_id):
+    """Read-only counts for the manager screen: sealed, opened and empty bottles and the liquid left.
+
+    Unlike partial_stock this takes no row lock and never raises: when no bottle has ever been opened the
+    bottle size is unknown, so the sealed volume is reported as None instead of guessed.
+    """
+    product = Product.objects.get(pk=product_id)
+    capacity = _known_capacity(product.pk)
+    opened = Bottle.objects.filter(product=product, status=Bottle.OPENED)
+    opened_volume = sum(opened.values_list("remaining_ml", flat=True), Decimal("0.00"))
+    sealed_volume = product.stock_qty * capacity if capacity is not None else (None if product.stock_qty else Decimal("0.00"))
+    total = None if sealed_volume is None else sealed_volume + opened_volume
+    return {
+        "sealed_bottles": product.stock_qty,
+        "opened_bottles": opened.count(),
+        "empty_bottles": Bottle.objects.filter(product=product, status=Bottle.EMPTY).count(),
+        "opened_volume_ml": opened_volume,
+        "bottle_capacity_ml": capacity,
+        "sealed_volume_ml": sealed_volume,
+        "total_volume_ml": total,
     }
 
 

@@ -1,0 +1,27 @@
+{% extends "core/base.html" %}{% block title %}{{ product.name }} bottles{% endblock %}
+{% block content %}<h1>{{ product.name }}: bottles and measures</h1>
+<p class="sub">Sealed bottles are counted in normal stock. A bottle becomes "opened" when its first measure is sold, and its liquid is tracked in millilitres until it is empty.</p>
+<p class="noprint"><a class="btn ghost" data-back href="{% url 'stock-history' product.pk %}">Stock history</a> <a class="btn ghost" href="{% url 'product-detail' product.pk %}">Product</a> <a class="btn ghost" href="{% url 'selling-units' product.pk %}">Selling units</a>{% if can_adjust %} <a class="btn" href="{% url 'bottle-wastage' product.pk %}">Record wastage</a>{% endif %}</p>
+<div class="card"><div class="row">
+<div><div class="muted">Sealed bottles</div><b>{{ overview.sealed_bottles }}</b></div>
+<div><div class="muted">Opened bottles</div><b>{{ overview.opened_bottles }}</b></div>
+<div><div class="muted">Empty bottles</div><b>{{ overview.empty_bottles }}</b></div>
+<div><div class="muted">Liquid left in opened bottles</div><b>{{ overview.opened_volume_ml }} ml</b></div>
+<div><div class="muted">Sealed liquid</div><b>{% if overview.sealed_volume_ml is None %}unknown{% else %}{{ overview.sealed_volume_ml }} ml{% endif %}</b></div>
+<div><div class="muted">Total liquid</div><b>{% if overview.total_volume_ml is None %}unknown{% else %}{{ overview.total_volume_ml }} ml{% endif %}</b></div></div>
+{% if overview.sealed_volume_ml is None %}<div class="help">The bottle size is learned when the first bottle is opened, so sealed liquid is not shown until then.</div>{% endif %}</div>
+
+<h2>Opened bottles</h2>
+<table><tr><th>Opened</th><th>By</th><th class="num">Remaining (ml)</th><th class="num">Capacity (ml)</th><th></th></tr>
+{% for b in opened %}<tr><td>{{ b.opened_at|date:"d M Y H:i" }}</td><td>{{ b.opened_by.display_name|default:"" }}</td><td class="num">{{ b.remaining_ml }}</td><td class="num">{{ b.capacity_ml }}</td>
+<td class="noprint">{% if can_adjust %}<a class="btn ghost" href="{% url 'bottle-adjust' product.pk b.pk %}">Adjust</a>{% endif %}</td></tr>
+{% empty %}<tr><td colspan="5" class="muted">No opened bottles.</td></tr>{% endfor %}</table>
+{% if empties %}<h2>Recently emptied</h2><table><tr><th>Opened</th><th class="num">Capacity (ml)</th><th></th></tr>
+{% for b in empties %}<tr><td>{{ b.opened_at|date:"d M Y H:i" }}</td><td class="num">{{ b.capacity_ml }}</td><td class="noprint">{% if can_adjust %}<a class="btn ghost" href="{% url 'bottle-adjust' product.pk b.pk %}">Adjust</a>{% endif %}</td></tr>{% endfor %}</table>{% endif %}
+
+<h2>Opening, sales, wastage and adjustment history</h2>
+<form method="get" class="noprint"><select name="type" aria-label="Type" onchange="this.form.submit()"><option value="">All types</option>{% for value, label in types %}<option value="{{ value }}"{% if value == kind %} selected{% endif %}>{{ label }}</option>{% endfor %}</select> <button class="ghost" type="submit">Filter</button></form>
+<table><tr><th>When</th><th>Type</th><th class="num">Volume (ml)</th><th class="num">Left in bottle</th>{% if show_cost %}<th class="num">Cost</th>{% endif %}<th>By</th><th>Approved by</th><th>Reference / reason</th></tr>
+{% for m in page %}<tr><td>{{ m.created_at|date:"d M Y H:i" }}</td><td>{{ m.get_movement_type_display }}</td><td class="num">{{ m.volume_ml }}</td><td class="num">{{ m.bottle_remaining_after_ml|default_if_none:"" }}</td>{% if show_cost %}<td class="num">{{ m.total_cost|default_if_none:"" }}</td>{% endif %}<td>{{ m.user.display_name }}</td><td>{{ m.approved_by.display_name|default:"" }}</td><td>{{ m.reference }} {{ m.reason }}</td></tr>
+{% empty %}<tr><td colspan="8" class="muted">Nothing recorded yet.</td></tr>{% endfor %}</table>
+<p class="noprint">{% if page.has_previous %}<a href="?{% if kind %}type={{ kind }}&amp;{% endif %}page={{ page.previous_page_number }}">Previous</a> {% endif %}Page {{ page.number }} of {{ page.paginator.num_pages }}{% if page.has_next %} <a href="?{% if kind %}type={{ kind }}&amp;{% endif %}page={{ page.next_page_number }}">Next</a>{% endif %}</p>{% endblock %}

@@ -14,8 +14,9 @@ from core.decorators import perm_required
 from core.http import client_ip
 
 from . import services
-from .forms import AdjustForm, ReceivingForm, ReceivingItemForm
-from .models import Receiving, StockMovement
+from . import movement_rules as mr
+from .forms import AdjustForm, BottleAdjustForm, ReceivingForm, ReceivingItemForm, WastageForm
+from .models import Bottle, Receiving, StockMovement
 
 PAGE_SIZE = 50
 VALUE = ExpressionWrapper(F("stock_qty") * F("avg_cost"), output_field=DecimalField(max_digits=18, decimal_places=4))
@@ -78,6 +79,89 @@ def stock_adjust(request, pk):
             return redirect("stock-history", pk=pk)
     return render(request, "inventory/stock_adjust.html", {"product": product, "form": form,
                                                            "needs_approver": needs_approver, "stock_text": product.stock_text()})
+
+
+# --- Bottles and measures (partial selling) ---------------------------------------------------
+
+def _approval_token(request, form, product, needs_approver):
+    """Same rule as stock_adjust: when approval is required the approver types their own credentials."""
+    if not needs_approver:
+        return None
+    d = form.cleaned_data
+    if not d["approver_username"] or not d["approver_secret"]:
+        raise services.StockError("A supervisor or manager must approve this. "
+                                  "They type their own username and password or PIN below.")
+    token, _approval = auth_services.grant_approval(
+        action="stock_adjust", approver_username=d["approver_username"], secret=d["approver_secret"],
+        reason=d["reason"], requester=request.user, object_ref=str(product.pk), ip=client_ip(request))
+    return token
+
+
+@perm_required("stock.view")
+def bottle_stock(request, pk):
+    product = get_object_or_404(Product, pk=pk)
+    kind = request.GET.get("type", "")
+    history = StockMovement.objects.filter(product=product, movement_type__in=mr.BOTTLE_TYPES)
+    if kind in mr.BOTTLE_TYPES:
+        history = history.filter(movement_type=kind)
+    else:
+        kind = ""
+    history = history.select_related("user", "approved_by", "bottle")
+    page = Paginator(history, PAGE_SIZE).get_page(request.GET.get("page"))
+    return render(request, "inventory/bottle_stock.html", {
+        "product": product, "overview": services.bottle_overview(product.pk),
+        "opened": Bottle.objects.filter(product=product, status=Bottle.OPENED).select_related("opened_by"),
+        "empties": Bottle.objects.filter(product=product, status=Bottle.EMPTY).order_by("-pk")[:10],
+        "page": page, "kind": kind, "types": [(t, mr.LABELS[t]) for t in sorted(mr.BOTTLE_TYPES)],
+        "show_cost": can_see_cost(request.user), "can_adjust": request.user.can("stock.adjust"),
+        "selling_units": product.selling_units.all()})
+
+
+@perm_required("stock.adjust")
+def bottle_wastage(request, pk):
+    product = get_object_or_404(Product, pk=pk)
+    form = WastageForm(request.POST or None)
+    needs_approver = auth_services.needs_approval(request.user, "stock_adjust")
+    if request.method == "POST" and form.is_valid():
+        d = form.cleaned_data
+        try:
+            token = _approval_token(request, form, product, needs_approver)
+            services.record_wastage(product_id=product.pk, volume_ml=d["volume_ml"], user=request.user,
+                                    operation_key=d["operation_key"], reason=d["reason"], reference=d["reference"],
+                                    approval_token=token, ip=client_ip(request))
+        except (auth_services.AuthError, services.StockError) as exc:
+            form.add_error(None, str(exc))
+        else:
+            messages.success(request, "Wastage recorded.")
+            return redirect("bottle-stock", pk=pk)
+    return render(request, "inventory/bottle_form.html", {
+        "product": product, "form": form, "needs_approver": needs_approver, "title": f"Record wastage: {product.name}",
+        "intro": "Use this for liquid that was spilled, spoiled or poured away from opened bottles.",
+        "submit": "Record wastage"})
+
+
+@perm_required("stock.adjust")
+def bottle_adjust(request, pk, bottle_id):
+    product = get_object_or_404(Product, pk=pk)
+    bottle = get_object_or_404(Bottle, pk=bottle_id, product=product)
+    form = BottleAdjustForm(request.POST or None)
+    needs_approver = auth_services.needs_approval(request.user, "stock_adjust")
+    if request.method == "POST" and form.is_valid():
+        d = form.cleaned_data
+        try:
+            token = _approval_token(request, form, product, needs_approver)
+            services.adjust_bottle_volume(bottle_id=bottle.pk, volume_ml=d["volume_ml"], user=request.user,
+                                          operation_key=d["operation_key"], reason=d["reason"],
+                                          reference=d["reference"], approval_token=token, ip=client_ip(request))
+        except (auth_services.AuthError, services.StockError) as exc:
+            form.add_error(None, str(exc))
+        else:
+            messages.success(request, "Bottle volume adjusted and recorded.")
+            return redirect("bottle-stock", pk=pk)
+    return render(request, "inventory/bottle_form.html", {
+        "product": product, "form": form, "needs_approver": needs_approver, "submit": "Record adjustment",
+        "title": f"Adjust bottle: {product.name}",
+        "intro": f"This bottle holds {bottle.remaining_ml} ml of {bottle.capacity_ml} ml ({bottle.get_status_display().lower()})."})
 
 
 # --- Receiving --------------------------------------------------------------------------------
