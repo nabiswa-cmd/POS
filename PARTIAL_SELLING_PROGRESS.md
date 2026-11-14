@@ -83,6 +83,37 @@ Verification (SQLite, `DB_ENGINE=sqlite`)
   confirm the tests fail when the rule is missing; one test that passed for the wrong reason was fixed.
 - Not verified: PostgreSQL (row locks, constraints) and manual use of the screens in a browser.
 
-Not done (by design): POS cart, checkout, refunds of partial lines, reports. Next: Phase 5, connect the unit
-selection (`get_sellable_unit`) and `sell_measures` to checkout in one transaction.
+At the end of Phase 4, POS cart, checkout, refunds of partial lines and reports remained.
+
+## Phase 5: cashier POS integration (done)
+
+Implemented manager-configured capacity and connected configured selling units to the existing cashier POS.
+
+Created
+- `catalog/migrations/0004_product_bottle_capacity_ml_and_more.py`
+- `sales/test_partial_pos.py`
+
+Modified
+- `catalog/models.py`, `catalog/forms.py`, `catalog/services.py`: nullable per-product bottle capacity, form
+  validation, capacity-change safety checks, and audit entries.
+- `inventory/services.py`: configured capacity is used for first bottle openings; historical bottle capacity is
+  the fallback when no product capacity is set. Product-before-unit locking is consistent across configuration
+  and checkout.
+- `sales/services.py`: server-resolved selling-unit cart lines, volume-aware quantity edits and reservation
+  checks, and atomic checkout movements for full bottles and partial liquid.
+- `sales/views.py`, `sales/templates/sales/pos.html`: load configured units from the backend, select unit and
+  quantity, preserve barcode/package and search behavior, and show unit/price/volume in the cart.
+- `sales/receipt.py`: partial lines include the saved selling-unit name.
+- `catalog/tests.py`: manager capacity, audit, active-unit limit, and sealed-stock immutability tests.
+- `PARTIAL_SELLING_ARCHITECTURE.md`
+
+Verification (SQLite)
+- Focused Phase 5 and manager-capacity tests: 16 pass.
+- Catalog, inventory, and sales suites: 456 tests run; all Phase 5 tests pass. The same 24 pre-existing failures
+  documented in Phase 4 remain in `sales.test_cashup`, `sales.test_phase4c`, and legacy `sales.tests_screen`;
+  no new failure is reported by the suite.
+- `manage.py check`: no issues. `makemigrations --check --dry-run`: no changes detected.
+- PostgreSQL concurrency behavior and manual browser interaction were not verified.
+
+Payment processing was not changed. Partial refunds and accounting/report treatment remain follow-ups.
 

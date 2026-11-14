@@ -195,6 +195,9 @@ def _change_bottle_volume(*, product, bottle, volume_ml, movement_type, user, op
 
 
 def _known_capacity(product_id):
+    configured = Product.objects.filter(pk=product_id).values_list("bottle_capacity_ml", flat=True).first()
+    if configured is not None:
+        return configured
     return (Bottle.objects.filter(product_id=product_id).order_by("-created_at", "-pk")
             .values_list("capacity_ml", flat=True).first())
 
@@ -206,6 +209,9 @@ def open_bottle(*, product_id, capacity_ml, user, operation_key, reference="", r
     key = _operation_key(operation_key)
     product = _lock_product(product_id)
     _ensure_operation_unused(key)
+    known_capacity = _known_capacity(product.pk)
+    if known_capacity is not None and capacity != known_capacity:
+        raise StockError(f"Use the configured bottle capacity of {known_capacity} ml.")
     bottle, _movement = _open_bottle_locked(
         product=product, capacity_ml=capacity, user=user, operation_key=key, operation_sequence=0,
         reference=reference, reason=reason)
@@ -222,14 +228,23 @@ def sell_measures(*, selling_unit_id, quantity, user, operation_key, bottle_capa
             raise InvalidOperation
     except (InvalidOperation, TypeError, ValueError):
         raise StockError("Measure quantity must be a positive whole number.") from None
-    selling_unit = SellingUnit.objects.select_for_update().select_related("product").get(pk=selling_unit_id)
-    if not selling_unit.active or not selling_unit.product.active:
+    key = _operation_key(operation_key)
+    try:
+        product_id = SellingUnit.objects.values_list("product_id", flat=True).get(pk=selling_unit_id)
+    except (SellingUnit.DoesNotExist, TypeError, ValueError):
+        raise StockError("That selling unit is not available.") from None
+    product = _lock_product(product_id)
+    try:
+        selling_unit = SellingUnit.objects.select_for_update().get(pk=selling_unit_id, product=product)
+    except (SellingUnit.DoesNotExist, TypeError, ValueError):
+        raise StockError("That selling unit is not available.") from None
+    if not selling_unit.active or not product.active:
         raise StockError("That selling unit is inactive.")
     return sell_volume(
         product_id=selling_unit.product_id,
         volume_ml=selling_unit.volume_ml * int(measure_count),
         user=user,
-        operation_key=operation_key,
+        operation_key=key,
         bottle_capacity_ml=bottle_capacity_ml,
         reference=reference,
         reason=reason)
@@ -246,7 +261,11 @@ def sell_volume(*, product_id, volume_ml, user, operation_key, bottle_capacity_m
         product=product, status=Bottle.OPENED, remaining_ml__gt=0).order_by("opened_at", "pk"))
     available_open_ml = sum((bottle.remaining_ml for bottle in bottles), Decimal("0.00"))
     needed_ml = max(requested - available_open_ml, Decimal("0.00"))
-    capacity = _volume(bottle_capacity_ml, positive=True) if bottle_capacity_ml is not None else _known_capacity(product.pk)
+    known_capacity = _known_capacity(product.pk)
+    supplied_capacity = _volume(bottle_capacity_ml, positive=True) if bottle_capacity_ml is not None else None
+    if known_capacity is not None and supplied_capacity is not None and known_capacity != supplied_capacity:
+        raise StockError(f"Use the configured bottle capacity of {known_capacity} ml.")
+    capacity = known_capacity or supplied_capacity
     if needed_ml and capacity is None:
         raise StockError("Bottle capacity is required before opening the first bottle.")
     sealed_needed = int((needed_ml / capacity).to_integral_value(rounding="ROUND_CEILING")) if needed_ml else 0
@@ -385,8 +404,8 @@ def partial_stock(product_id, *, bottle_capacity_ml=None):
 def bottle_overview(product_id):
     """Read-only counts for the manager screen: sealed, opened and empty bottles and the liquid left.
 
-    Unlike partial_stock this takes no row lock and never raises: when no bottle has ever been opened the
-    bottle size is unknown, so the sealed volume is reported as None instead of guessed.
+    Unlike partial_stock this takes no row lock and never raises: when no bottle has ever been opened and the
+    product has no configured capacity, sealed volume is reported as None instead of guessed.
     """
     product = Product.objects.get(pk=product_id)
     capacity = _known_capacity(product.pk)

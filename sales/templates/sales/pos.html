@@ -168,14 +168,16 @@
     if (!c.items.length) {
       box.innerHTML = '<div class="empty">Scan a product to start the sale.</div>';
     } else {
-      var h = '<table><thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Total</th></tr></thead><tbody>';
+      var h = '<table><thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Volume</th><th class="num">Total</th></tr></thead><tbody>';
       c.items.forEach(function (it, i) {
         var sub = [];
         if (it.pack) sub.push(esc(it.pack));
+        if (it.selling_unit) sub.push(esc(it.selling_unit));
         if (Number(it.discount) > 0) sub.push("Discount -" + fmt(it.discount));
         if (it.price_changed) sub.push("Price changed (list " + fmt(it.list_price) + ")");
         h += '<tr class="' + (i === S.sel ? "sel" : "") + '"><td>' + esc(it.name) + (sub.length ? "<small>" + sub.join(" &middot; ") + "</small>" : "") +
-          '</td><td class="num">' + it.quantity + '</td><td class="num">' + fmt(it.unit_price) + '</td><td class="num"><b>' + fmt(it.line_total) + "</b></td></tr>";
+          '</td><td class="num">' + it.quantity + '</td><td class="num">' + fmt(it.unit_price) + '</td><td class="num">' +
+          (it.total_volume_ml == null ? "—" : fmt(it.total_volume_ml) + " ml") + '</td><td class="num"><b>' + fmt(it.line_total) + "</b></td></tr>";
       });
       box.innerHTML = h + "</tbody></table>";
       var row = box.querySelector("tr.sel"); if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
@@ -247,14 +249,58 @@
     var qty = 1, code = raw, m = raw.match(/^(\d{1,4})\s*[*x]\s*(.+)$/i);
     if (m) { qty = parseInt(m[1], 10); code = m[2]; }
     say("");
-    act("/api/sales/cart/add/", { code: code, quantity: qty }).then(function (r) {
-      if (r.ok) { var it = selItem(); if (it) say("Added: " + it.name + "  x" + it.quantity + "  =  " + fmt(it.line_total), "ok"); }
+    api("GET", "/api/catalog/lookup/?code=" + encodeURIComponent(code)).then(function (r) {
+      if (!r.ok) { say(r.error || "Code not found.", "err"); return; }
+      if (r.item.pack) { addCodeToCart(code, qty); return; }
+      chooseSellingUnit(r.item, qty, code);
+    });
+  }
+  function addedMessage(r) {
+    if (r.ok) {
+      var it = selItem();
+      if (it) say("Added: " + it.name + (it.selling_unit ? " · " + it.selling_unit + " · " + fmt(it.total_volume_ml) + " ml" : "") +
+        "  x" + it.quantity + "  =  " + fmt(it.line_total), "ok");
+    }
+  }
+  function addCodeToCart(code, qty) {
+    act("/api/sales/cart/add/", { code: code, quantity: qty }).then(addedMessage);
+  }
+  function addBaseProduct(p, qty, code) {
+    var body = code ? { code: code, quantity: qty } : { product_id: p.product_id, quantity: qty };
+    act("/api/sales/cart/add/", body).then(addedMessage);
+  }
+  function chooseSellingUnit(p, qty, code) {
+    api("GET", "/api/catalog/products/" + p.product_id + "/selling-units/").then(function (r) {
+      if (!r.ok) { say(r.error || "Could not load selling units.", "err"); return; }
+      var units = r.units || [];
+      if (!units.length) { addBaseProduct(p, qty, code); return; }
+      var choices = '<option value="base">' + esc(p.base_unit || "Unit") + ' · KSh ' + esc(fmt(p.unit_price)) + '</option>';
+      units.forEach(function (u) {
+        choices += '<option value="' + esc(u.id) + '">' + esc(u.name) + ' · ' + esc(fmt(u.volume_ml)) +
+          ' ml · KSh ' + esc(fmt(u.price)) + '</option>';
+      });
+      var d = openDialog('<h2>' + esc(p.name) + '</h2><p class="note">Choose the selling unit and quantity.</p>' +
+        '<label for="su-unit">Selling unit</label><select id="su-unit" data-first>' + choices + '</select>' +
+        '<label for="su-qty">Quantity</label><input id="su-qty" type="number" min="1" step="1" value="' + esc(qty || 1) + '">' +
+        '<div class="err" id="su-err"></div><div class="btns"><button class="ghost" id="su-cancel" type="button">Cancel (Esc)</button>' +
+        '<button id="su-add" type="button">Add to cart (Enter)</button></div>');
+      var go = function () {
+        var q = $("su-qty").value.trim();
+        if (!/^\d{1,4}$/.test(q) || parseInt(q, 10) < 1) { $("su-err").textContent = "Enter a whole number from 1 to 9999."; return; }
+        var selected = $("su-unit").value;
+        closeDialog(d);
+        if (selected === "base") { addBaseProduct(p, parseInt(q, 10), code); }
+        else {
+          act("/api/sales/cart/add/", { selling_unit_id: parseInt(selected, 10), quantity: parseInt(q, 10) })
+            .then(addedMessage);
+        }
+      };
+      $("su-add").onclick = go; $("su-cancel").onclick = function () { closeDialog(d); };
+      d.onKey = function (e) { if (e.key === "Enter") { e.preventDefault(); go(); return true; } return false; };
     });
   }
   function addProduct(p, qty) {
-    act("/api/sales/cart/add/", { product_id: p.product_id, quantity: qty || 1 }).then(function (r) {
-      if (r.ok) { var it = selItem(); if (it) say("Added: " + it.name + "  x" + it.quantity, "ok"); }
-    });
+    chooseSellingUnit(p, qty || 1, null);
   }
   function removeSelected() {
     var it = selItem(); if (!it) { say("Select a line first (Up / Down).", "err"); return; }

@@ -138,12 +138,25 @@ def _recalc(sale):
     return sale
 
 
-def _check_stock(product, wanted_base):
+def _check_stock(product, wanted_base, sale=None):
     product.refresh_from_db(fields=["stock_qty", "active", "name", "base_unit"])
     if not product.active:
         raise SaleError(f"'{product.name}' is not on sale.")
     if wanted_base > product.stock_qty:
         raise SaleError(f"Only {max(product.stock_qty, 0)} {product.base_unit} of '{product.name}' in stock.")
+    if sale is not None:
+        partial_ml = _in_cart_volume(sale, product)
+        if partial_ml:
+            overview = stock_services.bottle_overview(product.pk)
+            remaining_sealed = product.stock_qty - wanted_base
+            available_ml = overview["opened_volume_ml"]
+            capacity = overview["bottle_capacity_ml"]
+            if remaining_sealed and capacity is None and partial_ml > available_ml:
+                raise SaleError(f"Ask a manager to set the bottle capacity for '{product.name}' before partial sales.")
+            if capacity is not None:
+                available_ml += remaining_sealed * capacity
+            if partial_ml > available_ml:
+                raise SaleError(f"Only {available_ml} ml remain for partial sales of '{product.name}' in this cart.")
 
 
 def _in_cart_base(sale, product, exclude_item_id=None):
@@ -152,6 +165,33 @@ def _in_cart_base(sale, product, exclude_item_id=None):
         if it.pk != exclude_item_id:
             total += it.base_qty
     return total
+
+
+def _in_cart_volume(sale, product, exclude_item_id=None):
+    lines = sale.items.filter(product=product, total_volume_ml__isnull=False)
+    if exclude_item_id is not None:
+        lines = lines.exclude(pk=exclude_item_id)
+    return sum(lines.values_list("total_volume_ml", flat=True), Decimal("0.00"))
+
+
+def _check_partial_stock(sale, product, requested_volume, *, exclude_item_id=None):
+    product.refresh_from_db(fields=["stock_qty", "active", "name", "base_unit"])
+    if not product.active:
+        raise SaleError(f"'{product.name}' is not on sale.")
+    full_reserved = _in_cart_base(sale, product)
+    if full_reserved > product.stock_qty:
+        raise SaleError(f"Only {max(product.stock_qty, 0)} {product.base_unit} of '{product.name}' in stock.")
+    partial_reserved = _in_cart_volume(sale, product, exclude_item_id)
+    overview = stock_services.bottle_overview(product.pk)
+    remaining_sealed = max(product.stock_qty - full_reserved, 0)
+    capacity = overview["bottle_capacity_ml"]
+    available_ml = overview["opened_volume_ml"]
+    if remaining_sealed and capacity is None and partial_reserved + requested_volume > available_ml:
+        raise SaleError(f"Ask a manager to set the bottle capacity for '{product.name}' before partial sales.")
+    if capacity is not None:
+        available_ml += remaining_sealed * capacity
+    if partial_reserved + requested_volume > available_ml:
+        raise SaleError(f"Only {available_ml} ml remain for partial sales of '{product.name}' in this cart.")
 
 
 # --- reading ------------------------------------------------------------------------------------
@@ -163,13 +203,22 @@ def active_sale(user, shift):
 # --- building the cart ---------------------------------------------------------------------------
 
 @transaction.atomic
-def add_item(user, shift, *, code=None, product_id=None, packaging_id=None, quantity=1):
-    """Scan or pick a product. Scanning the same product again adds to its line."""
+def add_item(user, shift, *, code=None, product_id=None, packaging_id=None, selling_unit_id=None, quantity=1):
+    """Scan or pick a base product, pack, or server-configured partial selling unit."""
     _need(user, "sales.make", "You are not allowed to use the POS.")
     _shift_still_open(shift)
     qty = _rule(rules.parse_quantity, quantity)
 
-    if code:
+    selling_unit = None
+    if selling_unit_id not in (None, ""):
+        if code or product_id or packaging_id:
+            raise SaleError("Choose either a selling unit or a product code.")
+        try:
+            selling_unit = catalog_services.get_sellable_unit(selling_unit_id)
+        except (catalog_services.CatalogError, TypeError, ValueError):
+            raise SaleError("That selling unit is not available.") from None
+        product, packaging = selling_unit.product, None
+    elif code:
         hit = catalog_services.find_by_code(code)
         if hit is None:
             raise SaleError("Code not found. Check the label or search by name.")
@@ -186,23 +235,34 @@ def add_item(user, shift, *, code=None, product_id=None, packaging_id=None, quan
                 raise SaleError("That pack size is not available.")
 
     units = packaging.units_per_pack if packaging else 1
-    price = packaging.price if packaging else product.selling_price
+    price = selling_unit.selling_price if selling_unit else packaging.price if packaging else product.selling_price
     if price <= 0:
         raise SaleError(f"'{product.name}' has no selling price. Ask the manager to set one.")
 
     sale = _locked_sale(user, shift, create=True)
-    _check_stock(product, _in_cart_base(sale, product) + qty * units)
+    if selling_unit:
+        _check_partial_stock(sale, product, selling_unit.volume_ml * qty)
+    else:
+        _check_stock(product, _in_cart_base(sale, product) + qty * units, sale=sale)
 
     line = (sale.items.select_for_update()
-            .filter(product=product, packaging=packaging, discount=0, unit_price=price, list_price=price).first())
+            .filter(product=product, packaging=packaging, selling_unit=selling_unit,
+                    discount=0, unit_price=price, list_price=price).first())
     if line:
         line.quantity += qty
         line.line_total = rules.line_total(line.quantity, line.unit_price, 0)
-        line.save(update_fields=["quantity", "line_total"])
+        fields = ["quantity", "line_total"]
+        if selling_unit:
+            line.total_volume_ml = line.quantity * line.volume_per_unit_ml
+            fields.append("total_volume_ml")
+        line.save(update_fields=fields)
     else:
         line = SaleItem.objects.create(
             sale=sale, product=product, packaging=packaging, product_name=product.name,
             pack_name=packaging.name if packaging else "", units_per_sale_unit=units, quantity=qty,
+            selling_unit=selling_unit, selling_unit_name=selling_unit.name if selling_unit else "",
+            volume_per_unit_ml=selling_unit.volume_ml if selling_unit else None,
+            total_volume_ml=selling_unit.volume_ml * qty if selling_unit else None,
             list_price=price, unit_price=price, discount=Decimal("0.00"),
             line_total=rules.line_total(qty, price, 0))
     _recalc(sale)
@@ -223,13 +283,20 @@ def set_quantity(user, shift, item_id, quantity, *, approval_token=None):
     approval = None
     if new_qty < old_qty:
         approval = _approve(user, "remove_item", rules.item_ref(sale.pk, item.pk), approval_token)
+    elif item.is_partial:
+        _check_partial_stock(sale, item.product, item.volume_per_unit_ml * new_qty, exclude_item_id=item.pk)
     else:
-        _check_stock(item.product, _in_cart_base(sale, item.product, item.pk) + new_qty * item.units_per_sale_unit)
+        _check_stock(item.product, _in_cart_base(sale, item.product, item.pk) + new_qty * item.units_per_sale_unit,
+                     sale=sale)
     item.quantity = new_qty
     item.line_total = _rule(rules.line_total, new_qty, item.unit_price, 0)
     item.discount = Decimal("0.00")          # a discount was worked out for the old quantity
     item.discount_approved_by = None
-    item.save(update_fields=["quantity", "line_total", "discount", "discount_approved_by"])
+    fields = ["quantity", "line_total", "discount", "discount_approved_by"]
+    if item.is_partial:
+        item.total_volume_ml = item.volume_per_unit_ml * new_qty
+        fields.append("total_volume_ml")
+    item.save(update_fields=fields)
     _recalc(sale)
     if new_qty < old_qty:
         audit.record("sale.item_quantity_reduced", actor=user, approver=_authority(user, approval),
@@ -456,15 +523,30 @@ def finish_sale(user, shift, *, payment=None, payments=None, customer_name=""):
         by_product[item.product_id].append(item)
     for product_id in sorted(by_product):
         lines = by_product[product_id]
-        base_total = sum(i.base_qty for i in lines)
-        try:
-            movement = stock_services.post_movement(
-                product_id=product_id, movement_type=mr.SALE, quantity=-base_total, user=user, reference=number)
-        except stock_services.StockError as exc:
-            raise SaleError(str(exc)) from exc
-        for line, cost in zip(lines, rules.allocate_cost(movement.total_cost, [i.base_qty for i in lines])):
-            line.cost_total = cost
-            line.save(update_fields=["cost_total"])      # the sale is still OPEN here, so this is allowed
+        full_lines = [line for line in lines if not line.is_partial]
+        base_total = sum(i.base_qty for i in full_lines)
+        if base_total:
+            try:
+                movement = stock_services.post_movement(
+                    product_id=product_id, movement_type=mr.SALE, quantity=-base_total, user=user, reference=number)
+            except stock_services.StockError as exc:
+                raise SaleError(str(exc)) from exc
+            for line, cost in zip(full_lines, rules.allocate_cost(movement.total_cost,
+                                                                   [i.base_qty for i in full_lines])):
+                line.cost_total = cost
+                line.save(update_fields=["cost_total"])  # the sale is still OPEN here, so this is allowed
+        for line in lines:
+            if not line.is_partial:
+                continue
+            try:
+                movements = stock_services.sell_volume(
+                    product_id=line.product_id, volume_ml=line.total_volume_ml, user=user,
+                    operation_key=f"sale-{number}-item-{line.pk}", reference=number)
+            except stock_services.StockError as exc:
+                raise SaleError(str(exc)) from exc
+            line.cost_total = sum((movement.total_cost or Decimal("0.00") for movement in movements
+                                   if movement.movement_type == mr.PARTIAL_SALE), Decimal("0.00"))
+            line.save(update_fields=["cost_total"])
 
     # VAT snapshot. Prices already include VAT; we only record how much of each line is tax. If the shop is
     # not VAT registered every figure stays zero and the receipt shows no VAT at all.

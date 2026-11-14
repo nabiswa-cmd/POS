@@ -13,7 +13,8 @@ class ProductForm(forms.ModelForm):
     class Meta:
         model = Product
         fields = ["name", "brand", "category", "description", "sku", "base_unit", "buying_cost", "selling_price",
-                  "wholesale_price", "min_selling_price", "tax_class", "etims_item_class_code", "reorder_level", "supplier", "shelf", "image", "active"]
+                  "wholesale_price", "min_selling_price", "bottle_capacity_ml", "tax_class", "etims_item_class_code",
+                  "reorder_level", "supplier", "shelf", "image", "active"]
         widgets = {"description": forms.Textarea(attrs={"rows": 2})}
 
     def __init__(self, *args, user, **kwargs):
@@ -57,6 +58,16 @@ class ProductForm(forms.ModelForm):
             self.add_error("min_selling_price", "The minimum price cannot be above the selling price.")
         if selling is not None and wholesale is not None and wholesale > selling:
             self.add_error("wholesale_price", "The wholesale price cannot be above the selling price.")
+        capacity = data.get("bottle_capacity_ml")
+        if self.instance.pk:
+            active_units = self.instance.selling_units.filter(active=True)
+            if capacity is None and active_units.exists():
+                from inventory.models import Bottle
+
+                if not Bottle.objects.filter(product_id=self.instance.pk).exists():
+                    self.add_error("bottle_capacity_ml", "Set a bottle capacity while selling units are active.")
+            elif capacity is not None and active_units.filter(volume_ml__gt=capacity).exists():
+                self.add_error("bottle_capacity_ml", "Capacity cannot be smaller than an active selling unit.")
         return data
 
 

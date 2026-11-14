@@ -48,7 +48,8 @@ def build_receipt(sale, *, duplicate=False):
         "customer_pin": sale.customer_pin,
         "item_tax_codes": bool(sale.vat_applied),
         "header_lines": header,
-        "items": [{"name": (f"{i.product_name} ({i.pack_name})" if i.pack_name else i.product_name),
+        "items": [{"name": (f"{i.product_name} ({i.selling_unit_name})" if i.is_partial else
+                            f"{i.product_name} ({i.pack_name})" if i.pack_name else i.product_name),
                    "quantity": i.quantity, "unit_price": str(i.unit_price), "gross": str(i.gross), "tax_class": i.tax_class,
                    "discount": str(i.discount), "line_total": str(i.line_total)} for i in items],
         "subtotal": str(sale.subtotal), "discount": str(sale.discount_total), "total": str(sale.total),

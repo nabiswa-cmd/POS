@@ -97,6 +97,10 @@ class Product(models.Model):
     sku = models.CharField("Internal product code (SKU)", max_length=40, unique=True)
     base_unit = models.CharField(max_length=20, default="bottle",
                                  help_text="The smallest unit you sell, e.g. bottle, can, tot.")
+    bottle_capacity_ml = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        validators=[MinValueValidator(Decimal("0.01"))],
+        help_text="Required before the first partial sale when no bottle has been opened.")
 
     # Per base unit. buying_cost is the manager's current expected cost (it prefills deliveries).
     # avg_cost is maintained by stock receiving and is what profit uses; nobody edits it by hand.
@@ -133,6 +137,8 @@ class Product(models.Model):
         ordering = ["name"]
         constraints = [
             models.CheckConstraint(condition=Q(selling_price__gte=0), name="product_price_not_negative"),
+            models.CheckConstraint(condition=Q(bottle_capacity_ml__isnull=True) | Q(bottle_capacity_ml__gt=0),
+                                    name="product_bottle_capacity_positive"),
             models.CheckConstraint(
                 condition=Q(min_selling_price__isnull=True) | Q(min_selling_price__lte=F("selling_price")),
                 name="product_min_price_not_above_price"),

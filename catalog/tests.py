@@ -84,6 +84,14 @@ class PackagingTests(CatalogCase):
 
 
 class ProductPermissionTests(CatalogCase):
+    def product_form(self, **extra):
+        from catalog.forms import ProductForm
+
+        data = {"name": self.product.name, "sku": self.product.sku, "base_unit": "bottle",
+                "buying_cost": "2400", "selling_price": "3500", "reorder_level": 0, "active": "on"}
+        data.update(extra)
+        return ProductForm(data, instance=self.product, user=self.manager)
+
     def test_cashier_and_clerk_cannot_open_product_creation(self):
         for user in (self.cashier, self.clerk):
             self.client.force_login(user)
@@ -109,6 +117,48 @@ class ProductPermissionTests(CatalogCase):
         self.assertEqual(entry.previous_value["selling_price"], "3500.00")
         self.assertEqual(entry.new_value["selling_price"], "3800.00")
         self.assertEqual(entry.actor, self.manager)
+
+    def test_manager_can_configure_capacity_and_change_is_audited(self):
+        form = self.product_form(bottle_capacity_ml="750")
+        self.assertTrue(form.is_valid(), form.errors)
+        services.update_product(form, self.manager)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.bottle_capacity_ml, Decimal("750.00"))
+        entry = AuditLog.objects.get(action="product.bottle_capacity_changed")
+        self.assertEqual(entry.new_value["bottle_capacity_ml"], "750.00")
+
+    def test_capacity_cannot_be_changed_while_sealed_stock_remains(self):
+        form = self.product_form(bottle_capacity_ml="750")
+        self.assertTrue(form.is_valid(), form.errors)
+        services.update_product(form, self.manager)
+        Product.objects.filter(pk=self.product.pk).update(stock_qty=10)
+
+        changed = self.product_form(bottle_capacity_ml="1000")
+        self.assertTrue(changed.is_valid(), changed.errors)
+        with self.assertRaises(services.CatalogError):
+            services.update_product(changed, self.manager)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.bottle_capacity_ml, Decimal("750.00"))
+
+    def test_capacity_cannot_be_smaller_than_an_active_selling_unit(self):
+        from catalog.models import SellingUnit
+
+        SellingUnit.objects.create(product=self.product, name="Tot", volume_ml=Decimal("30"),
+                                   selling_price=Decimal("150"))
+        form = self.product_form(bottle_capacity_ml="25")
+        self.assertFalse(form.is_valid())
+        self.assertIn("bottle_capacity_ml", form.errors)
+
+    def test_capacity_cannot_be_cleared_while_selling_units_are_active(self):
+        from catalog.models import SellingUnit
+
+        self.product.bottle_capacity_ml = Decimal("750")
+        self.product.save(update_fields=["bottle_capacity_ml"])
+        SellingUnit.objects.create(product=self.product, name="Tot", volume_ml=Decimal("30"),
+                                   selling_price=Decimal("150"))
+        form = self.product_form(bottle_capacity_ml="")
+        self.assertFalse(form.is_valid())
+        self.assertIn("bottle_capacity_ml", form.errors)
 
     def test_user_without_price_permission_cannot_even_submit_price(self):
         from accounts.models import Role, RolePermission

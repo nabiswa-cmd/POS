@@ -52,7 +52,9 @@ def create_product(form, user, ip=None):
     except IntegrityError as exc:
         raise CatalogError("That product code is already in use.") from exc
     audit.record("product.created", actor=user, object_type="product", object_ref=product.pk,
-                 new={"name": product.name, "sku": product.sku}, ip=ip)
+                 new={"name": product.name, "sku": product.sku,
+                      "bottle_capacity_ml": str(product.bottle_capacity_ml) if product.bottle_capacity_ml else None},
+                 ip=ip)
     return product
 
 
@@ -63,6 +65,7 @@ def update_product(form, user, ip=None):
         raise CatalogError("You are not allowed to edit products.")
     old = Product.objects.get(pk=form.instance.pk)
     before_prices, before_costs = _snapshot(old, PRICE_FIELDS), _snapshot(old, COST_FIELDS)
+    before_capacity = old.bottle_capacity_ml
     product = form.save()
     product.refresh_from_db()          # read back the stored (rounded) values for the audit trail
     after_prices, after_costs = _snapshot(product, PRICE_FIELDS), _snapshot(product, COST_FIELDS)
@@ -71,6 +74,12 @@ def update_product(form, user, ip=None):
         raise CatalogError("You are not allowed to change selling prices.")
     if after_costs != before_costs and not user.can("products.change_cost"):
         raise CatalogError("You are not allowed to change buying costs.")
+    if product.bottle_capacity_ml != before_capacity:
+        _validate_bottle_capacity_change(old, product)
+        audit.record("product.bottle_capacity_changed", actor=user, object_type="product", object_ref=product.pk,
+                     previous={"bottle_capacity_ml": str(before_capacity) if before_capacity is not None else None},
+                     new={"bottle_capacity_ml": str(product.bottle_capacity_ml)
+                          if product.bottle_capacity_ml is not None else None}, ip=ip)
     if after_prices != before_prices:
         audit.record("product.price_changed", actor=user, object_type="product", object_ref=product.pk,
                      previous=before_prices, new=after_prices, ip=ip)
@@ -83,6 +92,18 @@ def update_product(form, user, ip=None):
     audit.record("product.updated", actor=user, object_type="product", object_ref=product.pk, ip=ip,
                  previous={"name": old.name, "shelf": old.shelf_id}, new={"name": product.name, "shelf": product.shelf_id})
     return product
+
+
+def _validate_bottle_capacity_change(old, product):
+    """Keep the sealed-stock capacity stable while bottles that use the old value remain."""
+    from inventory.models import Bottle      # inventory imports catalog, so import lazily
+
+    if old.bottle_capacity_ml is not None and old.stock_qty > 0:
+        raise CatalogError("Bottle capacity cannot change while sealed stock remains. Deplete that stock first.")
+    opened_capacities = set(Bottle.objects.filter(product=old, status=Bottle.OPENED)
+                            .values_list("capacity_ml", flat=True))
+    if opened_capacities and (product.bottle_capacity_ml is None or opened_capacities != {product.bottle_capacity_ml}):
+        raise CatalogError("Bottle capacity must match every currently opened bottle.")
 
 
 @transaction.atomic
@@ -210,7 +231,7 @@ def _clean_unit_volume(product, volume, exclude_pk=None, check_active_clash=True
         raise CatalogError("Volume must be greater than zero millilitres.")
     if volume > UNIT_VOLUME_MAX:
         raise CatalogError("That volume is too large.")
-    largest = _largest_known_bottle_ml(product)
+    largest = product.bottle_capacity_ml or _largest_known_bottle_ml(product)
     if largest is not None and volume > largest:
         raise CatalogError(f"A selling unit cannot be bigger than the largest bottle on record ({largest} ml).")
     if check_active_clash:
@@ -239,7 +260,11 @@ def _unit_snapshot(unit):
 
 
 def _lock_unit(unit):
-    return SellingUnit.objects.select_for_update().select_related("product").get(pk=unit.pk)
+    product_id = SellingUnit.objects.values_list("product_id", flat=True).get(pk=unit.pk)
+    product = Product.objects.select_for_update().get(pk=product_id)
+    locked = SellingUnit.objects.select_for_update().get(pk=unit.pk, product=product)
+    locked.product = product
+    return locked
 
 
 @transaction.atomic

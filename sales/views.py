@@ -42,6 +42,9 @@ def _item_json(item):
     return {
         "id": item.pk, "ref": rules.item_ref(item.sale_id, item.pk), "product_id": item.product_id,
         "name": item.product_name, "pack": item.pack_name, "units": item.units_per_sale_unit,
+        "selling_unit": item.selling_unit_name, "volume_per_unit_ml": str(item.volume_per_unit_ml)
+        if item.volume_per_unit_ml is not None else None,
+        "total_volume_ml": str(item.total_volume_ml) if item.total_volume_ml is not None else None,
         "quantity": item.quantity, "list_price": str(item.list_price), "unit_price": str(item.unit_price),
         "discount": str(item.discount), "line_total": str(item.line_total), "stock": product.stock_qty,
         "price_changed": item.unit_price != item.list_price,
@@ -82,7 +85,8 @@ def cart(request, shift):
 def cart_add(request, data, shift):
     sale, line = services.add_item(
         request.user, shift, code=data.get("code"), product_id=data.get("product_id"),
-        packaging_id=data.get("packaging_id"), quantity=data.get("quantity", 1))
+        packaging_id=data.get("packaging_id"), selling_unit_id=data.get("selling_unit_id"),
+        quantity=data.get("quantity", 1))
     return _cart(request, shift, added=line.pk)
 
 
