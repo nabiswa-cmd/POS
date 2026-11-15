@@ -1,0 +1,38 @@
+{% extends "core/base.html" %}{% block title %}Server sync{% endblock %}
+{% block content %}
+<h1>Server sync</h1>
+<p class="sub">The shop keeps selling on this computer. Every few minutes a backup is sent to the online server, and M-PESA payments the online server received are collected here.</p>
+
+<h2>This shop PC</h2>
+<div class="card">
+{% if enabled %}
+  <p>Switched on. Online server: <b>{{ url }}</b>. A backup is sent about every <b>{{ interval }}</b> minutes.</p>
+{% else %}
+  <p>Not switched on. In the Django admin open <b>Server settings</b> and fill in <code>SYNC_SERVER_URL</code>, <code>SYNC_TOKEN</code> and set <code>SYNC_ENABLED</code> to <code>true</code>. {% if not url %}<span class="muted">(No server address yet.)</span>{% endif %}</p>
+{% endif %}
+  <p>Last attempt: <b>{% if state.last_attempt_at %}{{ state.last_attempt_at|date:"d M H:i" }}{% else %}never{% endif %}</b>
+     &middot; last success: <b>{% if state.last_success_at %}{{ state.last_success_at|date:"d M H:i" }}{% else %}never{% endif %}</b></p>
+  {% if state.last_error %}<p class="msg error">{{ state.last_error }}</p>{% endif %}
+  {% if state.last_uploaded_name %}<p class="muted">Newest backup on the online server: {{ state.last_uploaded_name }} ({{ state.last_uploaded_bytes|filesizeformat }}).</p>{% endif %}
+  {% if state.last_mpesa_text %}<p class="muted">Last M-PESA fetch: {{ state.last_mpesa_text }}.</p>{% endif %}
+  <div class="actions">
+    <form method="post">{% csrf_token %}<input type="hidden" name="action" value="test"><button class="ghost" type="submit">Test connection</button></form>
+    <form method="post">{% csrf_token %}<input type="hidden" name="action" value="now"><button type="submit">Sync now</button></form>
+    <form method="post">{% csrf_token %}<input type="hidden" name="action" value="now"><input type="hidden" name="force" value="1"><button class="ghost" type="submit">Back up and send a new copy</button></form>
+    <a class="btn ghost" href="/admin/core/runtimesetting/">Change server settings</a>
+  </div>
+</div>
+
+{% if callbacks %}
+<h2>M-PESA callback addresses (give these to Safaricom Daraja)</h2>
+<div class="card">
+  <p class="muted">These point at the <b>online</b> server. If the online server's address changes, change <code>Callback base URL</code> in <a href="/admin/core/integrationconfiguration/">Payment and tax integration settings</a>, then register the addresses again: <code>python manage.py mpesa_register_urls</code> on the online server.</p>
+  {% for label, link in callbacks %}<p><b>{{ label }}</b><br><code>{{ link }}</code></p>{% endfor %}
+</div>
+{% endif %}
+
+<h2>Backups received here (online server)</h2>
+<table><tr><th>Received</th><th>File</th><th class="num">Size</th><th>From</th><th>Check</th></tr>
+{% for r in receipts %}<tr><td>{{ r.received_at|date:"d M Y H:i" }}</td><td>{{ r.name }}</td><td class="num">{{ r.size|filesizeformat }}</td><td>{{ r.source_ip|default:"-" }}</td><td>{{ r.checked }}</td></tr>
+{% empty %}<tr><td colspan="5" class="muted">Nothing received on this computer. (This list is only filled on the online server.)</td></tr>{% endfor %}</table>
+{% endblock %}

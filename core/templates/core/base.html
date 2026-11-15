@@ -1,0 +1,78 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Workspace{% endblock %} | POS</title>
+<link rel="icon" href="{% static 'core/favicon.ico' %}" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="{% static 'core/icons/icon-32.png' %}">
+<link rel="apple-touch-icon" href="{% static 'core/apple-touch-icon.png' %}">
+<link rel="stylesheet" href="{% static 'core/theme.css' %}">
+<script src="{% static 'core/theme.js' %}"></script>
+<link rel="stylesheet" href="{% static 'core/posloader.css' %}">
+<script src="{% static 'core/posloader.js' %}"></script>
+{% block head %}{% endblock %}
+</head>
+<body>
+<header>
+  <a class="brand" href="/manage/" accesskey="h" aria-label="Wine POS home"><img class="brand-mark" src="{% static 'core/logo-mark.png' %}" alt=""><span class="brand-text"><b>WINE</b> <i>POS</i></span></a>
+  <button type="button" class="mobile-nav-toggle ghost" id="mobile-nav-toggle" aria-expanded="false" aria-controls="workspace-nav">
+    <span>Menu</span>
+  </button>
+  <nav class="workspace-nav" id="workspace-nav" aria-label="Main navigation">
+    {% for item in nav %}<a class="nav{% if item.on %} on{% endif %}" href="{{ item.url }}"{% if item.on %} aria-current="page"{% endif %}>{{ item.label }}</a>{% endfor %}
+  </nav>
+  <span class="who">{{ staff_name }} &middot; <a href="#" id="logout-link">Log out</a></span>
+  <button type="button" class="theme-toggle" data-theme-toggle title="Switch light / dark mode"><svg class="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg><svg class="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/></svg><span class="t-label">Dark</span></button>
+</header>
+<button type="button" class="nav-scrim" id="nav-scrim" aria-label="Close navigation" tabindex="-1"></button>
+{% if messages %}<div class="toasts" aria-live="polite">{% for m in messages %}<div class="toast {{ m.tags }}" role="status">{{ m }}</div>{% endfor %}</div>{% endif %}
+<main>
+  {% block content %}{% endblock %}
+  <p class="muted noprint" style="margin-top:34px">Keys: <kbd>/</kbd> search &nbsp; <kbd>Alt</kbd>+<kbd>H</kbd> home &nbsp; <kbd>Esc</kbd> back &nbsp; <kbd>Enter</kbd> submit</p>
+</main>
+<script>
+(function () {
+  var csrf = (document.cookie.match(/(?:^|; )csrftoken=([^;]+)/) || [])[1] || "";
+  var menuButton = document.getElementById("mobile-nav-toggle");
+  var nav = document.getElementById("workspace-nav");
+  var scrim = document.getElementById("nav-scrim");
+  function closeMenu() {
+    nav.classList.remove("is-open");
+    scrim.classList.remove("is-open");
+    menuButton.setAttribute("aria-expanded", "false");
+  }
+  menuButton.addEventListener("click", function () {
+    var open = menuButton.getAttribute("aria-expanded") !== "true";
+    nav.classList.toggle("is-open", open);
+    scrim.classList.toggle("is-open", open);
+    menuButton.setAttribute("aria-expanded", open ? "true" : "false");
+    var firstLink = nav.querySelector("a");
+    if (open && firstLink) firstLink.focus();
+  });
+  scrim.addEventListener("click", closeMenu);
+  nav.addEventListener("click", function (e) {
+    if (e.target.closest("a")) closeMenu();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && menuButton.getAttribute("aria-expanded") === "true") {
+      closeMenu();
+      menuButton.focus();
+    }
+  });
+  document.getElementById("logout-link").addEventListener("click", function (e) {
+    e.preventDefault();
+    fetch("/api/auth/logout/", { method: "POST", credentials: "same-origin", headers: { "X-CSRFToken": decodeURIComponent(csrf), "Content-Type": "application/json" }, body: "{}" })
+      .then(function () { location.href = "/app/manager/"; });
+  });
+  document.addEventListener("keydown", function (e) {
+    var tag = (e.target.tagName || "").toLowerCase();
+    var typing = tag === "input" || tag === "textarea" || tag === "select";
+    if (e.key === "/" && !typing) { var s = document.querySelector("[data-search]"); if (s) { e.preventDefault(); s.focus(); s.select(); } }
+    if (e.key === "Escape") { var b = document.querySelector("[data-back]"); if (b && !typing) { location.href = b.getAttribute("href"); } else if (typing) { e.target.blur(); } }
+  });
+  var first = document.querySelector("[data-autofocus]"); if (first) first.focus();
+})();
+</script>
+</body>
+</html>

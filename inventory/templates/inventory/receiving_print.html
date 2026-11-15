@@ -1,0 +1,10 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{{ r.number }}</title>
+<style>@page{size:A4;margin:14mm} body{font:12pt "Segoe UI",Arial,sans-serif;color:#000} h1{font-size:16pt;margin:0} table{width:100%;border-collapse:collapse;margin-top:10px} th,td{border:1px solid #999;padding:4px 6px;text-align:left} td.n,th.n{text-align:right} .sig{margin-top:40px;display:flex;gap:40px} .sig div{flex:1;border-top:1px solid #000;padding-top:4px;font-size:10pt} @media print{.bar{display:none}}</style></head><body>
+<div class="bar"><button onclick="window.print()" autofocus>Print</button></div>
+<h1>{{ shop.shop_name }}: Goods received note</h1><div>{{ shop.address }} {{ shop.phone }}</div>
+<p><b>{{ r.number }}</b> &middot; {{ r.created_at|date:"d M Y H:i" }} &middot; Status: {{ r.get_status_display }}<br>Supplier: {{ r.supplier|default:"not recorded" }} &middot; Delivery note: {{ r.delivery_note|default:"-" }} &middot; Invoice: {{ r.invoice_ref|default:"-" }}<br>Received by: {{ r.created_by.display_name }}{% if r.decided_by %} &middot; Approved by: {{ r.decided_by.display_name }}{% endif %}</p>
+<table><tr><th>Product</th><th>Pack</th><th class="n">OK</th><th class="n">Damaged</th><th class="n">Missing</th><th class="n">Units</th>{% if show_cost %}<th class="n">Cost/pack</th><th class="n">Line</th>{% endif %}</tr>
+{% for i in items %}<tr><td>{{ i.product.name }} ({{ i.product.sku }})</td><td>{% if i.packaging %}{{ i.packaging.name }} x{{ i.pack_size }}{% else %}single{% endif %}</td><td class="n">{{ i.qty_good }}</td><td class="n">{{ i.qty_damaged }}</td><td class="n">{{ i.qty_missing }}</td><td class="n">{{ i.good_units }}</td>{% if show_cost %}<td class="n">{{ i.cost_per_pack }}</td><td class="n">{{ i.line_cost }}</td>{% endif %}</tr>{% endfor %}
+{% if show_cost %}<tr><td colspan="7" class="n"><b>Total</b></td><td class="n"><b>{{ total }}</b></td></tr>{% endif %}</table>
+<div class="sig"><div>Received by</div><div>Delivered by</div><div>Approved by</div></div>
+<script>document.addEventListener("keydown",function(e){if(e.key==="Escape")window.close();});</script></body></html>

@@ -1,0 +1,25 @@
+{% extends "core/base.html" %}{% load static %}{% block title %}{{ sale.number|default:"Voided sale" }}{% endblock %}
+{% block content %}<p><a href="{% url 'manage-sales' %}">&larr; All sales</a></p>
+<h1>{{ sale.number|default:"Voided sale" }}</h1>
+<p class="sub">Till {{ sale.till.number }} &middot; Cashier {{ sale.cashier.display_name }} &middot; Session authorized by {{ sale.authorized_by.display_name }}{% if sale.customer_name %} &middot; Customer {{ sale.customer_name }}{% endif %}{% if sale.status == "VOIDED" %} &middot; <b>Voided</b>: {{ sale.void_reason }}{% endif %}</p>
+<table><tr><th>Item</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Discount</th><th class="num">Total</th><th>Approved by</th></tr>
+{% for i in items %}<tr><td>{{ i.product_name }}{% if i.pack_name %} <span class="muted">({{ i.pack_name }})</span>{% endif %}</td><td class="num">{{ i.quantity }}</td><td class="num">{{ i.unit_price }}{% if i.unit_price != i.list_price %} <span class="muted">(shelf {{ i.list_price }})</span>{% endif %}</td><td class="num">{{ i.discount }}</td><td class="num">{{ i.line_total }}</td><td>{% if i.discount_approved_by %}Discount: {{ i.discount_approved_by.display_name }} {% endif %}{% if i.price_approved_by %}Price: {{ i.price_approved_by.display_name }}{% endif %}</td></tr>{% endfor %}
+<tr><td colspan="4" class="num">Subtotal</td><td class="num">{{ sale.subtotal }}</td><td></td></tr>
+<tr><td colspan="4" class="num">Discount</td><td class="num">{{ sale.discount_total }}</td><td></td></tr>
+<tr><td colspan="4" class="num"><b>Total</b></td><td class="num"><b>{{ sale.total }}</b></td><td></td></tr>
+{% for p in payments %}<tr><td colspan="4" class="num">{{ p.get_method_display }} received</td><td class="num">{{ p.tendered|default:p.amount }}</td><td></td></tr>
+<tr><td colspan="4" class="num">Change</td><td class="num">{{ p.change_given }}</td><td></td></tr>{% endfor %}</table>
+<p class="muted">Receipt prints so far: original {% if sale.printed_at %}printed {{ sale.printed_at|date:"d M H:i" }}{% else %}not printed{% endif %}; reprints {{ sale.reprint_count }}.</p>
+{% if can_reprint %}<p class="actions"><button type="button" id="b-reprint">Reprint receipt (marked as a duplicate)</button> <span id="m-reprint" class="muted"></span></p>
+<script src="{% static 'sales/print.js' %}"></script>
+<script>
+document.getElementById("b-reprint").addEventListener("click", function () {
+  var out = document.getElementById("m-reprint"), m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
+  fetch("/api/sales/receipt/{{ sale.pk }}/reprint/", {method: "POST", credentials: "same-origin",
+        headers: {"X-CSRFToken": m ? decodeURIComponent(m[1]) : "", "Content-Type": "application/json"}, body: "{}"})
+    .then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.ok) { out.textContent = d.error || "Could not reprint."; return; }
+      out.textContent = "Duplicate sent to the printer."; PosPrint.print(d.lines, d.paper_mm);
+    }).catch(function () { out.textContent = "Cannot reach the shop server."; });
+});
+</script>{% endif %}{% endblock %}

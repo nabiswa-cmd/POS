@@ -1,0 +1,14 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+{% block extrastyle %}{{ block.super }}
+<link rel="stylesheet" href="{% static 'core/admin-theme.css' %}">
+{% endblock %}
+{% block extrahead %}{{ block.super }}
+<link rel="icon" href="{% static 'core/favicon.ico' %}" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="{% static 'core/icons/icon-32.png' %}">
+<link rel="apple-touch-icon" href="{% static 'core/apple-touch-icon.png' %}">
+<link rel="stylesheet" href="{% static 'core/posloader.css' %}">
+<script src="{% static 'core/posloader.js' %}"></script>
+<script>try{document.documentElement.setAttribute("data-theme",localStorage.getItem("pos-theme")==="light"?"light":"dark")}catch(e){}</script>
+{% endblock %}
+{% block branding %}<img src="{% static 'core/logo-mark.png' %}" alt="" style="height:34px;width:auto;margin-right:12px">{{ block.super }}{% endblock %}

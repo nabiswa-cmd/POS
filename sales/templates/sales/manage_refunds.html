@@ -1,0 +1,34 @@
+{% extends "core/base.html" %}{% block title %}Refunds{% endblock %}
+{% block content %}
+<h1>Refunds</h1>
+<p class="sub">Every refund, from the request to the customer being paid back. This screen only shows them: a refund is approved and paid at the till (Alt+R) by someone other than the person who asked for it. The original sale is never changed.</p>
+
+<form method="get" class="row" style="margin-bottom:14px">
+  <div><label for="from">From</label><input id="from" type="date" name="from" value="{{ r.day_from|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}"></div>
+  <div><label for="to">To</label><input id="to" type="date" name="to" value="{{ r.day_to|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}"></div>
+  <div><label for="status">Show</label><select id="status" name="status"><option value="">All</option>{% for code, label in r.statuses %}<option value="{{ code }}"{% if r.status == code %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+  <div style="flex:0 0 auto"><button type="submit">Show</button></div>
+  <div style="flex:0 0 auto"><a class="btn ghost" href="?from={{ r.day_from|date:'Y-m-d' }}&amp;to={{ r.day_to|date:'Y-m-d' }}&amp;status={{ r.status }}&amp;csv=1">Download (CSV)</a></div>
+</form>
+
+<div class="grid">
+  <div class="tile"><b>Waiting for approval</b><span class="muted">{{ r.waiting.count }} &middot; KES {{ r.waiting.total }}</span></div>
+  <div class="tile"><b>Approved, customer not paid back yet</b><span class="muted">{{ r.owed.count }} &middot; KES {{ r.owed.total }}{% if r.owed_mpesa.count %}<br>of which M-PESA: {{ r.owed_mpesa.count }} &middot; KES {{ r.owed_mpesa.total }}{% endif %}{% if r.late.count %}<br><span style="color:var(--bad)">{{ r.late.count }} older than {{ r.late.hours }} hours (KES {{ r.late.total }})</span>{% endif %}</span></div>
+  <div class="tile"><b>Paid back in cash</b><span class="muted">KES {{ r.paid_cash }}<br>(comes out of the till drawer)</span></div>
+  <div class="tile"><b>Paid back by M-PESA</b><span class="muted">KES {{ r.paid_mpesa }}<br>(never touches the drawer)</span></div>
+</div>
+
+<h2>By status, {{ r.day_from|date:"d M" }} to {{ r.day_to|date:"d M Y" }}</h2>
+<table><tr><th>Status</th><th class="num">Refunds</th><th class="num">KES</th></tr>
+{% for label, v in r.by_status.items %}<tr><td>{{ label }}</td><td class="num">{{ v.count }}</td><td class="num">{{ v.total }}</td></tr>{% endfor %}</table>
+
+<h2>Refunds{% if r.status %} ({{ r.status|lower }}){% endif %}</h2>
+<table><tr><th>Requested</th><th>Refund</th><th>Sale</th><th>Method</th><th class="num">KES</th><th>Status</th><th>Reason</th><th>Who</th></tr>
+{% for x in r.rows %}<tr>
+<td>{{ x.requested_at|date:"d M H:i" }}</td><td><b>{{ x.number }}</b></td><td>{{ x.sale.number }}</td><td>{{ x.get_method_display }}</td><td class="num">{{ x.total }}</td>
+<td>{{ x.get_status_display }}{% if x.pk in r.late_ids %} <span class="pill bad">overdue</span>{% endif %}{% if x.pay_reference %}<br><span class="muted">M-PESA {{ x.pay_reference }}</span>{% endif %}</td>
+<td>{{ x.reason }}{% if x.reject_reason %}<br><span class="muted">Rejected: {{ x.reject_reason }}</span>{% endif %}</td>
+<td><span class="muted">Asked:</span> {{ x.requested_by.display_name }}{% if x.approved_by %}<br><span class="muted">Approved:</span> {{ x.approved_by.display_name }}{% endif %}{% if x.rejected_by %}<br><span class="muted">Rejected:</span> {{ x.rejected_by.display_name }}{% endif %}{% if x.paid_by %}<br><span class="muted">Paid:</span> {{ x.paid_by.display_name }}{% endif %}</td>
+</tr>
+{% empty %}<tr><td colspan="8" class="muted">No refunds in this period.</td></tr>{% endfor %}</table>
+{% endblock %}

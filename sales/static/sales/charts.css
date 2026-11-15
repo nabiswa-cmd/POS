@@ -1,0 +1,41 @@
+/* Charts screen. Colours follow the viewer's light / dark choice (theme.js sets data-theme on <html>). */
+.viz{--surface:transparent;--ink:#18201b;--ink-2:#56615b;--grid:rgba(6,17,12,.12);--s1:#2a78d6;--tip-bg:#fcfcfb;--tip-ink:#18201b}
+:root[data-theme="dark"] .viz{--ink:#f0efec;--ink-2:#c3c2b7;--grid:rgba(255,255,255,.12);--s1:#3987e5;--tip-bg:#1a1a19;--tip-ink:#f0efec}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:14px 0}
+.kpi{padding:14px 16px;background:var(--glass);border:1px solid var(--line);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur)}
+.kpi span{display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.kpi b{display:block;margin-top:4px;font:600 24px var(--serif);font-variant-numeric:tabular-nums}
+.kpi small{color:var(--muted)}
+.charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.charts .wide{grid-column:1/-1}
+@media (max-width:900px){.charts{grid-template-columns:minmax(0,1fr)}}
+.chart-card{margin:0}
+.chart-card h3{margin:0 0 2px;font:600 16px var(--serif)}
+.chart-card .note{margin:0 0 10px;color:var(--muted);font-size:13px}
+.chart-head{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+.seg{display:inline-flex;border:1px solid var(--line-strong)}
+.seg button{margin:0;padding:6px 12px;font-size:11px;background:transparent;color:var(--muted);border:0;border-radius:0}
+.seg button[aria-pressed="true"]{background:var(--nav-on);color:var(--text)}
+.plot{position:relative;min-height:120px}
+.plot svg{display:block;width:100%;height:auto;overflow:visible}
+.plot text{fill:var(--ink-2);font:11px var(--sans)}
+.plot .grid{stroke:var(--grid);stroke-width:1}
+.plot .axis{stroke:var(--grid);stroke-width:1}
+.plot .line{fill:none;stroke:var(--s1);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.plot .area{fill:var(--s1);opacity:.12}
+.plot .bar{fill:var(--s1)}
+.plot .dot{fill:var(--s1);stroke:var(--tip-bg);stroke-width:2}
+.plot .cross{stroke:var(--ink-2);stroke-width:1;stroke-dasharray:3 3}
+.tip{position:absolute;z-index:5;pointer-events:none;padding:6px 10px;font-size:12px;line-height:1.35;color:var(--tip-ink);background:var(--tip-bg);
+  border:1px solid var(--line-strong);box-shadow:var(--shadow);white-space:nowrap;opacity:0;transition:opacity .1s}
+.tip.on{opacity:1}.tip b{display:block;font-variant-numeric:tabular-nums}
+.hb{display:grid;gap:10px}
+.hb-row{display:grid;grid-template-columns:minmax(90px,34%) 1fr auto;gap:10px;align-items:center;font-size:13px}
+.hb-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.hb-bar{display:block;height:10px}
+.hb-bar i{display:block;height:100%;min-width:2px;background:var(--s1);border-radius:0 4px 4px 0}
+.hb-val{font-variant-numeric:tabular-nums;color:var(--muted);min-width:5ch;text-align:right}
+@media (max-width:560px){.hb-row{grid-template-columns:1fr auto}.hb-label{grid-column:1/-1}.hb-bar{grid-column:1}}
+details.tv{margin-top:10px}details.tv summary{cursor:pointer;color:var(--muted);font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+details.tv table{margin-top:8px;font-size:13px}
+.empty-note{padding:26px 0;color:var(--muted);text-align:center}

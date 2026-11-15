@@ -1,0 +1,21 @@
+{% extends "core/base.html" %}{% block title %}Products{% endblock %}
+{% block content %}
+<h1>Products</h1><p class="sub">{{ page.paginator.count }} product{{ page.paginator.count|pluralize }}. Press <kbd>/</kbd> to search by name, brand, SKU or scan a barcode.</p>
+<form method="get" class="card row noprint">
+  <div style="flex:3"><label for="q">Search or scan</label><input id="q" type="search" name="q" value="{{ q }}" data-search data-autofocus></div>
+  <div><label for="category">Category</label><select id="category" name="category"><option value="">All</option>{% for c in categories %}<option value="{{ c.pk }}"{% if selected_category == c.pk|stringformat:"s" %} selected{% endif %}>{{ c.name }}</option>{% endfor %}</select></div>
+  <div><label for="shelf">Shelf</label><select id="shelf" name="shelf"><option value="">All</option>{% for s in shelves %}<option value="{{ s.pk }}"{% if selected_shelf == s.pk|stringformat:"s" %} selected{% endif %}>{{ s.code }}</option>{% endfor %}</select></div>
+  <div style="flex:0 0 auto"><label style="color:var(--text)"><input type="checkbox" name="inactive" value="1"{% if inactive %} checked{% endif %}>Show inactive</label></div>
+  <div style="flex:0 0 auto"><button type="submit">Search</button></div>
+</form>
+{% if perms and "products.manage" in perms %}<p class="noprint"><a class="btn" href="/manage/products/new/" accesskey="n">New product (Alt+N)</a></p>{% endif %}
+<table>
+<tr><th>Name</th><th>Brand</th><th>Category</th><th>Shelf</th><th class="num">Price</th>{% if show_cost %}<th class="num">Avg cost</th>{% endif %}<th class="num">Stock</th><th></th></tr>
+{% for p in page %}
+<tr><td><a href="{% url 'product-detail' p.pk %}">{{ p.name }}</a><div class="muted">{{ p.sku }}</div></td><td>{{ p.brand|default:"" }}</td><td>{{ p.category|default:"" }}</td><td>{{ p.shelf.code|default:"" }}</td>
+<td class="num">{{ p.selling_price }}</td>{% if show_cost %}<td class="num">{{ p.avg_cost }}</td>{% endif %}
+<td class="num">{{ p.stock_qty }} {% if p.is_low %}<span class="pill low">low</span>{% endif %}</td><td>{% if not p.active %}<span class="pill bad">inactive</span>{% endif %}</td></tr>
+{% empty %}<tr><td colspan="8" class="muted">No products found.</td></tr>{% endfor %}
+</table>
+<p class="noprint">{% if page.has_previous %}<a href="?page={{ page.previous_page_number }}&q={{ q|urlencode }}">Previous</a> {% endif %}Page {{ page.number }} of {{ page.paginator.num_pages }}{% if page.has_next %} <a href="?page={{ page.next_page_number }}&q={{ q|urlencode }}">Next</a>{% endif %}</p>
+{% endblock %}

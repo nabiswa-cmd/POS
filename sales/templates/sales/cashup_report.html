@@ -1,0 +1,10 @@
+{% extends "core/base.html" %}{% block title %}Cash-up report{% endblock %}
+{% block content %}<h1>Cash-up report</h1>
+<p class="sub">Closed shifts. Expected cash = opening float + cash sales - cash refunds paid from the drawer. M-PESA, card and bank are not drawer cash.</p>
+<form method="get" class="row" style="margin-bottom:14px"><div><label for="days">Days back</label><input id="days" name="days" value="{{ days }}"></div><div style="flex:0 0 auto"><button type="submit">Show</button></div></form>
+<p>{{ rows|length }} shift{{ rows|length|pluralize }} closed &middot; {{ off }} with a difference &middot; {{ open_now }} still open.
+Total variance: <b>{{ totals.v|default:"0.00" }}</b></p>
+<table><tr><th>Closed</th><th>Till</th><th>Cashier</th><th class="num">Float</th><th class="num">Expected</th><th class="num">Counted</th><th class="num">Variance</th><th>Note</th></tr>
+{% for s in rows %}<tr><td>{{ s.closed_at|date:"d M Y H:i" }}</td><td>{{ s.till.name }}</td><td>{{ s.cashier.display_name }}</td><td class="num">{{ s.opening_float }}</td><td class="num">{{ s.expected_cash|default_if_none:"-" }}</td><td class="num">{{ s.counted_cash|default_if_none:"-" }}</td>
+<td class="num">{% if s.variance %}<span class="pill bad">{{ s.variance }}</span>{% elif s.variance == 0 %}<span class="pill ok">0.00</span>{% else %}-{% endif %}</td><td>{{ s.close_note }}</td></tr>
+{% empty %}<tr><td colspan="8" class="muted">No shifts closed in this period.</td></tr>{% endfor %}</table>{% endblock %}

@@ -1,0 +1,29 @@
+{% extends "core/base.html" %}{% block title %}Tills &amp; sales{% endblock %}
+{% block content %}
+<h1>Tills &amp; sales</h1><p class="sub">Who is on each till, today's takings per till, and the latest sales.</p>
+<div class="grid">
+{% for t in tills %}<div class="tile"><b>{{ t.till.name }}</b>
+  {% if t.shift %}<span class="muted">Open: {{ t.shift.cashier.display_name }} since {{ t.shift.opened_at|time:"H:i" }}<br>Authorized by {% if t.shift.authorized_by_id == t.shift.cashier_id %}the owner{% else %}{{ t.shift.authorized_by.display_name }}{% endif %}<br>Float {{ t.shift.opening_float }}</span>
+  {% else %}<span class="muted">Closed (no open shift)</span>{% endif %}
+  <br><b>{{ t.count }} sale{{ t.count|pluralize }} today &middot; KES {{ t.total }}</b></div>{% endfor %}
+</div>
+
+<h2>KRA eTIMS</h2>
+<div class="card">
+{% if etims_on %}
+  <p>Switched on. Signed: <b>{{ etims_counts.SUBMITTED|default:0 }}</b> &middot; Waiting: <b>{{ etims_counts.PENDING|default:0 }}</b> &middot; Rejected: <b>{{ etims_counts.REJECTED|default:0 }}</b></p>
+  {% if etims_problems %}<p class="muted">Not ready: {{ etims_problems|join:"; " }}</p>{% endif %}
+  <p class="muted">Sales that are waiting are sent again after each new sale, or run <code>python manage.py etims_retry</code>. Rejected sales need a person to look at the reason in the admin (eTIMS submissions).</p>
+{% else %}
+  <p>Switched off. Receipts show the VAT inside each price (if the shop is VAT registered) but are <b>not</b> KRA tax invoices. See the README before turning this on.</p>
+{% endif %}
+</div>
+
+<h2>Latest sales</h2>
+<table><thead><tr><th>Receipt</th><th>Time</th><th>Till</th><th>Cashier</th><th class="num">Total</th><th>eTIMS</th><th></th></tr></thead><tbody>
+{% for s in recent %}<tr><td>{{ s.number }}</td><td>{{ s.completed_at|date:"d M H:i" }}</td><td>{{ s.till.name }}</td><td>{{ s.cashier.display_name }}</td><td class="num">{{ s.total }}</td>
+<td>{% if s.etims %}{% if s.etims.status == REJECTED %}<span class="pill bad">rejected</span>{% elif s.etims.status == "SUBMITTED" %}<span class="pill ok">signed</span>{% else %}<span class="pill">waiting</span>{% endif %}{% else %}<span class="muted">-</span>{% endif %}</td>
+<td>{% if can_reprint %}<form method="post" action="/manage/sales/{{ s.pk }}/reprint/" target="_blank">{% csrf_token %}<button class="ghost" type="submit">Reprint (duplicate)</button></form>{% endif %}</td></tr>
+{% empty %}<tr><td colspan="7" class="muted">No completed sales yet.</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% extends "core/base.html" %}{% block title %}Expenses{% endblock %}
+{% block content %}
+<h1>Expenses</h1>
+<p class="sub">Money spent to run the shop. An entry is never edited or deleted: if it is wrong, void it with a reason and enter it again. Cash taken from a till drawer lowers that drawer's expected cash at cash-up.</p>
+
+<h2>Record an expense</h2>
+<form method="post" autocomplete="off">{% csrf_token %}<input type="hidden" name="action" value="add">
+<div class="row">
+  <div><label for="e-date">Date</label><input id="e-date" type="date" name="date" value="{{ today|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}" required></div>
+  <div><label for="e-cat">Category</label><select id="e-cat" name="category" required>{% for c in categories %}<option value="{{ c.pk }}">{{ c.name }}</option>{% endfor %}</select></div>
+  <div><label for="e-amt">Amount (KES)</label><input id="e-amt" name="amount" inputmode="decimal" required></div>
+</div>
+<div class="row">
+  <div><label for="e-desc">What was it for?</label><input id="e-desc" name="description" maxlength="200" required></div>
+  <div><label for="e-payee">Paid to (optional)</label><input id="e-payee" name="payee" maxlength="120"></div>
+  <div><label for="e-ref">Receipt / invoice / M-PESA code (optional)</label><input id="e-ref" name="reference" maxlength="60"></div>
+</div>
+<div class="row">
+  <div><label for="e-from">Paid from</label><select id="e-from" name="paid_from" required>{% for code, label in paid_from %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></div>
+  <div><label for="e-shift">Which till drawer? (only for cash from a drawer)</label><select id="e-shift" name="shift"><option value="">-</option>{% for s in open_shifts %}<option value="{{ s.pk }}">{{ s.till }} ({{ s.cashier.display_name }})</option>{% endfor %}</select></div>
+  <div style="flex:0 0 auto;align-self:end"><button type="submit">Record</button></div>
+</div>
+</form>
+
+<h2>Look back</h2>
+<form method="get" class="row" style="margin-bottom:14px">
+  <div><label for="from">From</label><input id="from" type="date" name="from" value="{{ day_from|date:'Y-m-d' }}"></div>
+  <div><label for="to">To</label><input id="to" type="date" name="to" value="{{ day_to|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}"></div>
+  <div style="flex:0 0 auto"><button type="submit">Show</button></div>
+  <div style="flex:0 0 auto"><a class="btn ghost" href="?from={{ day_from|date:'Y-m-d' }}&amp;to={{ day_to|date:'Y-m-d' }}&amp;csv=1">Download (CSV)</a></div>
+</form>
+
+<div class="grid">
+  <div class="tile"><b>Total spent</b><span class="muted">KES {{ total }}<br>{{ day_from|date:"d M" }} to {{ day_to|date:"d M Y" }} (voided entries not counted)</span></div>
+  {% for name, amount in by_category %}<div class="tile"><b>{{ name }}</b><span class="muted">KES {{ amount }}</span></div>{% endfor %}
+</div>
+{% if by_paid_from %}<p class="muted">By source: {% for label, amount in by_paid_from %}{{ label }} KES {{ amount }}{% if not forloop.last %} &middot; {% endif %}{% endfor %}</p>{% endif %}
+
+<table><tr><th>Date</th><th>Category</th><th>What for</th><th>Paid from</th><th class="num">KES</th><th>Who</th><th></th></tr>
+{% for e in rows %}<tr{% if e.is_void %} style="opacity:.55"{% endif %}>
+<td>{{ e.date|date:"d M Y" }}</td><td>{{ e.category.name }}</td>
+<td>{{ e.description }}{% if e.payee %}<br><span class="muted">to {{ e.payee }}</span>{% endif %}{% if e.reference %}<br><span class="muted">ref {{ e.reference }}</span>{% endif %}</td>
+<td>{{ e.get_paid_from_display }}{% if e.shift %}<br><span class="muted">{{ e.shift.till }}</span>{% endif %}</td>
+<td class="num">{{ e.amount }}</td><td>{{ e.recorded_by.display_name }}</td>
+<td>{% if e.is_void %}<span class="pill bad">voided</span><br><span class="muted">{{ e.void_reason }}</span>{% else %}
+<form method="post" style="display:flex;gap:6px">{% csrf_token %}<input type="hidden" name="action" value="void"><input type="hidden" name="expense_id" value="{{ e.pk }}">
+<input name="reason" placeholder="Reason to void" aria-label="Reason to void" maxlength="250" required style="min-width:150px"><button class="ghost" type="submit">Void</button></form>{% endif %}</td>
+</tr>{% empty %}<tr><td colspan="7" class="muted">No expenses in this period.</td></tr>{% endfor %}</table>
+{% endblock %}

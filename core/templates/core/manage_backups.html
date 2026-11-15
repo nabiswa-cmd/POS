@@ -1,0 +1,21 @@
+{% extends "core/base.html" %}{% block title %}Backups{% endblock %}
+{% block content %}
+<h1>Backups</h1>
+<p class="sub">A backup is one file holding the whole database and the product images. Keep a copy on a different disk: a backup on the same disk is lost with it.</p>
+
+{% if state == "none" %}<div class="toast error" role="alert">No backup has been made yet. Press "Back up now".</div>
+{% elif state == "stale" %}<div class="toast error" role="alert">The newest backup is {{ hours|floatformat:0 }} hours old (limit {{ stale_hours }}). Check that the scheduled backup is running, and back up now.</div>
+{% else %}<div class="toast" role="status">The newest backup is {{ hours|floatformat:1 }} hours old.</div>{% endif %}
+
+<form method="post">{% csrf_token %}<input type="hidden" name="action" value="backup_now"><button type="submit">Back up now</button></form>
+<p class="muted">Saved in <code>{{ backup_dir }}</code>.
+{% if copy_dir %}A second copy goes to <code>{{ copy_dir }}</code>.{% else %}<b>No second location is set</b> (WINESPOS_BACKUP_COPY_DIR).{% endif %}
+The newest {{ keep }} are kept.</p>
+
+<h2>Backups on this PC</h2>
+<table><tr><th>Made (UTC)</th><th>File</th><th class="num">MB</th><th></th></tr>
+{% for r in rows %}<tr><td>{{ r.when|date:"d M Y H:i" }}</td><td>{{ r.name }}{% if r.prerestore %} <span class="pill">safety copy before a restore</span>{% endif %}</td><td class="num">{{ r.size|filesizeformat }}</td>
+<td><form method="post">{% csrf_token %}<input type="hidden" name="action" value="verify"><input type="hidden" name="name" value="{{ r.name }}"><button class="ghost" type="submit">Check it</button></form></td></tr>
+{% empty %}<tr><td colspan="4" class="muted">No backups yet.</td></tr>{% endfor %}</table>
+<p class="muted">To put a backup back, ask whoever looks after the computer: it replaces all of today's data, so it is done with the server stopped (see docs/BACKUP_AND_RESTORE.md).</p>
+{% endblock %}

@@ -1,0 +1,130 @@
+<div class="row" style="align-items:end">
+  <div style="flex:1;min-width:220px">
+    <label for="online-product-barcode">Scan product barcode for online details</label>
+    <input id="online-product-barcode" type="text" inputmode="numeric" autocomplete="off"
+           value="{{ scanned_barcode }}" data-autofocus>
+  </div>
+  <div style="flex:0 0 auto">
+    <button type="button" class="ghost" id="online-product-lookup">Look up online</button>
+  </div>
+</div>
+<p class="help">Online details fill the product name, brand, and bottle capacity. Any price you enter stays yours. An available product photo is saved when you save the product.</p>
+<p id="online-product-lookup-result" class="msg" role="status" aria-live="polite" hidden></p>
+<input type="hidden" name="barcode" id="online-product-saved-barcode" value="{{ scanned_barcode }}">
+<input type="hidden" name="online_lookup_done" id="online-product-lookup-done" value="{{ online_lookup_done }}">
+<script>
+(function () {
+  document.addEventListener("DOMContentLoaded", function () {
+    var scanInput = document.getElementById("online-product-barcode");
+    var lookupButton = document.getElementById("online-product-lookup");
+    var result = document.getElementById("online-product-lookup-result");
+    var form = scanInput && scanInput.closest("form");
+    if (!scanInput || !lookupButton || !result || !form) return;
+
+    var savedBarcode = document.getElementById("online-product-saved-barcode");
+    var lookupDone = document.getElementById("online-product-lookup-done");
+    var nameField = document.getElementById("id_name");
+    var brandField = document.getElementById("id_brand");
+    var brandNameField = document.getElementById("id_online_brand");
+    var capacityField = document.getElementById("id_bottle_capacity_ml");
+    var csrfField = form.querySelector('[name="csrfmiddlewaretoken"]');
+
+    function showResult(text, isError) {
+      result.hidden = !text;
+      result.className = isError ? "msg error" : "msg";
+      result.textContent = text;
+    }
+
+    function fillIfAvailable(field, value) {
+      if (!field || (field.value && field.dataset.onlineLookup !== "true")) return;
+      field.value = value || "";
+      field.dataset.onlineLookup = value ? "true" : "";
+    }
+
+    function fillBrand(brand) {
+      if (!brandField || (brandField.value && brandField.dataset.onlineLookup !== "true")) return;
+      var value = (brand || "").trim();
+      var match = value && Array.prototype.find.call(brandField.options, function (option) {
+        return option.text.trim().toLowerCase() === value.toLowerCase();
+      });
+      if (match) {
+        brandField.value = match.value;
+        brandNameField.value = "";
+      } else {
+        brandField.value = "";
+        brandNameField.value = value;
+      }
+      brandField.dataset.onlineLookup = value ? "true" : "";
+    }
+
+    [nameField, capacityField].forEach(function (field) {
+      if (field) field.addEventListener("input", function () { field.dataset.onlineLookup = ""; });
+    });
+    if (brandField) brandField.addEventListener("change", function () {
+      brandField.dataset.onlineLookup = "";
+      brandNameField.value = "";
+    });
+    scanInput.addEventListener("input", function () {
+      lookupDone.value = "";
+      savedBarcode.value = scanInput.value.trim();
+    });
+    scanInput.addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        lookup();
+      }
+    });
+    form.addEventListener("submit", function () {
+      savedBarcode.value = scanInput.value.trim();
+    });
+
+    function lookup() {
+      var code = scanInput.value.trim();
+      savedBarcode.value = code;
+      lookupDone.value = "";
+      if (!code) {
+        showResult("Scan or enter a barcode first.", true);
+        return;
+      }
+      lookupButton.disabled = true;
+      showResult("Looking up product online...", false);
+      fetch("/api/catalog/products/lookup-online/", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {"Content-Type": "application/json", "X-CSRFToken": csrfField.value},
+        body: JSON.stringify({code: code})
+      }).then(function (response) {
+        return response.json().then(function (data) {
+          return {ok: response.ok, data: data};
+        });
+      }).then(function (response) {
+        if (!response.ok || !response.data.ok) {
+          showResult(response.data.error || "Could not look up this barcode.", true);
+          return;
+        }
+        var product = response.data.product;
+        savedBarcode.value = response.data.barcode;
+        lookupDone.value = "1";
+        fillIfAvailable(nameField, product.name);
+        fillBrand(product.brand);
+        fillIfAvailable(capacityField, product.bottle_capacity_ml);
+
+        var notes = ["Found " + product.name + " online."];
+        if (product.brand && !brandField.value && brandNameField.value) {
+          notes.push("Brand will be added when you save.");
+        }
+        if (product.image_available) notes.push("Photo will be saved with the product.");
+        if (product.warning) notes.push(product.warning);
+        showResult(notes.join(" "), false);
+      }).catch(function () {
+        showResult("Could not reach the shop server to look up this barcode.", true);
+      }).finally(function () {
+        lookupButton.disabled = false;
+      });
+    }
+
+    lookupButton.addEventListener("click", lookup);
+    if (scanInput.value.trim()) lookup();
+  });
+})();
+</script>

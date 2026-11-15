@@ -1,0 +1,38 @@
+from django.urls import path
+
+from . import views
+
+urlpatterns = [
+    path("cart/", views.cart, name="sales-cart"),
+    path("cart/add/", views.cart_add, name="sales-cart-add"),
+    path("cart/quantity/", views.cart_quantity, name="sales-cart-quantity"),
+    path("cart/remove/", views.cart_remove, name="sales-cart-remove"),
+    path("cart/discount/", views.cart_discount, name="sales-cart-discount"),
+    path("cart/price/", views.cart_price, name="sales-cart-price"),
+    path("cart/customer/", views.cart_customer, name="sales-cart-customer"),
+    path("cart/void/", views.cart_void, name="sales-cart-void"),
+    path("cart/hold/", views.cart_hold, name="sales-cart-hold"),
+    path("held/", views.held_list, name="sales-held"),
+    path("held/resume/", views.held_resume, name="sales-held-resume"),
+    path("checkout/", views.checkout_any, name="sales-checkout"),
+    path("checkout/cash/", views.checkout_cash, name="sales-checkout-cash"),
+    path("checkout/mpesa/", views.checkout_mpesa, name="sales-checkout-mpesa"),
+    path("mpesa/recent/", views.mpesa_recent, name="sales-mpesa-recent"),
+    path("mpesa/stk/", views.mpesa_stk_start, name="sales-mpesa-stk"),
+    path("mpesa/stk/<int:stk_id>/", views.mpesa_stk_status, name="sales-mpesa-stk-status"),
+    path("receipt/<int:sale_id>/", views.receipt_original, name="sales-receipt"),
+    path("receipt/<int:sale_id>/reprint/", views.receipt_reprint, name="sales-receipt-reprint"),
+    path("refund/find/", views.refund_find, name="sales-refund-find"),
+    path("refund/request/", views.refund_request, name="sales-refund-request"),
+    path("refund/list/", views.refund_list, name="sales-refund-list"),
+    path("refund/<int:refund_id>/approve/", views.refund_approve, name="sales-refund-approve"),
+    path("refund/<int:refund_id>/reject/", views.refund_reject, name="sales-refund-reject"),
+    path("refund/<int:refund_id>/cancel/", views.refund_cancel, name="sales-refund-cancel"),
+    path("refund/<int:refund_id>/pay-cash/", views.refund_pay_cash, name="sales-refund-pay-cash"),
+    path("refund/<int:refund_id>/mpesa-paid/", views.refund_mpesa_paid, name="sales-refund-mpesa-paid"),
+    path("refund/<int:refund_id>/receipt/", views.refund_receipt, name="sales-refund-receipt"),
+    path("mine/", views.my_sales, name="sales-mine"),
+    path("config/", views.pos_config, name="sales-config"),
+    path("shift/close/", views.shift_close, name="sales-shift-close"),
+    path("shift/summary/", views.shift_summary, name="sales-shift-summary"),
+]

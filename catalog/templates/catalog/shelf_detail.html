@@ -1,0 +1,14 @@
+{% extends "core/base.html" %}{% block title %}Shelf {{ shelf.code }}{% endblock %}
+{% block content %}<h1>Shelf {{ shelf.code }}: {{ shelf.name }}</h1><p class="sub">{{ products|length }} product{{ products|length|pluralize }}{% if shelf.notes %} &middot; {{ shelf.notes }}{% endif %}</p>
+<p class="noprint"><a class="btn ghost" data-back href="/manage/shelves/">All shelves</a>
+{% if can_manage %}<a class="btn ghost" href="{% url 'shelf-edit' shelf.pk %}">Edit shelf</a>{% endif %}
+{% if "labels.print" in perms %}<a class="btn" href="/manage/labels/print/?shelf={{ shelf.pk }}&amp;price=1&amp;barcode=1&amp;code=1&amp;size=roll-50x30">Print labels for whole shelf</a>{% endif %}</p>
+{% if can_manage %}<form method="post" class="card row noprint">{% csrf_token %}<div style="flex:2"><label for="scan">Put a product on this shelf: scan or type its code</label><input id="scan" name="scan" type="text" autocomplete="off" data-autofocus></div><div style="flex:0 0 auto"><button type="submit">Add to shelf</button></div></form>{% endif %}
+<form method="post">{% csrf_token %}
+<table><tr>{% if can_manage %}<th></th>{% endif %}<th>Product</th><th>Brand</th><th class="num">Price</th><th class="num">Stock</th></tr>
+{% for p in products %}<tr>{% if can_manage %}<td><input type="checkbox" name="product" value="{{ p.pk }}" aria-label="Select {{ p.name }}"></td>{% endif %}<td><a href="{% url 'product-detail' p.pk %}">{{ p.name }}</a></td><td>{{ p.brand|default:"" }}</td><td class="num">{{ p.selling_price }}</td><td class="num">{{ p.stock_qty }}</td></tr>
+{% empty %}<tr><td colspan="5" class="muted">Nothing on this shelf yet.</td></tr>{% endfor %}</table>
+{% if can_manage and products %}<div class="card row noprint"><div><label for="target">Move selected products to</label><select id="target" name="target"><option value="">(no shelf)</option>{% for s in other_shelves %}<option value="{{ s.pk }}">{{ s.code }} {{ s.name }}</option>{% endfor %}</select></div><div style="flex:0 0 auto"><button type="submit">Move selected</button></div></div>{% endif %}
+</form>
+{% if history %}<h2>Recent moves</h2><table><tr><th>When</th><th>Product</th><th>From</th><th>To</th><th>By</th></tr>{% for h in history %}<tr><td>{{ h.created_at|date:"d M H:i" }}</td><td>{{ h.product.name }}</td><td>{{ h.from_shelf.code|default:"-" }}</td><td>{{ h.to_shelf.code|default:"-" }}</td><td>{{ h.user.display_name }}</td></tr>{% endfor %}</table>{% endif %}
+{% endblock %}

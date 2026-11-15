@@ -1,0 +1,942 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sales | {{ shop_name }}</title>
+<link rel="icon" href="{% static 'core/favicon.ico' %}" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="{% static 'core/icons/icon-32.png' %}">
+<link rel="apple-touch-icon" href="{% static 'core/apple-touch-icon.png' %}">
+<link rel="stylesheet" href="{% static 'core/theme.css' %}">
+<script src="{% static 'core/theme.js' %}"></script>
+<link rel="stylesheet" href="{% static 'core/posloader.css' %}">
+<script src="{% static 'core/posloader.js' %}"></script>
+<script src="{% static 'core/camscan.js' %}"></script>
+<script>PosLoader.watch({ overlayDelay: 900 });   /* little cap in clicked buttons; big cap if a keyboard action is slow */</script>
+<style>
+  .bar-mark{display:block;height:30px;width:auto;flex:0 0 auto}
+  body.pos{min-height:100vh;display:flex;flex-direction:column;overflow:hidden;height:100vh}
+  .bar{display:flex;gap:18px;align-items:center;padding:8px 18px;background:var(--glass);border-bottom:1px solid var(--line);
+    -webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);font-size:13px;color:var(--muted)}
+  .bar b{color:var(--text)} .bar .grow{flex:1}
+  .pill{display:inline-block;padding:2px 9px;border:1px solid var(--line-strong);font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+  .pill.owner{border-color:var(--ok);color:var(--ok)} .pill.bad{border-color:var(--bad);color:var(--bad)}
+  .work{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:14px;padding:14px 18px;min-height:0}
+  .left{display:flex;flex-direction:column;min-height:0;gap:10px}
+  .scanrow{display:flex;gap:10px}
+  #scan{font-size:24px;padding:14px 16px;letter-spacing:.04em}
+  .cartbox{flex:1;overflow:auto;background:var(--glass);border:1px solid var(--line);min-height:0}
+  .cartbox table{box-shadow:none;border:0;width:100%;border-collapse:collapse;backdrop-filter:none;background:transparent}
+  .cartbox td,.cartbox th{padding:9px 12px;font-size:16px}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  tr.sel td{background:var(--nav-on);box-shadow:inset 0 0 0 1px var(--line-strong)}
+  td small{color:var(--muted);display:block;font-size:12px}
+  .empty{padding:48px 20px;text-align:center;color:var(--muted)}
+  .right{display:flex;flex-direction:column;gap:10px;min-height:0}
+  .panel{background:var(--glass);border:1px solid var(--line);padding:14px 16px}
+  .tot{display:flex;justify-content:space-between;font-size:15px;color:var(--muted);padding:2px 0}
+  .grand{font:700 44px/1.1 var(--serif);color:var(--text);text-align:right;margin-top:6px;font-variant-numeric:tabular-nums}
+  .grandlbl{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  .hints{font-size:12px;color:var(--muted);line-height:1.9}
+  kbd{font:600 11px var(--sans);padding:1px 6px;background:var(--kbd);border:1px solid var(--line-strong)}
+  /* product picture row + thumbnails: a product with no picture shows the POS logo */
+  .prodrow{display:flex;align-items:center;gap:14px;padding:8px 14px;background:var(--glass);border:1px solid var(--line);min-height:96px}
+  .prodrow img{width:80px;height:80px;object-fit:contain;background:#fff;border:1px solid var(--line);flex:0 0 auto}
+  .prodrow .pn{font:600 20px/1.25 var(--serif);color:var(--text)} .prodrow .ps{font-size:13px;color:var(--muted);margin-top:2px}
+  img.thumb{width:38px;height:38px;object-fit:contain;background:#fff;border:1px solid var(--line);vertical-align:middle;margin-right:10px}
+  img.nopic{padding:3px;box-sizing:border-box}
+  #msg{min-height:22px;font-size:14px} #msg.err{color:var(--bad)} #msg.ok{color:var(--ok)}
+  .done{border-color:var(--ok)} .done .grand{color:var(--ok)}
+  /* dialogs */
+  .veil{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:60}
+  .dlg{background:var(--opt-bg);border:1px solid var(--line-strong);box-shadow:var(--shadow);padding:22px 24px;width:min(560px,94vw);max-height:88vh;overflow:auto}
+  .dlg h2{margin:0 0 12px;border:0;padding:0;font:600 20px var(--serif);text-transform:none;letter-spacing:0;color:var(--text)}
+  .dlg .note{color:var(--muted);font-size:13px;margin:0 0 8px}
+  .dlg .err{color:var(--bad);font-size:14px;min-height:20px;margin-top:8px}
+  .dlg .btns{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
+  table.rl{width:100%;border-collapse:collapse;margin:8px 0} table.rl th,table.rl td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line)}
+  .opts{list-style:none;margin:0;padding:0;border:1px solid var(--line)}
+  .opts li{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:12px}
+  .opts li:last-child{border-bottom:0} .opts li.on{background:var(--nav-on);box-shadow:inset 0 0 0 1px var(--line-strong)}
+  .opts li.off{opacity:.45}
+  .keys{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px}
+  /* Phones and small tablets: one column, page scrolls, bigger touch targets */
+  @media (max-width:900px){
+    body.pos{height:auto;min-height:100vh;overflow:auto}
+    .bar{flex-wrap:wrap;gap:6px 14px;padding:8px 12px}.bar .grow{display:none}
+    .bar span:last-child{display:none}
+    .work{display:flex;flex-direction:column;padding:10px 12px;gap:10px}
+    .left{min-height:0}.cartbox{flex:none;max-height:46vh;min-height:140px}
+    .prodrow{min-height:0;padding:6px 10px}.prodrow img{width:52px;height:52px}.prodrow .pn{font-size:16px}
+    .right{order:0}.hints{display:none}
+    #scan{font-size:18px;padding:12px;min-width:0}
+    .grand{font-size:34px}
+    .cartbox td,.cartbox th{padding:8px 8px;font-size:14px}
+    .dlg{padding:16px 14px;max-height:92vh}
+    .dlg .btns{flex-wrap:wrap}.dlg .btns>*{flex:1 1 auto}
+  }
+  #printframe{position:fixed;width:0;height:0;border:0;left:-99px}
+</style>
+</head>
+<body class="pos" data-till="{{ till_number }}">
+<div class="bar">
+  <img class="bar-mark" src="{% static 'core/logo-mark.png' %}" alt="Wine POS">
+  <span><b id="shop">{{ shop_name }}</b></span>
+  <span>Till <b id="till">-</b></span>
+  <span>Cashier <b id="cashier">-</b></span>
+  <span id="authwrap">Authorized by <b id="authby">-</b></span>
+  <span id="ownerpill" class="pill owner" hidden>Owner: no approvals needed</span>
+  <span class="grow"></span>
+  <span id="conn" class="pill">Server OK</span>
+  <span id="clock"></span>
+  <button id="lock-pos" class="ghost" type="button" title="Lock and put this computer to sleep (Ctrl+Alt+L)">Lock &amp; sleep</button>
+  <span><kbd id="helpkey">F1</kbd> Help</span>
+</div>
+
+<div class="work">
+  <div class="left">
+    <div class="scanrow">
+      <input id="scan" autofocus autocomplete="off" spellcheck="false" aria-label="Scan or type a product code. Use 3*code for a quantity."
+             placeholder="Scan barcode, or type a code (3*code for quantity)">
+      <button type="button" id="cam-btn" class="ghost cs-btn" hidden>Camera</button>
+    </div>
+    <div id="msg" role="status" aria-live="polite"></div>
+    <div class="prodrow" id="prodrow" aria-live="polite"></div>
+    <div class="cartbox" id="cartbox"></div>
+  </div>
+  <div class="right">
+    <div class="panel" id="totals">
+      <div class="tot"><span>Items</span><span id="t-count">0</span></div>
+      <div class="tot"><span>Subtotal</span><span id="t-sub">0.00</span></div>
+      <div class="tot"><span>Discount</span><span id="t-disc">0.00</span></div>
+      <div class="tot" id="t-vatrow" hidden><span>VAT included</span><span id="t-vat">0.00</span></div>
+      <div class="grandlbl">Total payable (KES)</div>
+      <div class="grand" id="t-total">0.00</div>
+    </div>
+    <div class="panel"><div class="tot"><span>Customer</span><span id="t-cust" style="color:var(--text)">-</span></div></div>
+    <div class="panel hints" id="hints"></div>
+  </div>
+</div>
+<iframe id="printframe" title="Receipt printer"></iframe>
+<div id="dialogs"></div>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var S = { cfg: null, cart: null, sel: -1, lastSale: null, stack: [], busy: false };
+
+  /* ---------- helpers ---------- */
+  function csrf() { var m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/); return m ? decodeURIComponent(m[1]) : ""; }
+  function api(method, url, body) {
+    var o = { method: method, credentials: "same-origin", headers: { "X-CSRFToken": csrf() } };
+    if (body !== undefined) { o.headers["Content-Type"] = "application/json"; o.body = JSON.stringify(body); }
+    return fetch(url, o).then(function (r) {
+      if (r.status === 401) { location.replace("/app/pos/"); return { ok: false, error: "Signed out." }; }
+      return r.json().catch(function () { return { ok: false, error: "Unexpected server response." }; });
+    }).catch(function () { return { ok: false, error: "Cannot reach the shop server." }; });
+  }
+  function fmt(x) { var n = Number(x); if (!isFinite(n)) return "0.00"; return n.toLocaleString("en-KE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function esc(t) { return String(t == null ? "" : t).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function say(text, kind) { var m = $("msg"); m.textContent = text || ""; m.className = kind || ""; }
+  function focusScan() { if (!S.stack.length) { $("scan").focus(); } }
+  function lockPos() {
+    if (!S.cfg || S.busy || S.stack.length) return;
+    api("POST", "/api/pos/lock/", {}).then(function (r) {
+      if (!r.ok) { say(r.error || "Could not lock this till.", "err"); return; }
+      location.replace("/app/pos/?sleep=1&till=" + encodeURIComponent(S.cfg.till_number));
+    });
+  }
+  $("lock-pos").addEventListener("click", lockPos);
+  window.addEventListener("winespos-lock-request", lockPos);
+
+  /* ---------- dialogs (Escape only ever closes a dialog; it never performs or skips anything) ---------- */
+  function openDialog(html, opts) {
+    opts = opts || {};
+    var veil = document.createElement("div"); veil.className = "veil";
+    veil.innerHTML = '<div class="dlg" role="dialog" aria-modal="true">' + html + "</div>";
+    $("dialogs").appendChild(veil);
+    var d = { el: veil, root: veil.firstChild, onClose: opts.onClose, onKey: opts.onKey };
+    S.stack.push(d);
+    var first = veil.querySelector("[data-first]") || veil.querySelector("input,select,button");
+    if (first) { first.focus(); if (first.select) first.select(); }
+    return d;
+  }
+  function closeDialog(d) {
+    var i = S.stack.indexOf(d); if (i < 0) return;
+    S.stack.splice(i, 1); d.el.remove();
+    if (d.onClose) d.onClose();
+    focusScan();
+  }
+  function topDialog() { return S.stack[S.stack.length - 1]; }
+
+  /* ---------- keys ---------- */
+  function keyName(e) {
+    var k = e.key;
+    if (/^F\d{1,2}$/.test(k)) return k;
+    if (e.altKey && !e.ctrlKey && k.length === 1) return "Alt+" + k.toUpperCase();
+    return "";
+  }
+  document.addEventListener("keydown", function (e) {
+    var d = topDialog();
+    if (e.ctrlKey && e.altKey && String(e.key).toLowerCase() === "l") {
+      e.preventDefault();
+      if (!d) lockPos();
+      return;
+    }
+    if (e.key === "Escape") { e.preventDefault(); if (d) closeDialog(d); else { $("scan").value = ""; } return; }
+    if (d) {
+      if (d.onKey && d.onKey(e)) { return; }
+      if (e.key === "Tab") {                                   // keep Tab inside the dialog
+        var f = d.root.querySelectorAll("input,select,button,textarea,[tabindex='0']");
+        if (!f.length) return;
+        var a = f[0], z = f[f.length - 1];
+        if (e.shiftKey && document.activeElement === a) { e.preventDefault(); z.focus(); }
+        else if (!e.shiftKey && document.activeElement === z) { e.preventDefault(); a.focus(); }
+      }
+      if (/^F\d{1,2}$/.test(e.key)) e.preventDefault();       // no shortcut works behind an open dialog
+      return;
+    }
+    var name = keyName(e);
+    var act = name && S.keymap ? S.keymap[name] : null;
+    if (act) { e.preventDefault(); run(act); return; }
+    if (e.key === "ArrowDown") { e.preventDefault(); moveSel(1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); moveSel(-1); }
+    else if (e.key === "Delete") { e.preventDefault(); removeSelected(); }
+    else if (/^F\d{1,2}$/.test(e.key)) { e.preventDefault(); }   // unassigned F-keys do nothing (not even reload)
+  }, true);
+
+  /* ---------- rendering ---------- */
+  function items() { return (S.cart && S.cart.items) || []; }
+  function selItem() { var it = items(); return S.sel >= 0 && S.sel < it.length ? it[S.sel] : null; }
+  function moveSel(d) { var n = items().length; if (!n) return; S.sel = Math.max(0, Math.min(n - 1, S.sel + d)); renderCart(); }
+  var LOGO = "{% static 'core/logo-mark.png' %}", LOGO_PRINT = "{% static 'core/receipt-logo.png' %}";
+  /* A product picture, or the POS logo when there is none (or the file is missing). */
+  function pic(it, cls) {
+    var src = it && it.image ? it.image : "";
+    return '<img class="' + cls + (src ? "" : " nopic") + '" src="' + esc(src || LOGO) + '" alt="" ' +
+      'onerror="this.onerror=null;this.src=\'' + LOGO + '\';this.classList.add(\'nopic\')">';
+  }
+  function renderProduct() {
+    var it = selItem(), row = $("prodrow");
+    if (!it) { row.innerHTML = pic(null, "") + '<div><div class="pn">Wine POS</div><div class="ps">The picture of the selected product shows here.</div></div>'; return; }
+    var sub = [];
+    if (it.pack) sub.push(esc(it.pack));
+    if (it.selling_unit) sub.push(esc(it.selling_unit));
+    sub.push(it.quantity + " &times; " + fmt(it.unit_price) + " = " + fmt(it.line_total));
+    row.innerHTML = pic(it, "") + '<div><div class="pn">' + esc(it.name) + '</div><div class="ps">' + sub.join(" &middot; ") + "</div></div>";
+  }
+  function renderCart() {
+    var c = S.cart || { items: [] }, box = $("cartbox");
+    if (!c.items.length) {
+      box.innerHTML = '<div class="empty">Scan a product to start the sale.</div>';
+    } else {
+      var h = '<table><thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Volume</th><th class="num">Total</th></tr></thead><tbody>';
+      c.items.forEach(function (it, i) {
+        var sub = [];
+        if (it.pack) sub.push(esc(it.pack));
+        if (it.selling_unit) sub.push(esc(it.selling_unit));
+        if (Number(it.discount) > 0) sub.push("Discount -" + fmt(it.discount));
+        if (it.price_changed) sub.push("Price changed (list " + fmt(it.list_price) + ")");
+        h += '<tr class="' + (i === S.sel ? "sel" : "") + '"><td>' + pic(it, "thumb") + esc(it.name) + (sub.length ? "<small>" + sub.join(" &middot; ") + "</small>" : "") +
+          '</td><td class="num">' + it.quantity + '</td><td class="num">' + fmt(it.unit_price) + '</td><td class="num">' +
+          (it.total_volume_ml == null ? "—" : fmt(it.total_volume_ml) + " ml") + '</td><td class="num"><b>' + fmt(it.line_total) + "</b></td></tr>";
+      });
+      box.innerHTML = h + "</tbody></table>";
+      var row = box.querySelector("tr.sel"); if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+    }
+    $("t-count").textContent = c.count || 0; $("t-sub").textContent = fmt(c.subtotal || 0);
+    $("t-disc").textContent = fmt(c.discount || 0); $("t-total").textContent = fmt(c.total || 0);
+    $("t-vatrow").hidden = c.vat_included == null; if (c.vat_included != null) $("t-vat").textContent = fmt(c.vat_included);
+    $("t-cust").textContent = (c.customer || "-") + (c.customer_pin ? "  (" + c.customer_pin + ")" : "");
+    $("totals").className = "panel";
+    renderProduct();
+  }
+  function setCart(cart, addedId) {
+    S.cart = cart;
+    var it = cart.items;
+    if (addedId) { for (var i = 0; i < it.length; i++) if (it[i].id === addedId) S.sel = i; }
+    else if (S.sel >= it.length) S.sel = it.length - 1;
+    if (S.sel < 0 && it.length) S.sel = it.length - 1;
+    renderCart();
+  }
+  function refresh() { return api("GET", "/api/sales/cart/").then(function (r) { if (r.ok) setCart(r.cart); return r; }); }
+
+  /* ---------- approval window ----------
+     When the server says a supervisor must approve (HTTP 409), ask for the approver's own login, get a
+     single-use token, and send the SAME request again with it. Closing this window just cancels. */
+  var ACTION_LABEL = { refund: "Approve a refund", remove_item: "Remove item from sale", void_sale: "Void the sale", price_change: "Change price",
+                       exceptional_discount: "Exceptional discount" };
+  function askApproval(request) {
+    return new Promise(function (resolve) {
+      var done = false;
+      var detail = request.detail ? JSON.stringify(request.detail) : "";
+      var action = request.action;
+      var d = openDialog('<h2>Supervisor authorization</h2><p class="note">' + esc(request.label || ACTION_LABEL[action] || action) + (detail ? ": " + esc(detail) : "") +
+        '. A supervisor or manager types their own login. The cashier never sees it.</p>' +
+        '<label>Supervisor / manager username</label><input id="ap-user" data-first autocomplete="off">' +
+        '<label>Password or PIN</label><input id="ap-secret" type="password" autocomplete="off">' +
+        '<label>Reason</label><input id="ap-reason" autocomplete="off">' +
+        '<div class="err" id="ap-err"></div><div class="btns"><button class="ghost" id="ap-cancel" type="button">Cancel (Esc)</button><button id="ap-ok" type="button">Approve (Enter)</button></div>',
+        { onClose: function () { if (!done) resolve(null); } });
+      var go = function () {
+        if (S.busy) return; S.busy = true;
+        api("POST", "/api/approvals/request/", { action: action, object_ref: request.object_ref,
+          detail: request.detail, approver_username: $("ap-user").value,
+          secret: $("ap-secret").value, reason: $("ap-reason").value }).then(function (r) {
+          S.busy = false; $("ap-secret").value = "";
+          if (r.ok) { done = true; resolve(r.token || ""); closeDialog(d); }
+          else { $("ap-err").textContent = r.error || "Not approved."; $("ap-secret").focus(); }
+        });
+      };
+      $("ap-ok").onclick = go; $("ap-cancel").onclick = function () { closeDialog(d); };
+      d.onKey = function (e) { if (e.key === "Enter") { e.preventDefault(); go(); return true; } return false; };
+    });
+  }
+  /* Run a cart action; if approval is needed, ask and retry once with the token. */
+  function act(url, body, opts) {
+    opts = opts || {};
+    return api("POST", url, body).then(function (r) {
+      if (r.ok || r.approval_required == null) return r;
+      return askApproval(r.approval_required).then(function (token) {
+        if (token === null) return { ok: false, cancelled: true, error: "Cancelled: not authorized." };
+        var b2 = {}; for (var k in body) b2[k] = body[k]; b2.approval_token = token;
+        return api("POST", url, b2);
+      });
+    }).then(function (r) {
+      if (r.ok && r.cart) setCart(r.cart, r.added);
+      else if (!r.ok) say(r.error || "Something went wrong.", "err");
+      return r;
+    });
+  }
+
+  /* ---------- cart actions ---------- */
+  function addCode(raw) {
+    raw = (raw || "").trim(); if (!raw) return;
+    var qty = 1, code = raw, m = raw.match(/^(\d{1,4})\s*[*x]\s*(.+)$/i);
+    if (m) { qty = parseInt(m[1], 10); code = m[2]; }
+    say("");
+    api("POST", "/api/catalog/scan/", { code: code }).then(function (r) {
+      if (!r.ok) {
+        say(r.error || "Code not found.", "err");
+        if (r.add_url) {            // only managers/owners get this: the product form opens with the barcode filled in
+          var a = document.createElement("a");
+          a.href = r.add_url; a.textContent = " Add this product"; a.style.textDecoration = "underline";
+          $("msg").appendChild(a);
+        }
+        return;
+      }
+      if (r.external_import) { say(r.message || "Product saved for manager setup.", "err"); return; }
+      if (r.item.pack) { addCodeToCart(code, qty); return; }
+      chooseSellingUnit(r.item, qty, code);
+    });
+  }
+  function addedMessage(r) {
+    if (r.ok) {
+      var it = selItem();
+      if (it) say("Added: " + it.name + (it.selling_unit ? " · " + it.selling_unit + " · " + fmt(it.total_volume_ml) + " ml" : "") +
+        "  x" + it.quantity + "  =  " + fmt(it.line_total), "ok");
+    }
+  }
+  function addCodeToCart(code, qty) {
+    act("/api/sales/cart/add/", { code: code, quantity: qty }).then(addedMessage);
+  }
+  function addBaseProduct(p, qty, code) {
+    var body = code ? { code: code, quantity: qty } : { product_id: p.product_id, quantity: qty };
+    act("/api/sales/cart/add/", body).then(addedMessage);
+  }
+  function chooseSellingUnit(p, qty, code) {
+    api("GET", "/api/catalog/products/" + p.product_id + "/selling-units/").then(function (r) {
+      if (!r.ok) { say(r.error || "Could not load selling units.", "err"); return; }
+      var units = r.units || [];
+      if (!units.length) { addBaseProduct(p, qty, code); return; }
+      var choices = '<option value="base">' + esc(p.base_unit || "Unit") + ' · KSh ' + esc(fmt(p.unit_price)) + '</option>';
+      units.forEach(function (u) {
+        choices += '<option value="' + esc(u.id) + '">' + esc(u.name) + ' · ' + esc(fmt(u.volume_ml)) +
+          ' ml · KSh ' + esc(fmt(u.price)) + '</option>';
+      });
+      var d = openDialog('<h2>' + esc(p.name) + '</h2><p class="note">Choose the selling unit and quantity.</p>' +
+        '<label for="su-unit">Selling unit</label><select id="su-unit" data-first>' + choices + '</select>' +
+        '<label for="su-qty">Quantity</label><input id="su-qty" type="number" min="1" step="1" value="' + esc(qty || 1) + '">' +
+        '<div class="err" id="su-err"></div><div class="btns"><button class="ghost" id="su-cancel" type="button">Cancel (Esc)</button>' +
+        '<button id="su-add" type="button">Add to cart (Enter)</button></div>');
+      var go = function () {
+        var q = $("su-qty").value.trim();
+        if (!/^\d{1,4}$/.test(q) || parseInt(q, 10) < 1) { $("su-err").textContent = "Enter a whole number from 1 to 9999."; return; }
+        var selected = $("su-unit").value;
+        closeDialog(d);
+        if (selected === "base") { addBaseProduct(p, parseInt(q, 10), code); }
+        else {
+          act("/api/sales/cart/add/", { selling_unit_id: parseInt(selected, 10), quantity: parseInt(q, 10) })
+            .then(addedMessage);
+        }
+      };
+      $("su-add").onclick = go; $("su-cancel").onclick = function () { closeDialog(d); };
+      d.onKey = function (e) { if (e.key === "Enter") { e.preventDefault(); go(); return true; } return false; };
+    });
+  }
+  function addProduct(p, qty) {
+    chooseSellingUnit(p, qty || 1, null);
+  }
+  function removeSelected() {
+    var it = selItem(); if (!it) { say("Select a line first (Up / Down).", "err"); return; }
+    var go = function () { act("/api/sales/cart/remove/", { item_id: it.id }, { detail: it.name }).then(function (r) { if (r.ok) say("Removed: " + it.name, "ok"); }); };
+    if (S.cfg.owner) confirmBox("Remove " + it.name + " from the sale?", go); else go();
+  }
+  function confirmBox(text, yes) {
+    var d = openDialog('<h2>Please confirm</h2><p class="note">' + esc(text) + '</p><div class="btns"><button class="ghost" id="cf-no" type="button">No (Esc)</button><button id="cf-yes" data-first type="button">Yes (Enter)</button></div>');
+    $("cf-no").onclick = function () { closeDialog(d); };
+    $("cf-yes").onclick = function () { closeDialog(d); yes(); };
+  }
+  function promptBox(title, label, initial, handler, note) {
+    var d = openDialog('<h2>' + esc(title) + '</h2>' + (note ? '<p class="note">' + esc(note) + "</p>" : "") + "<label>" + esc(label) +
+      '</label><input id="pb" data-first autocomplete="off" value="' + esc(initial || "") + '"><div class="err" id="pb-err"></div>' +
+      '<div class="btns"><button class="ghost" id="pb-no" type="button">Cancel (Esc)</button><button id="pb-ok" type="button">OK (Enter)</button></div>');
+    var go = function () { handler($("pb").value, d, function (err) { $("pb-err").textContent = err || ""; }); };
+    $("pb-ok").onclick = go; $("pb-no").onclick = function () { closeDialog(d); };
+    d.onKey = function (e) { if (e.key === "Enter") { e.preventDefault(); go(); return true; } return false; };
+  }
+  function changeQty() {
+    var it = selItem(); if (!it) { say("Select a line first (Up / Down).", "err"); return; }
+    promptBox("Quantity: " + it.name, "New quantity", it.quantity, function (v, d, fail) {
+      if (!/^\d+$/.test(v.trim()) || parseInt(v, 10) < 1) { fail("Enter a whole number, 1 or more."); return; }
+      closeDialog(d);
+      act("/api/sales/cart/quantity/", { item_id: it.id, quantity: parseInt(v, 10) }, { detail: it.name + " to " + v });
+    }, "Lowering a quantity removes scanned stock, so it needs a supervisor (unless you are the owner).");
+  }
+  function discount() {
+    var it = selItem(); if (!it) { say("Select a line first (Up / Down).", "err"); return; }
+    promptBox("Discount: " + it.name, "Amount (KES) or percent, e.g. 200 or 5%", "", function (v, d, fail) {
+      v = v.trim(); if (!v) { fail("Enter an amount or a percentage."); return; }
+      var body = { item_id: it.id };
+      if (/%$/.test(v)) body.percent = v.replace("%", "").trim(); else body.amount = v;
+      closeDialog(d);
+      act("/api/sales/cart/discount/", body, { detail: it.name + " " + v }).then(function (r) { if (r.ok) say("Discount applied.", "ok"); });
+    }, "Small discounts need nothing more; larger ones need a supervisor (unless you are the owner).");
+  }
+  function changePrice() {
+    var it = selItem(); if (!it) { say("Select a line first (Up / Down).", "err"); return; }
+    promptBox("Change price: " + it.name, "New price per unit (KES)", it.unit_price, function (v, d) {
+      closeDialog(d);
+      act("/api/sales/cart/price/", { item_id: it.id, price: v }, { detail: it.name + " to " + v }).then(function (r) { if (r.ok) say("Price changed.", "ok"); });
+    });
+  }
+  function voidSale() {
+    if (!items().length) { say("There is nothing to void.", "err"); return; }
+    var go = function () { act("/api/sales/cart/void/", { reason: "" }, { detail: "whole sale" }).then(function (r) { if (r.ok) { S.sel = -1; say("Sale voided.", "ok"); } }); };
+    confirmBox("Void the whole sale? The items are kept on record.", go);
+  }
+  function approvalMenu() {
+    var opts = [["1", "Remove the selected item", removeSelected], ["2", "Change the selected item's price", changePrice], ["3", "Void the whole sale", voidSale]];
+    var d = openDialog('<h2>Supervisor authorization</h2><p class="note">Press a number. The supervisor is asked for their login next (the owner is not asked).</p><ul class="opts">' +
+      opts.map(function (o) { return "<li><span><kbd>" + o[0] + "</kbd> " + o[1] + "</span></li>"; }).join("") + '</ul><div class="btns"><button class="ghost" id="am-no" type="button" data-first>Close (Esc)</button></div>');
+    $("am-no").onclick = function () { closeDialog(d); };
+    d.onKey = function (e) { var o = opts.filter(function (x) { return x[0] === e.key; })[0]; if (o) { e.preventDefault(); closeDialog(d); o[2](); return true; } return false; };
+  }
+  function customer() {
+    var c = S.cart || {};
+    var d = openDialog('<h2>Customer</h2><p class="note">Type the name. Add a KRA PIN only if the customer needs a tax invoice for their business.</p>' +
+      '<label>Customer name</label><input id="cu-name" data-first autocomplete="off" value="' + esc(c.customer || "") + '">' +
+      '<label>Customer KRA PIN (optional)</label><input id="cu-pin" autocomplete="off" placeholder="A123456789Z" value="' + esc(c.customer_pin || "") + '">' +
+      '<div class="err" id="cu-err"></div><div class="btns"><button class="ghost" id="cu-no" type="button">Cancel (Esc)</button><button id="cu-ok" type="button">Save (Enter)</button></div>');
+    var go = function () {
+      api("POST", "/api/sales/cart/customer/", { name: $("cu-name").value, pin: $("cu-pin").value }).then(function (r) {
+        if (r.ok) { setCart(r.cart); closeDialog(d); } else $("cu-err").textContent = r.error || "Not saved.";
+      });
+    };
+    $("cu-ok").onclick = go; $("cu-no").onclick = function () { closeDialog(d); };
+    d.onKey = function (e) { if (e.key === "Enter") { e.preventDefault(); go(); return true; } return false; };
+  }
+
+  /* ---------- search (F2) ---------- */
+  function search() {
+    var results = [], idx = 0, timer = null;
+    var d = openDialog('<h2>Search product</h2><p class="note">Search by name, brand or product code. Up / Down to choose, Enter to add. Start with 3* for a quantity.</p>' +
+      '<input id="sr-q" data-first autocomplete="off" placeholder="e.g. johnnie, or 3*tusker"><ul class="opts" id="sr-list" style="margin-top:10px"></ul><div class="err" id="sr-err"></div>');
+    function paint() {
+      $("sr-list").innerHTML = results.length ? results.map(function (p, i) {
+        return '<li class="' + (i === idx ? "on" : "") + '"><span>' + esc(p.name) + (p.brand ? " <small>" + esc(p.brand) + "</small>" : "") +
+          (p.code || p.sku ? ' <small>Code: ' + esc(p.code || p.sku) + "</small>" : "") +
+          '</span><span>' + fmt(p.unit_price) + ' &middot; stock ' + p.stock + "</span></li>";
+      }).join("") : "";
+    }
+    function query() {
+      var raw = $("sr-q").value.trim(), m = raw.match(/^(\d{1,4})\s*[*x]\s*(.*)$/i), q = m ? m[2] : raw;
+      if (q.length < 2) { results = []; paint(); return; }
+      api("GET", "/api/catalog/search/?q=" + encodeURIComponent(q)).then(function (r) {
+        if (r.ok) { results = r.items; idx = 0; paint(); $("sr-err").textContent = r.items.length ? "" : "No product found."; }
+      });
+    }
+    $("sr-q").addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(query, 180); });
+    d.onKey = function (e) {
+      if (e.key === "ArrowDown") { e.preventDefault(); if (results.length) { idx = Math.min(results.length - 1, idx + 1); paint(); } return true; }
+      if (e.key === "ArrowUp") { e.preventDefault(); if (results.length) { idx = Math.max(0, idx - 1); paint(); } return true; }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (!results.length) { query(); return true; }
+        var raw = $("sr-q").value.trim(), m = raw.match(/^(\d{1,4})\s*[*x]/i), p = results[idx];
+        closeDialog(d); addProduct(p, m ? parseInt(m[1], 10) : 1); return true;
+      }
+      return false;
+    };
+  }
+
+  /* ---------- hold / retrieve ---------- */
+  function hold() {
+    if (!S.cfg.can.hold) { say("You are not allowed to hold sales.", "err"); return; }
+    if (!items().length) { say("There is nothing to hold.", "err"); return; }
+    promptBox("Hold this sale", "Label (optional, e.g. customer name)", "", function (v, d) {
+      closeDialog(d);
+      api("POST", "/api/sales/cart/hold/", { label: v }).then(function (r) { if (r.ok) { setCart(r.cart); S.sel = -1; say("Sale held. F6 brings it back.", "ok"); } else say(r.error, "err"); });
+    });
+  }
+  function retrieve() {
+    if (!S.cfg.can.hold) { say("You are not allowed to retrieve sales.", "err"); return; }
+    api("GET", "/api/sales/held/").then(function (r) {
+      if (!r.ok) { say(r.error, "err"); return; }
+      pickList("Held sales", r.held, function (h) { return esc(h.label || "Sale #" + h.id) + " <small>" + h.items + " items &middot; " + esc(h.cashier) + "</small>"; },
+        function (h) { return fmt(h.total); }, "No held sales.", function (h) {
+          api("POST", "/api/sales/held/resume/", { sale_id: h.id }).then(function (x) { if (x.ok) { setCart(x.cart); say("Sale resumed.", "ok"); } else say(x.error, "err"); });
+        });
+    });
+  }
+  function pickList(title, rows, left, right, emptyText, choose) {
+    var idx = 0;
+    var d = openDialog("<h2>" + esc(title) + '</h2><ul class="opts" id="pl"></ul><div class="err" id="pl-e"></div><div class="btns"><button class="ghost" id="pl-no" type="button" data-first>Close (Esc)</button></div>');
+    function paint() {
+      $("pl").innerHTML = rows.length ? rows.map(function (x, i) { return '<li class="' + (i === idx ? "on" : "") + '"><span>' + left(x) + "</span><span>" + right(x) + "</span></li>"; }).join("")
+        : '<li class="off"><span>' + esc(emptyText) + "</span></li>";
+    }
+    paint(); $("pl-no").onclick = function () { closeDialog(d); };
+    d.onKey = function (e) {
+      if (e.key === "ArrowDown") { e.preventDefault(); idx = Math.min(rows.length - 1, idx + 1); paint(); return true; }
+      if (e.key === "ArrowUp") { e.preventDefault(); idx = Math.max(0, idx - 1); paint(); return true; }
+      if (e.key === "Enter" && rows.length) { e.preventDefault(); var row = rows[idx]; closeDialog(d); choose(row); return true; }
+      return false;
+    };
+  }
+
+  /* ---------- payment and completion ----------
+     ONE checkout for every way of paying: cash only, M-PESA only, or both on the same sale.
+     What is already paid (M-PESA payments chosen, cash taken) is kept here in S.tender, in cents. Nothing is
+     sent to the server until the balance is zero; then ONE request completes the sale and the server checks
+     every figure again. If the cart changes, the part payments are cleared. */
+  function cents(x) { return Math.round(Number(x) * 100); }
+  function money(c) { return fmt(c / 100); }
+  function tender() {
+    var tot = cents(S.cart.total);
+    if (S.tender && S.tender.total !== tot) { S.tenderReset = S.tender.mpesa.length > 0 || S.tender.cashC > 0; S.tender = null; }
+    if (!S.tender) S.tender = { total: tot, mpesa: [], cashC: 0 };
+    return S.tender;
+  }
+  function leftC() {
+    var t = tender(), paid = t.cashC;
+    t.mpesa.forEach(function (p) { paid += p.c; });
+    return t.total - paid;
+  }
+  function payment() {
+    var c = S.cart; if (!c || !items().length) { say("The sale is empty. Scan a product first.", "err"); return; }
+    var t = tender(), ms = S.cfg.payment_methods, staged = t.mpesa.length > 0 || t.cashC > 0, info = "";
+    if (S.tenderReset) { info = '<p class="err">The sale changed, so the part payments were cleared. Start again.</p>'; S.tenderReset = false; }
+    if (staged) {
+      info += '<ul class="opts" style="margin-bottom:10px">' +
+        t.mpesa.map(function (p) { return "<li><span>M-PESA " + esc(p.receipt || "") + "</span><span>" + money(p.c) + "</span></li>"; }).join("") +
+        (t.cashC ? "<li><span>Cash taken</span><span>" + money(t.cashC) + "</span></li>" : "") +
+        '<li class="on"><span><b>Still to pay</b></span><span><b>' + money(leftC()) + "</b></span></li></ul>";
+    } else {
+      info += '<p class="note">Paying with both cash and M-PESA? Choose one first. What is left comes back to this list.</p>';
+    }
+    var d = openDialog('<h2>Payment method</h2><div class="grandlbl">Total payable (KES)</div><div class="grand" style="text-align:left">' + money(t.total) + "</div>" + info +
+      '<ul class="opts">' + ms.map(function (m, i) {
+      return '<li class="' + (m.enabled ? "on" : "off") + '"><span>' + (i + 1) + ". " + esc(m.label) + "</span><span>" + (m.enabled ? "press " + (i + 1) : "not available yet") + "</span></li>";
+    }).join("") + '</ul><div class="btns">' + (staged ? '<button class="ghost" id="py-clr" type="button">Start over (C)</button>' : "") +
+      '<button class="ghost" id="py-no" type="button">Back (Esc)</button><button id="py-ok" data-first type="button">Cash (Enter)</button></div>');
+    function pick(i) { var m = ms[i]; if (!m || !m.enabled) return; closeDialog(d); if (m.code === "MPESA") mpesa(); else complete(); }
+    function clear() { S.tender = null; closeDialog(d); payment(); }
+    $("py-ok").onclick = function () { pick(0); }; $("py-no").onclick = function () { closeDialog(d); };
+    if ($("py-clr")) $("py-clr").onclick = clear;
+    d.onKey = function (e) {
+      if (e.key === "Enter") { e.preventDefault(); pick(0); return true; }
+      if (staged && (e.key === "c" || e.key === "C")) { e.preventDefault(); clear(); return true; }
+      if (/^[1-9]$/.test(e.key)) { e.preventDefault(); pick(Number(e.key) - 1); return true; }
+      return false;
+    };
+  }
+  /* Send the sale to the server: the M-PESA payments chosen so far plus (if any) the cash handed over in total. */
+  function finish(cashTendered, d, onErr) {
+    if (S.busy) return;
+    var t = tender(), body = { mpesa_ids: t.mpesa.map(function (p) { return p.id; }) };
+    if (cashTendered != null) body.cash_tendered = Number(cashTendered).toFixed(2);
+    S.busy = true;
+    function handle(r) {
+      S.busy = false;
+      if (!r.ok) {
+        if (r.approval_required) {
+          askApproval(r.approval_required).then(function (token) {
+            if (token === null) { onErr("Cancelled: supervisor approval was not given."); return; }
+            var approvedBody = {}; for (var k in body) approvedBody[k] = body[k];
+            approvedBody.approval_token = token;
+            S.busy = true;
+            api("POST", "/api/sales/checkout/", approvedBody).then(handle);
+          });
+          return;
+        }
+        var msg = r.error || "Could not complete the sale.";
+        if (/already been used|not found/i.test(msg)) { t.mpesa = []; msg += " The M-PESA payments were cleared. Choose them again."; }
+        onErr(msg); if (/stock/i.test(msg)) refresh();
+        return;
+      }
+      if (d && S.stack.indexOf(d) >= 0) closeDialog(d);
+      saleDone(r);
+    }
+    api("POST", "/api/sales/checkout/", body).then(handle);
+  }
+  function saleDone(r) {
+    S.tender = null; setCart(r.cart); S.sel = -1; S.lastSale = r.sale_id;
+    var change = Number(r.change);
+    if (Number(r.cash) > 0) {
+      var t = $("totals"); t.className = "panel done";
+      $("t-total").textContent = fmt(change); document.querySelector("#totals .grandlbl").textContent = "Change due (KES)";
+      setTimeout(function () { document.querySelector("#totals .grandlbl").textContent = "Total payable (KES)"; if (!items().length) { $("t-total").textContent = "0.00"; t.className = "panel"; } }, 6000);
+    }
+    var how = [];
+    if (Number(r.mpesa) > 0) how.push("M-PESA " + fmt(r.mpesa) + (r.references && r.references.length ? " (" + r.references.join(", ") + ")" : ""));
+    if (Number(r.cash) > 0) how.push("Cash " + fmt(r.cash));
+    var note = "Sale " + r.number + " complete. Paid by " + how.join(" + ") + "." + (change > 0 ? " Change " + fmt(change) + "." : "") + (r.customer ? " Customer: " + r.customer + "." : "");
+    if (r.etims === "SUBMITTED") note += " eTIMS signed.";
+    else if (r.etims === "PENDING") note += " eTIMS signature pending (will retry). " + (r.etims_note || "");
+    else if (r.etims === "REJECTED") note += " eTIMS REJECTED: tell the manager. " + (r.etims_note || "");
+    say(note, r.etims === "REJECTED" ? "err" : "ok");
+    printSale(r.sale_id, false);
+  }
+  function mpesa() {
+    var t = tender(), rows = [], idx = 0, poller = null, stkTimer = null, mcfg = S.cfg.mpesa || {};
+    var left0 = leftC(); if (left0 <= 0) { say("Nothing is left to pay.", "err"); return; }
+    var whole = left0 % 100 === 0 ? String(left0 / 100) : (left0 / 100).toFixed(2);
+    var d = openDialog('<h2>M-PESA payment</h2><div class="grandlbl">' + (left0 === t.total ? "Total payable" : "Still to pay") + ' (KES)</div><div class="grand" style="text-align:left">' + money(left0) + "</div>" +
+      '<p class="note">Customer paid to the Till? It shows below within a few seconds. Choose it and press Enter. A payment smaller than the balance is a part payment: the rest can be cash or another M-PESA. Only payments confirmed by Safaricom appear here.</p>' +
+      (mcfg.till_capture ? "" : '<p class="err">M-PESA capture is not set up on this shop yet. Ask the manager.</p>') +
+      '<ul class="opts" id="mp-list"></ul>' +
+      "<label>Or send a payment request to the customer's phone</label>" +
+      '<input id="mp-phone" inputmode="tel" autocomplete="off" placeholder="0712 345 678"' + (mcfg.stk ? "" : " disabled") + ">" +
+      '<label>Amount to request (KES, whole shillings)</label><input id="mp-amt" inputmode="decimal" autocomplete="off" value="' + whole + '"' + (mcfg.stk ? "" : " disabled") + ">" +
+      '<div class="note" id="mp-stk">' + (mcfg.stk ? "" : "Phone requests are not set up. The customer can still pay the Till.") + "</div>" +
+      '<div class="err" id="mp-err"></div>' +
+      '<div class="btns"><button class="ghost" id="mp-no" type="button">Back (Esc)</button><button id="mp-ok" data-first type="button">Use selected payment (Enter)</button></div>');
+    function alive() { return S.stack.indexOf(d) >= 0; }
+    function staged(id) { return t.mpesa.some(function (p) { return p.id === id; }); }
+    function visible() { return rows.filter(function (p) { return !staged(p.id); }); }
+    function usable(p) { return cents(p.amount) <= leftC(); }
+    function paint() {
+      var ul = $("mp-list"); if (!ul) return;
+      var v = visible();
+      if (!v.length) { ul.innerHTML = '<li class="off"><span>Waiting for a payment of up to ' + money(leftC()) + "...</span><span></span></li>"; return; }
+      ul.innerHTML = v.map(function (p, i) {
+        var ok = usable(p), label = (p.name ? esc(p.name) : "Name not provided") + (p.who ? " " + esc(p.who) : "") + " | " + esc(p.receipt) + " | " + esc(p.time);
+        var right = fmt(Number(p.amount)) + (!ok ? " (more than the balance)" : cents(p.amount) === leftC() ? "" : " (part payment)");
+        return '<li class="' + (ok ? "on" : "off") + '"' + (i === idx ? ' style="outline:1px solid var(--line-strong)"' : "") + "><span>" + label + "</span><span>" + right + "</span></li>";
+      }).join("");
+    }
+    function poll() {
+      api("GET", "/api/sales/mpesa/recent/").then(function (r) {
+        if (!r.ok || !alive()) return;
+        rows = r.payments || [];
+        var v = visible(), best = -1;
+        v.forEach(function (p, i) { if (best < 0 && cents(p.amount) === leftC()) best = i; });
+        if (best < 0) v.forEach(function (p, i) { if (best < 0 && usable(p)) best = i; });
+        if (idx >= v.length || !usable(v[idx])) idx = best >= 0 ? best : 0;
+        paint();
+      });
+    }
+    /* Add one confirmed payment. If that clears the balance the sale completes; otherwise back to the list. */
+    function take(id, c, receipt) {
+      if (S.busy) return;
+      if (c > leftC()) { $("mp-err").textContent = "That payment is more than what is left to pay (" + money(leftC()) + "). Overpayments come in the next update."; return; }
+      t.mpesa.push({ id: id, c: c, receipt: receipt });
+      if (leftC() === 0) {
+        finish(t.cashC ? t.cashC / 100 : null, d, function (msg) { var er = $("mp-err"); if (er) er.textContent = msg; t.mpesa.pop(); if (alive()) poll(); });
+      } else { closeDialog(d); payment(); }
+    }
+    function sendStk() {
+      var phone = $("mp-phone").value.trim(); if (!phone) return;
+      $("mp-err").textContent = ""; $("mp-stk").textContent = "Sending request...";
+      api("POST", "/api/sales/mpesa/stk/", { phone: phone, amount: $("mp-amt").value.trim() }).then(function (r) {
+        if (!alive()) return;
+        if (!r.ok) { $("mp-stk").textContent = ""; $("mp-err").textContent = r.error || "Could not send the request."; return; }
+        $("mp-stk").textContent = "Request sent. Ask the customer to enter their M-PESA PIN...";
+        clearInterval(stkTimer);
+        stkTimer = setInterval(function () {
+          api("GET", "/api/sales/mpesa/stk/" + r.stk_id + "/").then(function (s) {
+            if (!alive() || !s.ok) return;
+            if (s.status === "CONFIRMED" && s.transaction_id) { clearInterval(stkTimer); $("mp-stk").textContent = ""; take(s.transaction_id, cents(s.amount), s.receipt); }
+            else if (s.status === "FAILED" || s.status === "EXPIRED") {
+              clearInterval(stkTimer); $("mp-stk").textContent = "";
+              $("mp-err").textContent = (s.status === "EXPIRED" ? "The customer did not answer. " : "") + (s.message || "The payment did not go through.");
+            }
+          });
+        }, 2500);
+      });
+    }
+    d.onClose = function () { clearInterval(poller); clearInterval(stkTimer); };
+    poller = setInterval(poll, 3000); poll(); paint();
+    $("mp-no").onclick = function () { closeDialog(d); };
+    $("mp-ok").onclick = function () {
+      var p = visible()[idx];
+      if (p && usable(p)) take(p.id, cents(p.amount), p.receipt);
+      else $("mp-err").textContent = "No payment of up to KES " + money(leftC()) + " has arrived yet.";
+    };
+    d.onKey = function (e) {
+      var n = visible().length;
+      if (e.key === "ArrowDown") { e.preventDefault(); idx = Math.max(0, Math.min(n - 1, idx + 1)); paint(); return true; }
+      if (e.key === "ArrowUp") { e.preventDefault(); idx = Math.max(0, idx - 1); paint(); return true; }
+      if (e.key === "Enter") { e.preventDefault(); var ae = document.activeElement; if (ae === $("mp-phone") || ae === $("mp-amt")) sendStk(); else $("mp-ok").onclick(); return true; }
+      return false;
+    };
+  }
+  function complete() {
+    var c = S.cart; if (!c || !items().length) { say("The sale is empty. Scan a product first.", "err"); return; }
+    var t = tender(), due = leftC(), partly = due < t.total;
+    if (due <= 0) { say("Nothing is left to pay.", "err"); return; }
+    var d = openDialog('<h2>Cash payment</h2>' + (partly ? '<p class="note">Sale total ' + money(t.total) + ". Already paid " + money(t.total - due) + ".</p>" : "") +
+      '<div class="grandlbl">' + (partly ? "Cash still to pay" : "Total payable") + ' (KES)</div><div class="grand" style="text-align:left">' + money(due) + "</div>" +
+      '<label>Cash received (KES)</label><input id="cp-in" data-first inputmode="decimal" autocomplete="off" value="' + (due / 100).toFixed(2) + '">' +
+      '<div class="tot" style="margin-top:10px"><span>Change</span><b id="cp-ch" style="color:var(--text);font-size:22px">0.00</b></div><div class="err" id="cp-err"></div>' +
+      '<div class="btns"><button class="ghost" id="cp-no" type="button">Back (Esc)</button><button id="cp-ok" type="button">Complete sale (Enter)</button></div>');
+    var inp = $("cp-in");
+    function val() { var v = parseFloat(inp.value.replace(/,/g, "")); return isFinite(v) && v > 0 ? cents(v) : 0; }
+    function calc() { var v = val(); $("cp-ch").textContent = v >= due ? money(v - due) : "-"; }
+    inp.addEventListener("input", calc); calc();
+    var go = function () {
+      var v = val(); if (!v) { $("cp-err").textContent = "Enter the cash received."; return; }
+      if (v >= due) { finish((t.cashC + v) / 100, d, function (msg) { $("cp-err").textContent = msg; }); return; }
+      confirmBox("Cash " + money(v) + " is less than the " + money(due) + " still to pay. Take it as a part payment and collect the rest by M-PESA?", function () {
+        t.cashC += v; closeDialog(d); payment();
+      });
+    };
+    $("cp-ok").onclick = go; $("cp-no").onclick = function () { closeDialog(d); };
+    d.onKey = function (e) { if (e.key === "Enter") { e.preventDefault(); go(); return true; } return false; };
+  }
+
+  /* ---------- receipts ---------- */
+  function printLines(r, done) {
+    var mm = r.paper_mm === 58 ? 58 : 80, font = mm === 58 ? 11 : 10;
+    var html = "<!doctype html><html><head><meta charset=utf-8><style>@page{size:" + mm + "mm auto;margin:0}html,body{margin:0;background:#fff;color:#000}" +
+      "pre{margin:0;padding:2mm;width:" + (mm - 4) + "mm;font:" + font + "px/1.25 'Courier New',monospace;white-space:pre-wrap}" +
+      "svg{display:block;width:32mm;height:32mm;margin:2mm auto}" +
+      "img.logo{display:block;width:" + (mm === 58 ? 24 : 30) + "mm;height:auto;margin:2mm auto 0}</style></head><body>" +
+      '<img class="logo" alt="" src="' + location.origin + LOGO_PRINT + '"><pre>' + esc(r.lines.join("\n")) + "</pre>" + (r.qr_svg || "") + "</body></html>";
+    var f = $("printframe"); f.onload = function () { f.onload = null; try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { say("The printer did not start.", "err"); } focusScan(); };
+    f.srcdoc = html;
+    say(done, "ok");
+  }
+  function printSale(id, dup) {
+    var call = dup ? api("POST", "/api/sales/receipt/" + id + "/reprint/", {}) : api("GET", "/api/sales/receipt/" + id + "/");
+    call.then(function (r) {
+      if (!r.ok) { say(r.error || "Could not print.", "err"); return; }
+      printLines(r, dup ? "Duplicate receipt sent to the printer." : "Receipt sent to the printer.");
+    });
+  }
+  function printRefund(id) {
+    api("POST", "/api/sales/refund/" + id + "/receipt/", {}).then(function (r) {
+      if (!r.ok) { say(r.error || "Could not print the refund slip.", "err"); return; }
+      printLines(r, r.duplicate ? "Duplicate refund slip sent to the printer." : "Refund slip sent to the printer.");
+    });
+  }
+  function printMenu() {
+    api("GET", "/api/sales/mine/").then(function (r) {
+      if (!r.ok) { say(r.error, "err"); return; }
+      pickList("Print a receipt", r.sales, function (s) { return esc(s.number) + " <small>" + (s.printed ? "already printed: reprint is marked DUPLICATE" : "original not printed yet") + "</small>"; },
+        function (s) { return fmt(s.total); }, "No completed sales on this shift yet.", function (s) {
+          if (!s.printed) printSale(s.id, false);
+          else if (S.cfg.can.reprint) printSale(s.id, true);
+          else say("The original was already printed. Ask a supervisor or the owner for a reprint.", "err");
+        });
+    });
+  }
+  function shiftSummary() {
+    api("GET", "/api/sales/shift/summary/").then(function (r) {
+      if (!r.ok) { say(r.error, "err"); return; }
+      var s = r.shift;
+      var d = openDialog("<h2>Shift summary</h2>" + '<div class="keys"><span>Sales made</span><b>' + s.sales_count + "</b><span>Sales total</span><b>" + fmt(s.sales_total) +
+        "</b><span>Cash sales</span><b>" + fmt(s.cash_sales) + "</b><span>M-PESA sales</span><b>" + fmt(s.mpesa_sales) + "</b><span>Opening float</span><b>" + fmt(s.opening_float) + "</b><span>Expected cash in drawer</span><b>" + fmt(s.cash_in_drawer_expected) +
+        '</b></div><p class="note" style="margin-top:10px">End of your shift? Close it to count the drawer. Complete or void any sale in progress first.</p><div class="btns"><button class="ghost" id="ss-close" type="button">Close shift and count cash (C)</button><button id="ss-ok" data-first type="button">Close window (Enter)</button></div>');
+      $("ss-ok").onclick = function () { closeDialog(d); };
+      $("ss-close").onclick = function () { location.href = "/pos/cashup/"; };
+      d.onKey = function (e) {
+        if (e.key === "Enter") { e.preventDefault(); closeDialog(d); return true; }
+        if (e.key === "c" || e.key === "C") { e.preventDefault(); location.href = "/pos/cashup/"; return true; }
+        return false;
+      };
+    });
+  }
+  function help() {
+    var rows = Object.keys(S.cfg.actions).map(function (a) { return "<kbd>" + esc(S.cfg.shortcuts[a]) + "</kbd><span>" + esc(S.cfg.actions[a]) + "</span>"; }).join("");
+    var d = openDialog('<h2>Keyboard guide</h2><div class="keys">' + rows +
+      "<kbd>Up / Down</kbd><span>Choose a line in the cart</span><kbd>Delete</kbd><span>Remove the chosen line (needs a supervisor)</span><kbd>Enter</kbd><span>Confirm</span>" +
+      '<kbd>Esc</kbd><span>Close a window (never approves or skips anything)</span><kbd>3*code</kbd><span>Scan 3 of a product: type 3*, then the code</span></div>' +
+      '<div class="btns"><button id="hp-ok" data-first type="button">Close (Enter)</button></div>');
+    $("hp-ok").onclick = function () { closeDialog(d); };
+    d.onKey = function (e) { if (e.key === "Enter") { e.preventDefault(); closeDialog(d); return true; } return false; };
+  }
+
+  /* ---------- refunds (Alt+R) ----------
+     Ask -> a supervisor approves (stock goes back) -> the customer is paid back. Cash is handed over here and leaves
+     the drawer figure; M-PESA is paid back outside and a supervisor records the M-PESA code. Every step is checked
+     again by the server; nothing here is trusted. */
+  function refundMenu() {
+    if (!S.cfg.can.refund) { say("You are not allowed to start refunds.", "err"); return; }
+    var d = openDialog('<h2>Refunds</h2><ul class="opts"><li class="on"><span>1. New refund</span><span>press 1</span></li>' +
+      '<li class="on"><span>2. Waiting for approval / to pay back</span><span>press 2</span></li></ul>' +
+      '<div class="btns"><button class="ghost" id="rf-no" type="button" data-first>Back (Esc)</button></div>');
+    $("rf-no").onclick = function () { closeDialog(d); };
+    d.onKey = function (e) {
+      if (e.key === "1") { e.preventDefault(); closeDialog(d); refundFind(); return true; }
+      if (e.key === "2") { e.preventDefault(); closeDialog(d); refundList(); return true; }
+      return false;
+    };
+  }
+  function refundFind() {
+    promptBox("New refund", "Receipt number (the last 4 or more characters)", "", function (v, d, err) {
+      if (!v.trim()) { err("Type the receipt number."); return; }
+      api("GET", "/api/sales/refund/find/?q=" + encodeURIComponent(v.trim())).then(function (r) {
+        if (!r.ok) { err(r.error || "Not found."); return; }
+        closeDialog(d); refundLines(r.sale, r.lines);
+      });
+    }, "Find the sale the customer is bringing back goods from. It is on their receipt.");
+  }
+  function refundLines(sale, lines) {
+    var rows = lines.map(function (l) {
+      var unit = l.selling_unit ? " <small>" + esc(l.selling_unit) + " · " + esc(l.volume_per_unit_ml) + " ml each</small>" : "";
+      var remainingVolume = l.left_volume_ml != null ? " <small>" + esc(l.left_volume_ml) + " ml</small>" : "";
+      return "<tr><td>" + esc(l.name) + (l.pack ? " <small>" + esc(l.pack) + "</small>" : "") + unit + "</td><td>" + l.sold + "</td><td>" + l.left + remainingVolume + "</td><td>" +
+        (l.left > 0 ? '<input class="rl-q" data-id="' + l.item_id + '" inputmode="numeric" autocomplete="off" value="0" style="width:56px">' : "done") + "</td></tr>";
+    }).join("");
+    var requestKey = window.crypto && typeof window.crypto.randomUUID === "function"
+      ? window.crypto.randomUUID()
+      : "rf-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    var d = openDialog("<h2>Refund for " + esc(sale.number) + "</h2><p class=\"note\">Sale total " + fmt(sale.total) + (sale.customer ? " | " + esc(sale.customer) : "") +
+      '. Type how many of each item come back.</p><table class="rl"><tr><th>Item</th><th>Sold</th><th>Left</th><th>Refund</th></tr>' + rows + "</table>" +
+      '<label>Pay the customer back by</label><select id="rl-method"><option value="CASH">Cash</option><option value="MPESA">M-PESA</option></select>' +
+      '<label>Reason</label><input id="rl-reason" autocomplete="off" placeholder="e.g. bottle was faulty">' +
+      '<label><input type="checkbox" id="rl-back" checked style="width:auto"> Goods are fine to sell again (put back in stock)</label>' +
+      '<div class="err" id="rl-err"></div><div class="btns"><button class="ghost" id="rl-no" type="button">Cancel (Esc)</button><button id="rl-ok" type="button">Ask for approval (Enter)</button></div>');
+    var first = d.root.querySelector(".rl-q"); if (first) { first.focus(); first.select(); }
+    var go = function () {
+      if (S.busy) return;
+      var picked = [].slice.call(d.root.querySelectorAll(".rl-q")).map(function (el) { return { item_id: Number(el.getAttribute("data-id")), quantity: parseInt(el.value, 10) || 0 }; })
+        .filter(function (x) { return x.quantity > 0; });
+      if (!picked.length) { $("rl-err").textContent = "Type how many of at least one item are coming back."; return; }
+      S.busy = true;
+      api("POST", "/api/sales/refund/request/", { sale_id: sale.id, lines: picked, method: $("rl-method").value, reason: $("rl-reason").value, restock: $("rl-back").checked, request_key: requestKey }).then(function (r) {
+        S.busy = false;
+        if (!r.ok) { $("rl-err").textContent = r.error || "Could not start the refund."; return; }
+        closeDialog(d);
+        if (r.refund.status !== "REQUESTED") {
+          say("Refund " + r.refund.number + " already exists: " + r.refund.status_label + ".", "ok");
+          return;
+        }
+        say("Refund " + r.refund.number + " for " + fmt(r.refund.total) + " is waiting for a supervisor.", "ok");
+        refundApprove(r.refund);
+      });
+    };
+    $("rl-ok").onclick = go; $("rl-no").onclick = function () { closeDialog(d); };
+    d.onKey = function (e) { if (e.key === "Enter") { e.preventDefault(); go(); return true; } return false; };
+  }
+  function refundApprove(rf) {
+    act("/api/sales/refund/" + rf.id + "/approve/", {}, { detail: "refund " + rf.number + " of KES " + fmt(rf.total) }).then(function (r) {
+      if (r.ok) { refundApproved(r.refund, r); }
+      else if (r.cancelled) say("Not approved yet. The request is saved: Alt+R then 2 to approve it later.", "err");
+    });
+  }
+  function etimsNote(r) {
+    if (!r || !r.etims) return "";
+    if (r.etims === "SUBMITTED") return " eTIMS credit note signed.";
+    if (r.etims === "PENDING") return " eTIMS credit note pending (will retry)." + (r.etims_note ? " " + r.etims_note : "");
+    if (r.etims === "REJECTED") return " eTIMS credit note REJECTED: tell the manager. " + (r.etims_note || "");
+    return "";
+  }
+  function refundApproved(rf, r) {
+    var note = etimsNote(r), bad = r && r.etims === "REJECTED";
+    if (rf.method === "CASH" && rf.can.pay_cash) {
+      say("Refund " + rf.number + " approved." + note, bad ? "err" : "ok");
+      confirmBox("Refund " + rf.number + " approved. Hand KES " + fmt(rf.total) + " cash to the customer now?", function () { refundCash(rf); });
+    } else {
+      say("Refund " + rf.number + " approved. It goes back by M-PESA: a supervisor records the M-PESA code under Alt+R, 2 once paid." + note, bad ? "err" : "ok");
+    }
+  }
+  function refundCash(rf) {
+    act("/api/sales/refund/" + rf.id + "/pay-cash/", {}).then(function (r) {
+      if (r.ok) { say("Cash refund " + rf.number + " paid. Slip printing.", "ok"); printRefund(rf.id); }
+    });
+  }
+  function refundList() {
+    api("GET", "/api/sales/refund/list/").then(function (r) {
+      if (!r.ok) { say(r.error, "err"); return; }
+      pickList("Refunds", r.refunds, function (x) { return esc(x.number) + " <small>" + esc(x.status_label) + " | " + (x.method === "CASH" ? "cash" : "M-PESA") + " | " + esc(x.by) + " " + esc(x.time) + (x.etims && x.etims !== "SUBMITTED" ? " | eTIMS " + (x.etims === "REJECTED" ? "REJECTED" : "pending") : "") + "</small>"; },
+        function (x) { return fmt(x.total); }, "No refunds waiting.", refundActions);
+    });
+  }
+  function refundActions(rf) {
+    var c = rf.can, btn = function (id, label, on) { return on ? '<button class="ghost" id="' + id + '" type="button">' + label + "</button>" : ""; };
+    var d = openDialog("<h2>" + esc(rf.number) + "</h2><p class=\"note\">Sale " + esc(rf.sale) + " | " + esc(rf.status_label) + " | by " + esc(rf.by) + "</p>" +
+      '<ul class="opts">' + rf.items.map(function (i) { return "<li><span>" + i.quantity + " x " + esc(i.name) +
+        (i.volume_ml != null ? " <small>(" + esc(i.volume_ml) + " ml)</small>" : "") +
+        (i.restock ? "" : " <small>(not for resale)</small>") + "</span><span>" + fmt(i.amount) + "</span></li>"; }).join("") +
+      '<li class="on"><span><b>Total refund</b></span><span><b>' + fmt(rf.total) + "</b></span></li></ul><p class=\"note\">Reason: " + esc(rf.reason) + "</p>" +
+      '<div class="btns" style="flex-wrap:wrap">' + btn("ra-approve", "Approve (A)", c.approve) + btn("ra-reject", "Reject (R)", c.reject) + btn("ra-cancel", "Cancel request (C)", c.cancel) +
+      btn("ra-cash", "Hand over cash (H)", c.pay_cash) + btn("ra-mpesa", "Record M-PESA payback (M)", c.mark_mpesa) +
+      btn("ra-print", "Print slip (P)", rf.status === "APPROVED" || rf.status === "PAID") + '<button class="ghost" id="ra-no" type="button" data-first>Close (Esc)</button></div>');
+    var on = function (id, fn) { var el = $(id); if (el) el.onclick = function () { closeDialog(d); fn(); }; };
+    on("ra-approve", function () { refundApprove(rf); });
+    on("ra-reject", function () { promptBox("Reject refund", "Why is it rejected?", "", function (v, pd, err) {
+      act("/api/sales/refund/" + rf.id + "/reject/", { reason: v }).then(function (r) { if (r.ok) { closeDialog(pd); say("Refund " + rf.number + " rejected.", "ok"); } else err(r.error); }); }); });
+    on("ra-cancel", function () { act("/api/sales/refund/" + rf.id + "/cancel/", {}).then(function (r) { if (r.ok) say("Refund " + rf.number + " cancelled.", "ok"); }); });
+    on("ra-cash", function () { confirmBox("Hand KES " + fmt(rf.total) + " cash to the customer now?", function () { refundCash(rf); }); });
+    on("ra-mpesa", function () { promptBox("M-PESA payback", "M-PESA code of the payback", "", function (v, pd, err) {
+      act("/api/sales/refund/" + rf.id + "/mpesa-paid/", { reference: v }).then(function (r) { if (r.ok) { closeDialog(pd); say("Refund " + rf.number + " recorded as paid back.", "ok"); printRefund(rf.id); } else err(r.error); }); },
+      "Type the code from the M-PESA message that proves the customer was paid. The person who asked for the refund cannot record it."); });
+    on("ra-print", function () { printRefund(rf.id); });
+    $("ra-no").onclick = function () { closeDialog(d); };
+    d.onKey = function (e) {
+      var k = String(e.key).toLowerCase(), map = { a: "ra-approve", r: "ra-reject", c: "ra-cancel", h: "ra-cash", m: "ra-mpesa", p: "ra-print" };
+      if (map[k] && $(map[k])) { e.preventDefault(); $(map[k]).click(); return true; }
+      return false;
+    };
+  }
+
+  var ACTIONS = { help: help, search: search, scan: function () { $("scan").focus(); $("scan").select(); }, quantity: changeQty, hold: hold, retrieve: retrieve,
+                  discount: discount, payment: payment, complete: complete, print: printMenu, shift: shiftSummary, approval: approvalMenu, customer: customer, refund: refundMenu };
+  function run(a) { if (ACTIONS[a]) ACTIONS[a](); }
+
+  /* ---------- start-up ---------- */
+  $("scan").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); var v = this.value; this.value = ""; addCode(v); }
+  });
+  document.addEventListener("click", function () { focusScan(); });
+  setInterval(function () { $("clock").textContent = new Date().toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit" }); }, 1000);
+  setInterval(function () {
+    fetch("/health/", { credentials: "same-origin" }).then(function (r) { return r.ok; }).catch(function () { return false; }).then(function (ok) {
+      var c = $("conn"); c.textContent = ok ? "Server OK" : "No connection to shop server"; c.className = "pill" + (ok ? "" : " bad");
+    });
+  }, 8000);
+  window.addEventListener("focus", focusScan);
+
+  api("GET", "/api/sales/config/").then(function (r) {
+    if (!r.ok) { say(r.error || "Open your shift first.", "err"); setTimeout(function () { location.replace("/app/pos/"); }, 1500); return; }
+    S.cfg = r; S.keymap = {};
+    Object.keys(r.shortcuts).forEach(function (a) { S.keymap[r.shortcuts[a]] = a; });
+    $("till").textContent = r.till; $("cashier").textContent = r.cashier; $("authby").textContent = r.owner ? "(owner)" : r.authorized_by;
+    $("ownerpill").hidden = !r.owner; $("helpkey").textContent = r.shortcuts.help;
+    $("hints").innerHTML = ["search", "quantity", "discount", "hold", "retrieve", "complete", "print", "shift", "approval", "customer", "help"].map(function (a) {
+      return "<div><kbd>" + esc(r.shortcuts[a]) + "</kbd> " + esc(r.actions[a]) + "</div>";
+    }).join("");
+    refresh().then(function () { focusScan(); });
+  });
+})();
+</script>
+<script>
+(function(){ var b=document.getElementById("cam-btn"), i=document.getElementById("scan");
+  if (window.CamScan && navigator.mediaDevices && b) { b.hidden=false; CamScan.attach(i,b); } })();
+</script>
+</body>
+</html>

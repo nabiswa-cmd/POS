@@ -1,0 +1,58 @@
+.env
+h
+loader.html
+packaging\postgresql-16.16-1-windows-x64.exe
+
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Django
+staticfiles/
+*.sqlite3
+db.sqlite3
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment variables
+.env
+
+# Backups
+*.bak
+*.bak_*
+*.backup
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build files
+build/
+dist/
+*.spec.bak
+
+# Logs
+*.log
+@"
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+.venv/
+venv/
+env/
+dev.sqlite3
+db.sqlite3
+staticfiles/
+.DS_Store
+Thumbs.db
+"@ | Set-Content .gitignore

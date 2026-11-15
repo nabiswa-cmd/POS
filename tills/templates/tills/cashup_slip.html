@@ -1,0 +1,43 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cash-up slip | POS</title>
+<link rel="stylesheet" href="{% static 'core/theme.css' %}">
+<script src="{% static 'core/theme.js' %}"></script>
+<style>@media print{.noprint{display:none!important}body{background:#fff;color:#000}}</style>
+</head>
+<body>
+<main style="max-width:520px;margin:24px auto;padding:0 16px">
+<h1>Cash-up slip</h1>
+<p class="sub">{{ c.shift.till }} &middot; cashier {{ c.shift.cashier.display_name }}<br>
+Opened {{ c.shift.opened_at|date:"d M Y H:i" }} &middot; closed {{ c.closed_at|date:"d M Y H:i" }}{% if c.closed_by_id != c.shift.cashier_id %}<br>Counted by {{ c.closed_by.display_name }} for the cashier{% endif %}</p>
+{% for w in warnings %}<div class="toast warning" role="status">{{ w }}</div>{% endfor %}
+<table>
+<tr><td>Opening float</td><td class="num">{{ c.opening_float }}</td></tr>
+<tr><td>Cash sales</td><td class="num">+ {{ c.cash_sales }}</td></tr>
+<tr><td>Cash refunds handed back</td><td class="num">- {{ c.cash_refunds }}</td></tr>
+<tr><td>Cash paid out (expenses)</td><td class="num">- {{ c.cash_paid_out }}</td></tr>
+<tr><td><b>Expected in drawer</b></td><td class="num"><b>{{ c.expected_cash }}</b></td></tr>
+<tr><td><b>Counted</b></td><td class="num"><b>{{ c.counted_cash }}</b></td></tr>
+<tr><td><b>Difference</b></td><td class="num"><b>{% if c.variance == 0 %}Balanced{% elif c.variance > 0 %}Over by {{ c.variance }}{% else %}Short by {{ c.variance|cut:"-" }}{% endif %}</b></td></tr>
+</table>
+{% if c.reason %}<p>Reason given: {{ c.reason }}</p>{% endif %}
+<h2>Counted</h2>
+<table><tr><th>Note / coin</th><th class="num">Pieces</th><th class="num">KES</th></tr>
+{% for l in lines %}<tr><td>{{ l.denom }}</td><td class="num">{{ l.pieces }}</td><td class="num">{{ l.value }}</td></tr>{% empty %}<tr><td colspan="3" class="muted">Nothing counted.</td></tr>{% endfor %}</table>
+<h2>Not in the drawer</h2>
+<table>
+<tr><td>M-PESA sales</td><td class="num">{{ c.mpesa_sales }}</td></tr>
+<tr><td>M-PESA refunds paid back</td><td class="num">{{ c.mpesa_refunds_paid }}</td></tr>
+<tr><td>Card and bank sales</td><td class="num">{{ c.other_sales }}</td></tr>
+<tr><td>Sales on this shift ({{ c.sales_count }})</td><td class="num">{{ c.sales_total }}</td></tr>
+</table>
+<p class="noprint" style="margin-top:20px">
+  <button type="button" onclick="window.print()">Print</button>
+  {% if done %}<a class="btn ghost" href="/app/pos/">Back to the till login</a>{% else %}<a class="btn ghost" href="javascript:history.back()" data-back>Back</a>{% endif %}
+</p>
+</main>
+</body>
+</html>

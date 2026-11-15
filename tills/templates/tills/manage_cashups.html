@@ -1,0 +1,29 @@
+{% extends "core/base.html" %}{% block title %}Cash-ups{% endblock %}
+{% block content %}
+<h1>Cash-ups</h1>
+<p class="sub">Every till shift, what the drawer should have held, what was counted, and the difference. M-PESA, card and bank money are shown but never mixed into the cash figure.</p>
+
+<form method="get" class="row" style="margin-bottom:14px">
+  <div><label for="from">From</label><input id="from" type="date" name="from" value="{{ r.day_from|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}"></div>
+  <div><label for="to">To</label><input id="to" type="date" name="to" value="{{ r.day_to|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}"></div>
+  <div style="flex:0 0 auto"><button type="submit">Show</button></div>
+  <div style="flex:0 0 auto"><a class="btn ghost" href="?from={{ r.day_from|date:'Y-m-d' }}&amp;to={{ r.day_to|date:'Y-m-d' }}&amp;csv=1">Download (CSV)</a></div>
+</form>
+
+<div class="grid">
+  <div class="tile"><b>Counted shifts</b><span class="muted">{{ r.counted_count }} ({{ r.balanced }} balanced)</span></div>
+  <div class="tile"><b>Still open</b><span class="muted">{{ r.open_count }}</span></div>
+  <div class="tile"><b>Total over</b><span class="muted">KES {{ r.over }}</span></div>
+  <div class="tile"><b>Total short</b><span class="muted">KES {{ r.short }}</span></div>
+</div>
+
+<h2>Shifts, {{ r.day_from|date:"d M" }} to {{ r.day_to|date:"d M Y" }}</h2>
+<table><tr><th>Opened</th><th>Till</th><th>Cashier</th><th class="num">Expected</th><th class="num">Counted</th><th>Difference</th><th></th></tr>
+{% for x in r.rows %}<tr>
+<td>{{ x.shift.opened_at|date:"d M H:i" }}</td><td>{{ x.shift.till }}</td><td>{{ x.shift.cashier.display_name }}</td>
+{% if x.cashup %}<td class="num">{{ x.cashup.expected_cash }}</td><td class="num">{{ x.cashup.counted_cash }}</td>
+<td>{% if x.cashup.variance == 0 %}<span class="pill ok">Balanced</span>{% elif x.cashup.variance > 0 %}<span class="pill low">Over {{ x.cashup.variance }}</span>{% else %}<span class="pill bad">Short {{ x.cashup.variance|cut:"-" }}</span>{% endif %}{% if x.cashup.reason %}<br><span class="muted">{{ x.cashup.reason }}</span>{% endif %}</td>
+{% else %}<td class="num muted">-</td><td class="num muted">-</td><td><span class="pill">{% if x.shift.closed_at %}closed{% else %}open{% endif %}</span></td>{% endif %}
+<td><a href="{% url 'cashup-detail' x.shift.pk %}">Open</a></td></tr>
+{% empty %}<tr><td colspan="7" class="muted">No shifts in this period.</td></tr>{% endfor %}</table>
+{% endblock %}

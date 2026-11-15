@@ -1,0 +1,71 @@
+{% extends "core/base.html" %}{% load static %}{% block title %}Charts{% endblock %}
+{% block head %}<link rel="stylesheet" href="{% static 'sales/charts.css' %}">{% endblock %}
+{% block content %}
+<h1>Charts</h1>
+<p class="sub">How sales are going and which products sell most. Sales are completed sales including VAT, by the day they were completed.</p>
+
+<form method="get" class="row" style="margin-bottom:10px">
+  <div><label for="f-from">From</label><input id="f-from" type="date" name="from" value="{{ day_from|date:'Y-m-d' }}"></div>
+  <div><label for="f-to">To</label><input id="f-to" type="date" name="to" value="{{ day_to|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}"></div>
+  <div style="flex:0 0 auto"><button type="submit">Show</button></div>
+</form>
+<p>{% for label, a, b in presets %}<a class="btn ghost" href="?from={{ a|date:'Y-m-d' }}&amp;to={{ b|date:'Y-m-d' }}">{{ label }}</a> {% endfor %}</p>
+
+<div class="viz" id="viz">
+  <p class="msg error" id="viz-err" hidden>The charts could not be loaded. Check the server and try again.</p>
+  <div class="kpis">
+    <div class="kpi"><span>Total sales</span><b id="k-total">-</b></div>
+    <div class="kpi"><span>Number of sales</span><b id="k-count">-</b></div>
+    <div class="kpi"><span>Average sale</span><b id="k-avg">-</b></div>
+    <div class="kpi"><span>Best day</span><b id="k-best">-</b><small id="k-best-sub"></small></div>
+    <div class="kpi"><span>Refunds approved</span><b id="k-refunds">-</b></div>
+  </div>
+
+  <div class="charts">
+    <section class="card chart-card wide">
+      <h3>Sales per day</h3><p class="note">Hover or touch the line to see a day.</p>
+      <div class="plot" id="c-daily"></div>
+      <details class="tv"><summary>Table view</summary><div id="t-daily"></div></details>
+    </section>
+
+    <section class="card chart-card wide">
+      <div class="chart-head">
+        <div><h3>Best-selling products</h3><p class="note">The ten products that sell most in this period.</p></div>
+        <div class="seg" role="group" aria-label="Rank products by">
+          <button type="button" data-products="revenue" aria-pressed="true">By money</button>
+          <button type="button" data-products="units" aria-pressed="false">By number sold</button>
+        </div>
+      </div>
+      <div class="plot" id="c-products"></div>
+      <details class="tv"><summary>Table view</summary><div id="t-products"></div></details>
+    </section>
+
+    <section class="card chart-card">
+      <h3>Busy hours</h3><p class="note">Sales by hour of the day.</p>
+      <div class="plot" id="c-hours"></div>
+      <details class="tv"><summary>Table view</summary><div id="t-hours"></div></details>
+    </section>
+
+    <section class="card chart-card">
+      <h3>How customers pay</h3><p class="note">Money received by payment method.</p>
+      <div class="plot" id="c-pay"></div>
+    </section>
+
+    <section class="card chart-card">
+      <h3>Sales by category</h3><p class="note">Top ten categories.</p>
+      <div class="plot" id="c-cat"></div>
+    </section>
+
+    <section class="card chart-card">
+      <h3>Sales by cashier</h3><p class="note">Who rang up the most.</p>
+      <div class="plot" id="c-cash"></div>
+    </section>
+
+    <section class="card chart-card wide">
+      <h3>In stock but not selling</h3><p class="note">Active products with stock that had no sale in this period (largest stock first).</p>
+      <div id="c-slow"></div>
+    </section>
+  </div>
+</div>
+<script src="{% static 'sales/charts.js' %}"></script>
+{% endblock %}

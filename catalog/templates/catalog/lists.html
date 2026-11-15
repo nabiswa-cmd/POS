@@ -1,0 +1,8 @@
+{% extends "core/base.html" %}{% block title %}Categories & brands{% endblock %}
+{% block content %}<h1>Categories &amp; brands</h1><p class="sub">Used to group products and for category profit reports later.</p>
+<div class="row" style="align-items:flex-start">
+<div><h2>Categories</h2><form method="post" class="card row">{% csrf_token %}<div>{{ cat_form.name }}{{ cat_form.name.errors }}</div><div style="flex:0 0 auto"><button type="submit">Add</button></div></form>
+<table><tr><th>Name</th><th class="num">Products</th></tr>{% for c in categories %}<tr><td>{{ c.name }}</td><td class="num">{{ c.n }}</td></tr>{% endfor %}</table></div>
+<div><h2>Brands</h2><form method="post" class="card row">{% csrf_token %}<div>{{ brand_form.name }}{{ brand_form.name.errors }}</div><div style="flex:0 0 auto"><button type="submit">Add</button></div></form>
+<table><tr><th>Name</th><th class="num">Products</th></tr>{% for b in brands %}<tr><td>{{ b.name }}</td><td class="num">{{ b.n }}</td></tr>{% endfor %}</table></div>
+</div>{% endblock %}

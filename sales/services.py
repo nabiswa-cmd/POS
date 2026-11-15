@@ -1,0 +1,710 @@
+"""Sales rules for the POS cart and cash checkout. Views call these; they enforce permissions,
+supervisor approvals, stock and the audit trail. Nothing here trusts the screen.
+
+Approvals (accounts.services) are single-use tokens bound to an action, the requesting cashier and an
+object reference. For cart lines the reference is rules.item_ref(sale_id, item_id); for a whole sale it is
+rules.sale_ref(sale_id). The cashier's screen collects the token from the supervisor and sends it with the
+request; the server consumes it inside the same database transaction as the change, so a failed change
+does not burn the approval.
+"""
+from collections import defaultdict
+from decimal import Decimal
+
+from django.conf import settings
+from django.db import IntegrityError, transaction
+from django.db.models import Sum
+from django.utils import timezone
+
+from accounts import services as auth_services
+from accounts.approval_rules import ApprovalError
+from accounts.permissions import RESTRICTED_ACTIONS
+from catalog import services as catalog_services
+from catalog.models import CodeSequence, Packaging, Product
+from core import audit
+from core.models import ShopSettings
+from inventory import movement_rules as mr
+from inventory import services as stock_services
+from tills.models import CashierShift
+
+from . import etims, rules, tax
+from .models import MpesaTransaction, Payment, Sale, SaleItem
+
+
+class SaleError(Exception):
+    """A rule was broken; the message is safe to show the cashier."""
+
+
+class NotAllowed(SaleError):
+    """The user lacks a permission (shown as 403 by the views)."""
+
+
+class ApprovalNeeded(SaleError):
+    """A supervisor/manager must approve first. The sales screen opens its approval window for `action`
+    and sends the same request again with the token. (The server re-checks the token every time.)"""
+
+    def __init__(self, action, object_ref, message="A supervisor or manager must approve this.", detail=None):
+        super().__init__(message)
+        self.action, self.object_ref = action, object_ref
+        self.label = RESTRICTED_ACTIONS[action]["label"]
+        self.detail = detail or {}
+
+
+# --- helpers ------------------------------------------------------------------------------------
+
+def _need(user, code, message=None):
+    if not user.can(code):
+        raise NotAllowed(message or "You are not allowed to do that.")
+
+
+def _rule(call, *args, **kwargs):
+    try:
+        return call(*args, **kwargs)
+    except rules.RuleError as exc:
+        raise SaleError(str(exc)) from exc
+
+
+def open_shift_for(user, till_number):
+    """The cashier's open shift on this till, or an error. The POS cannot sell without one."""
+    shift = (CashierShift.objects.select_related("till", "authorized_by")
+             .filter(till__number=till_number, cashier=user, closed_at__isnull=True).first()) if till_number else None
+    if shift is None:
+        raise SaleError("Open your shift on this till before selling.")
+    return shift
+
+
+def _shift_still_open(shift):
+    if not CashierShift.objects.filter(pk=shift.pk, closed_at__isnull=True).exists():
+        raise SaleError("Your shift is closed.")
+
+
+def _approve(user, action, object_ref, token, *, detail=None):
+    """Consume a supervisor/manager approval for a restricted action. Returns the Approval, or None when
+    nobody else needs to approve (the manager's policy waives it, or the owner is acting)."""
+    if not auth_services.needs_approval(user, action):
+        return None
+    if not token:
+        raise ApprovalNeeded(action, object_ref, detail=detail)
+    try:
+        return auth_services.require_approval(action, token, requester=user, object_ref=object_ref)
+    except ApprovalError as exc:
+        raise SaleError(str(exc)) from exc
+
+
+def _authority(user, approval):
+    """Who is on record as authorizing: the approver, or the owner when the owner acts alone."""
+    if approval:
+        return approval.approver
+    return user if auth_services.is_exempt(user) else None
+
+
+def _why(user, approval, reason, what):
+    """The reason to record for a restricted action. The owner may act without typing one."""
+    if approval:
+        return approval.reason
+    reason = (reason or "").strip()
+    if reason:
+        return reason
+    if auth_services.is_exempt(user):
+        return "Owner action (no approval needed)"
+    raise SaleError(f"A reason is required to {what}.")
+
+
+def _locked_sale(user, shift, *, create=False):
+    """The cashier's cart in progress, row-locked. Call inside transaction.atomic()."""
+    sale = Sale.objects.filter(shift=shift, cashier=user, status=Sale.OPEN).first()
+    if sale is None:
+        if not create:
+            raise SaleError("There is no sale in progress.")
+        try:
+            with transaction.atomic():
+                sale = Sale.objects.create(till=shift.till, shift=shift, cashier=user, authorized_by=shift.authorized_by)
+        except IntegrityError:
+            sale = Sale.objects.get(shift=shift, status=Sale.OPEN)
+    try:
+        return Sale.objects.select_for_update().get(pk=sale.pk, status=Sale.OPEN, cashier=user)
+    except Sale.DoesNotExist:
+        raise SaleError("There is no sale in progress.")
+
+
+def _item(sale, item_id):
+    try:
+        return sale.items.select_for_update().get(pk=int(item_id))
+    except (SaleItem.DoesNotExist, TypeError, ValueError):
+        raise SaleError("That item is not in the current sale.")
+
+
+def _recalc(sale):
+    items = list(sale.items.all())
+    subtotal, discount, total = rules.totals((i.quantity, i.unit_price, i.discount) for i in items)
+    sale.subtotal, sale.discount_total, sale.total = subtotal, discount, total
+    sale.save(update_fields=["subtotal", "discount_total", "total"])
+    return sale
+
+
+def _check_stock(product):
+    product.refresh_from_db(fields=["stock_qty", "active", "name", "base_unit"])
+    if not product.active:
+        raise SaleError(f"'{product.name}' is not on sale.")
+
+
+# --- reading ------------------------------------------------------------------------------------
+
+def active_sale(user, shift):
+    return Sale.objects.filter(shift=shift, cashier=user, status=Sale.OPEN).first()
+
+
+# --- building the cart ---------------------------------------------------------------------------
+
+@transaction.atomic
+def add_item(user, shift, *, code=None, product_id=None, packaging_id=None, selling_unit_id=None, quantity=1):
+    """Scan or pick a base product, pack, or server-configured partial selling unit."""
+    _need(user, "sales.make", "You are not allowed to use the POS.")
+    _shift_still_open(shift)
+    qty = _rule(rules.parse_quantity, quantity)
+
+    selling_unit = None
+    if selling_unit_id not in (None, ""):
+        if code or product_id or packaging_id:
+            raise SaleError("Choose either a selling unit or a product code.")
+        try:
+            selling_unit = catalog_services.get_sellable_unit(selling_unit_id)
+        except (catalog_services.CatalogError, TypeError, ValueError):
+            raise SaleError("That selling unit is not available.") from None
+        product, packaging = selling_unit.product, None
+    elif code:
+        hit = catalog_services.find_by_code(code)
+        if hit is None:
+            raise SaleError("Code not found. Check the label or search by name.")
+        product, packaging = hit.product, hit.packaging
+    else:
+        try:
+            product = Product.objects.get(pk=int(product_id), active=True)
+        except (Product.DoesNotExist, TypeError, ValueError):
+            raise SaleError("Product not found.")
+        packaging = None
+        if packaging_id:
+            packaging = Packaging.objects.filter(pk=packaging_id, product=product, active=True).first()
+            if packaging is None:
+                raise SaleError("That pack size is not available.")
+
+    units = packaging.units_per_pack if packaging else 1
+    price = selling_unit.selling_price if selling_unit else packaging.price if packaging else product.selling_price
+    if price <= 0:
+        raise SaleError(f"'{product.name}' has no selling price. Ask the manager to set one.")
+
+    sale = _locked_sale(user, shift, create=True)
+    if selling_unit:
+        _check_stock(product)
+    else:
+        _check_stock(product)
+
+    line = (sale.items.select_for_update()
+            .filter(product=product, packaging=packaging, selling_unit=selling_unit,
+                    discount=0, unit_price=price, list_price=price).first())
+    if line:
+        line.quantity += qty
+        line.line_total = rules.line_total(line.quantity, line.unit_price, 0)
+        fields = ["quantity", "line_total"]
+        if selling_unit:
+            line.total_volume_ml = line.quantity * line.volume_per_unit_ml
+            fields.append("total_volume_ml")
+        line.save(update_fields=fields)
+    else:
+        line = SaleItem.objects.create(
+            sale=sale, product=product, packaging=packaging, product_name=product.name,
+            pack_name=packaging.name if packaging else "", units_per_sale_unit=units, quantity=qty,
+            selling_unit=selling_unit, selling_unit_name=selling_unit.name if selling_unit else "",
+            volume_per_unit_ml=selling_unit.volume_ml if selling_unit else None,
+            total_volume_ml=selling_unit.volume_ml * qty if selling_unit else None,
+            list_price=price, unit_price=price, discount=Decimal("0.00"),
+            line_total=rules.line_total(qty, price, 0))
+    _recalc(sale)
+    return sale, line
+
+
+@transaction.atomic
+def set_quantity(user, shift, item_id, quantity, *, approval_token=None):
+    """Raise a quantity freely. Lowering it removes scanned stock from the sale, so it needs approval."""
+    _need(user, "sales.make")
+    _shift_still_open(shift)
+    sale = _locked_sale(user, shift)
+    item = _item(sale, item_id)
+    new_qty = _rule(rules.parse_quantity, quantity)
+    old_qty = item.quantity
+    if new_qty == old_qty:
+        return sale, item
+    approval = None
+    if new_qty < old_qty:
+        approval = _approve(user, "remove_item", rules.item_ref(sale.pk, item.pk), approval_token)
+    elif item.is_partial:
+        _check_stock(item.product)
+    else:
+        _check_stock(item.product)
+    item.quantity = new_qty
+    item.line_total = _rule(rules.line_total, new_qty, item.unit_price, 0)
+    item.discount = Decimal("0.00")          # a discount was worked out for the old quantity
+    item.discount_approved_by = None
+    fields = ["quantity", "line_total", "discount", "discount_approved_by"]
+    if item.is_partial:
+        item.total_volume_ml = item.volume_per_unit_ml * new_qty
+        fields.append("total_volume_ml")
+    item.save(update_fields=fields)
+    _recalc(sale)
+    if new_qty < old_qty:
+        audit.record("sale.item_quantity_reduced", actor=user, approver=_authority(user, approval),
+                     object_type="sale_item", object_ref=item.pk, previous={"quantity": old_qty},
+                     new={"quantity": new_qty}, reason=_why(user, approval, "", "reduce a quantity"),
+                     till_number=shift.till.number)
+    return sale, item
+
+
+@transaction.atomic
+def remove_item(user, shift, item_id, *, approval_token=None, reason=""):
+    """Take a scanned item out of the sale. Needs a supervisor/manager approval (when the policy requires it)."""
+    _need(user, "sales.make")
+    _shift_still_open(shift)
+    sale = _locked_sale(user, shift)
+    item = _item(sale, item_id)
+    approval = _approve(user, "remove_item", rules.item_ref(sale.pk, item.pk), approval_token)
+    why = _why(user, approval, reason, "remove an item")
+    snapshot = {"product": item.product_name, "product_id": item.product_id, "quantity": item.quantity,
+                "unit_price": str(item.unit_price), "line_total": str(item.line_total)}
+    item.delete()
+    _recalc(sale)
+    audit.record("sale.item_removed", actor=user, approver=_authority(user, approval),
+                 object_type="sale", object_ref=sale.pk, previous=snapshot, reason=why, till_number=shift.till.number)
+    return sale
+
+
+@transaction.atomic
+def apply_discount(user, shift, item_id, *, amount=None, percent=None, approval_token=None):
+    """Set the discount on one line (replacing any earlier one). Small discounts by people allowed to give
+    them need nothing more; anything above the ordinary limit, or below the minimum price, needs approval."""
+    _need(user, "sales.make")
+    _shift_still_open(shift)
+    sale = _locked_sale(user, shift)
+    item = _item(sale, item_id)
+    gross = rules.line_gross(item.quantity, item.unit_price)
+    if percent not in (None, ""):
+        discount = _rule(rules.discount_from_percent, percent, gross)
+    else:
+        discount = _rule(rules.parse_money, amount, field="Discount", allow_zero=True)
+    new_total = _rule(rules.line_total, item.quantity, item.unit_price, discount)   # also rejects discount > gross
+
+    owner = auth_services.is_exempt(user)
+    min_price = item.product.min_selling_price
+    if item.packaging_id and min_price is not None:
+        min_price = rules.money(min_price * item.units_per_sale_unit)
+    needs = rules.discount_needs_approval(discount, gross, settings.ORDINARY_DISCOUNT_MAX_PERCENT,
+                                          quantity=item.quantity, min_unit_price=min_price)
+    approval, approver = None, None
+    if owner:
+        # The owner may discount any amount. It is recorded under their own name as the authority.
+        approver = user if (discount > 0 and (needs or not user.can("discount.apply"))) else None
+    elif discount > 0 and (needs or not user.can("discount.apply")):
+        if not user.can("discount.apply") and not auth_services.is_required("exceptional_discount"):
+            raise NotAllowed("You are not allowed to give discounts.")
+        approval = _approve(user, "exceptional_discount", rules.item_ref(sale.pk, item.pk), approval_token)
+        approver = approval.approver if approval else None
+    previous = {"discount": str(item.discount)}
+    item.discount, item.line_total = discount, new_total
+    item.discount_approved_by = approver
+    item.save(update_fields=["discount", "line_total", "discount_approved_by"])
+    _recalc(sale)
+    if discount != Decimal(previous["discount"]):
+        audit.record("sale.discount_applied", actor=user, approver=approver,
+                     object_type="sale_item", object_ref=item.pk, previous=previous,
+                     new={"discount": str(discount), "percent": str(rules.discount_percent(discount, gross))},
+                     reason=(approval.reason if approval else "Owner discount" if approver else "Within ordinary discount limit"),
+                     till_number=shift.till.number)
+    return sale, item
+
+
+@transaction.atomic
+def change_price(user, shift, item_id, new_price, *, approval_token=None):
+    """Change the unit price of one line during checkout. Always a supervisor/manager decision."""
+    _need(user, "sales.make")
+    _shift_still_open(shift)
+    sale = _locked_sale(user, shift)
+    item = _item(sale, item_id)
+    price = _rule(rules.parse_money, new_price, field="Price")
+    if not user.can("products.change_price") and not auth_services.is_required("price_change"):
+        raise NotAllowed("You are not allowed to change prices.")
+    approval = None
+    if not user.can("products.change_price"):
+        approval = _approve(user, "price_change", rules.item_ref(sale.pk, item.pk), approval_token)
+    approver = approval.approver if approval else (user if auth_services.is_exempt(user) and price != item.unit_price else None)
+    previous = {"unit_price": str(item.unit_price), "discount": str(item.discount)}
+    item.unit_price, item.discount = price, Decimal("0.00")
+    item.discount_approved_by = None
+    item.line_total = rules.line_total(item.quantity, price, 0)
+    item.price_approved_by = approver
+    item.save(update_fields=["unit_price", "discount", "discount_approved_by", "line_total", "price_approved_by"])
+    _recalc(sale)
+    audit.record("sale.price_changed", actor=user, approver=approver,
+                 object_type="sale_item", object_ref=item.pk, previous=previous, new={"unit_price": str(price)},
+                 reason=approval.reason if approval else "Changed by a user with price permission (owner)" if approver else "Changed by a user with price permission",
+                 till_number=shift.till.number)
+    return sale, item
+
+
+@transaction.atomic
+def set_customer(user, shift, name, pin=None):
+    """Customer name (typed) and, optionally, their KRA PIN for a tax invoice a business can claim VAT on."""
+    _need(user, "sales.make")
+    sale = _locked_sale(user, shift, create=True)
+    cleaned = " ".join("".join(ch for ch in str(name or "") if ch.isprintable()).split())[:120]
+    sale.customer_name = cleaned
+    fields = ["customer_name"]
+    if pin is not None:
+        sale.customer_pin = _rule(tax.clean_kra_pin, pin)
+        fields.append("customer_pin")
+    sale.save(update_fields=fields)
+    return sale
+
+
+# --- hold, resume, void --------------------------------------------------------------------------
+
+@transaction.atomic
+def hold_sale(user, shift, label=""):
+    _need(user, "sales.hold", "You are not allowed to hold sales.")
+    _shift_still_open(shift)
+    sale = _locked_sale(user, shift)
+    if not sale.items.exists():
+        raise SaleError("There is nothing to hold.")
+    sale.status, sale.held_at = Sale.HELD, timezone.now()
+    sale.hold_label = " ".join(str(label or "").split())[:60]
+    sale.save(update_fields=["status", "held_at", "hold_label"])
+    audit.record("sale.held", actor=user, object_type="sale", object_ref=sale.pk, till_number=shift.till.number)
+    return sale
+
+
+def held_sales(user, shift):
+    _need(user, "sales.hold", "You are not allowed to retrieve held sales.")
+    return Sale.objects.filter(till=shift.till, status=Sale.HELD).select_related("cashier").prefetch_related("items")
+
+
+@transaction.atomic
+def resume_held(user, shift, sale_id):
+    """Bring a held sale back. Prices stay as they were when the items were scanned; stock is checked at checkout."""
+    _need(user, "sales.hold", "You are not allowed to retrieve held sales.")
+    _shift_still_open(shift)
+    try:
+        held = Sale.objects.select_for_update().get(pk=int(sale_id), status=Sale.HELD, till=shift.till)
+    except (Sale.DoesNotExist, TypeError, ValueError):
+        raise SaleError("That held sale is not available.")
+    if held.cashier_id != user.pk and not user.can("sales.view_all"):
+        raise NotAllowed("That sale was held by another cashier.")
+    current = Sale.objects.select_for_update().filter(shift=shift, status=Sale.OPEN).first()
+    if current is not None:
+        if current.items.exists():
+            raise SaleError("Hold or finish the current sale first.")
+        current.delete()                          # an empty cart has no history worth keeping
+    held.status, held.cashier, held.shift = Sale.OPEN, user, shift
+    held.authorized_by = shift.authorized_by
+    held.save(update_fields=["status", "cashier", "shift", "authorized_by"])
+    audit.record("sale.resumed", actor=user, object_type="sale", object_ref=held.pk, till_number=shift.till.number)
+    return held
+
+
+@transaction.atomic
+def void_sale(user, shift, *, approval_token=None, reason=""):
+    """Cancel the sale in progress before payment. Needs approval when it already has items."""
+    _need(user, "sales.make")
+    sale = _locked_sale(user, shift)
+    if not sale.items.exists():
+        return None                               # nothing to void
+    approval = _approve(user, "void_sale", rules.sale_ref(sale.pk), approval_token)
+    why = _why(user, approval, reason, "void a sale")
+    summary = [{"product": i.product_name, "quantity": i.quantity, "line_total": str(i.line_total)}
+               for i in sale.items.all()]
+    sale.status, sale.voided_at, sale.voided_by = Sale.VOIDED, timezone.now(), user
+    sale.void_approved_by = _authority(user, approval)
+    sale.void_reason = why[:250]
+    sale.save(update_fields=["status", "voided_at", "voided_by", "void_approved_by", "void_reason"])
+    audit.record("sale.voided", actor=user, approver=_authority(user, approval), object_type="sale",
+                 object_ref=sale.pk, previous={"items": summary, "total": str(sale.total)}, reason=why,
+                 till_number=shift.till.number)
+    return sale
+
+
+# --- checkout ------------------------------------------------------------------------------------
+
+@transaction.atomic
+def checkout_cash(user, shift, tendered, *, approval_token=None):
+    """Finish the sale as a cash sale. Stock, cost basis, payment and the sale number are written in ONE
+    transaction: if any product is short, nothing is saved and the cart is left as it was."""
+    _need(user, "sales.make")
+    _need(user, "payments.accept", "You are not allowed to accept payments.")
+    _shift_still_open(shift)
+    sale = _locked_sale(user, shift)
+    items = list(sale.items.select_related("product"))
+    if not items:
+        raise SaleError("The sale is empty.")
+    subtotal, discount, total = rules.totals((i.quantity, i.unit_price, i.discount) for i in items)
+    if total <= 0:
+        raise SaleError("The total must be more than zero.")
+    tendered = _rule(rules.parse_money, tendered, field="Cash received")
+    change = _rule(rules.change_due, total, tendered)
+
+    return finish_sale(user, shift, payment={"method": Payment.CASH, "tendered": tendered, "change_given": change},
+                       approval_token=approval_token)
+
+
+def _stock_shortages(by_product):
+    shortages = {}
+    for product_id, lines in by_product.items():
+        product = Product.objects.select_for_update().get(pk=product_id)
+        full_units = sum(line.base_qty for line in lines if not line.is_partial)
+        partial_ml = sum((line.total_volume_ml for line in lines if line.is_partial), Decimal("0.00"))
+        overview = stock_services.bottle_overview(product.pk)
+        capacity = overview["bottle_capacity_ml"]
+        remaining_sealed = max(product.stock_qty - full_units, 0)
+        available_ml = overview["opened_volume_ml"]
+        if capacity is not None:
+            available_ml += remaining_sealed * capacity
+        elif partial_ml > available_ml:
+            raise SaleError(f"Set bottle capacity for '{product.name}' before selling its remaining volume.")
+        full_shortage = max(full_units - max(product.stock_qty, 0), 0)
+        partial_shortage = max(partial_ml - available_ml, Decimal("0.00"))
+        if partial_shortage and capacity is None:
+            raise SaleError(f"Set bottle capacity for '{product.name}' before authorizing a volume deficit.")
+        if full_shortage or partial_shortage:
+            shortages[product_id] = {
+                "product": product.name,
+                "full_units_short": full_shortage,
+                "volume_ml_short": str(partial_shortage),
+            }
+    return shortages
+
+
+@transaction.atomic
+def finish_sale(user, shift, *, payment=None, payments=None, customer_name="", approval_token=None):
+    """The shared end of every supported checkout (cash, confirmed M-PESA, split): stock, cost basis, VAT
+    snapshot, the payment records and the gapless sale number, all in ONE transaction.
+    `payment` = one method paying the whole total (the Payment fields that differ: method, reference, tendered,
+    change_given, mpesa_transaction). `payments` = a list of such dicts, each with its own `amount`, for a sale
+    paid in parts; their amounts must add up to the total exactly."""
+    _need(user, "sales.make")
+    _need(user, "payments.accept", "You are not allowed to accept payments.")
+    _shift_still_open(shift)
+    sale = _locked_sale(user, shift)
+    items = list(sale.items.select_related("product"))
+    if not items:
+        raise SaleError("The sale is empty.")
+    subtotal, discount, total = rules.totals((i.quantity, i.unit_price, i.discount) for i in items)
+    if total <= 0:
+        raise SaleError("The total must be more than zero.")
+
+    if payment is not None and payments is not None:
+        raise SaleError("Choose one payment or a list of payments, not both.")
+    if payment is not None:
+        if not isinstance(payment, dict):
+            raise SaleError("A valid payment is required.")
+        parts = [dict(payment, amount=total)]
+    elif payments is not None:
+        try:
+            parts = list(payments)
+        except TypeError:
+            raise SaleError("A valid payment list is required.") from None
+    else:
+        raise SaleError("A successful payment is required before completing the sale.")
+    if not parts:
+        raise SaleError("A successful payment is required before completing the sale.")
+
+    checked_parts, payment_total, used_transactions = [], Decimal("0.00"), set()
+    for raw_part in parts:
+        if not isinstance(raw_part, dict):
+            raise SaleError("A payment is not valid.")
+        part = dict(raw_part)
+        method = part.get("method")
+        amount = _rule(rules.parse_money, part.get("amount"), field="Payment amount")
+        if method == Payment.CASH:
+            if part.get("mpesa_transaction") is not None:
+                raise SaleError("Cash cannot be linked to an M-PESA payment.")
+            tendered = _rule(rules.parse_money, part.get("tendered"), field="Cash received")
+            change = _rule(rules.change_due, amount, tendered)
+            reported_change = _rule(rules.parse_money, part.get("change_given", "0"),
+                                    field="Change given", allow_zero=True)
+            if reported_change != change:
+                raise SaleError("Cash change does not match the amount received.")
+            part.update(amount=amount, tendered=tendered, change_given=change)
+        elif method == Payment.MPESA:
+            transaction_id = getattr(part.get("mpesa_transaction"), "pk", None)
+            txn = (MpesaTransaction.objects.select_for_update().filter(pk=transaction_id).first()
+                   if transaction_id else None)
+            if (txn is None or txn.status != MpesaTransaction.UNMATCHED
+                    or txn.source not in (MpesaTransaction.C2B, MpesaTransaction.STK)):
+                raise SaleError("A confirmed, unused M-PESA payment is required.")
+            if (amount != txn.amount or part.get("reference") != txn.trans_id
+                    or Payment.objects.filter(mpesa_transaction_id=txn.pk).exists()):
+                raise SaleError("The M-PESA payment details do not match the confirmed transaction.")
+            if txn.pk in used_transactions:
+                raise SaleError("The same M-PESA payment cannot be used twice.")
+            used_transactions.add(txn.pk)
+            part.update(amount=amount, mpesa_transaction=txn)
+        else:
+            raise SaleError("This payment method is not available for checkout.")
+        checked_parts.append(part)
+        payment_total += amount
+    if payment_total != total:
+        raise SaleError("The payments do not add up to the sale total.")
+    payments = checked_parts
+
+    number_seq = CodeSequence.next(f"sale-{shift.till.number}-{timezone.localdate():%Y%m%d}")
+    number = rules.sale_number(shift.till.number, timezone.localdate(), number_seq)
+
+    # One stock movement per product, in ascending product id (so two tills cannot deadlock). Several
+    # lines of the same product are taken together, so the last bottle can only be sold once.
+    by_product = defaultdict(list)
+    for item in items:
+        by_product[item.product_id].append(item)
+    shortages = _stock_shortages(by_product)
+    negative_approval = None
+    if shortages:
+        negative_approval = _approve(
+            user, "negative_stock_sale", rules.sale_ref(sale.pk), approval_token,
+            detail={"shortages": list(shortages.values())})
+    negative_reason = (negative_approval.reason if negative_approval else
+                       "Manager-authorized negative stock sale" if shortages and auth_services.is_exempt(user) else "")
+    for product_id in sorted(by_product):
+        lines = by_product[product_id]
+        full_lines = [line for line in lines if not line.is_partial]
+        base_total = sum(i.base_qty for i in full_lines)
+        shortage = shortages.get(product_id, {})
+        full_shortage = shortage.get("full_units_short", 0)
+        partial_shortage = Decimal(shortage.get("volume_ml_short", "0"))
+        if base_total:
+            try:
+                movement = stock_services.post_movement(
+                    product_id=product_id, movement_type=mr.SALE, quantity=-base_total, user=user, reference=number,
+                    allow_negative=bool(full_shortage), approved_by=_authority(user, negative_approval)
+                    if full_shortage else None, reason=negative_reason if full_shortage else "")
+            except stock_services.StockError as exc:
+                raise SaleError(str(exc)) from exc
+            for line, cost in zip(full_lines, rules.allocate_cost(movement.total_cost,
+                                                                   [i.base_qty for i in full_lines])):
+                line.cost_total = cost
+                line.save(update_fields=["cost_total"])  # the sale is still OPEN here, so this is allowed
+        for line in lines:
+            if not line.is_partial:
+                continue
+            try:
+                movements = stock_services.sell_volume(
+                    product_id=line.product_id, volume_ml=line.total_volume_ml, user=user,
+                    operation_key=f"sale-{number}-item-{line.pk}", reference=number,
+                    allow_negative=bool(partial_shortage),
+                    approved_by=_authority(user, negative_approval) if partial_shortage else None,
+                    reason=negative_reason if partial_shortage else "")
+            except stock_services.StockError as exc:
+                raise SaleError(str(exc)) from exc
+            line.cost_total = sum((movement.total_cost or Decimal("0.00") for movement in movements
+                                   if movement.movement_type in (mr.PARTIAL_SALE, mr.PARTIAL_DEFICIT)),
+                                  Decimal("0.00"))
+            line.save(update_fields=["cost_total"])
+
+    for product_id, lines in by_product.items():
+        capacity = stock_services.bottle_overview(product_id)["bottle_capacity_ml"]
+        if capacity is None:
+            continue
+        for line in lines:
+            if line.is_partial:
+                continue
+            line.full_volume_per_sale_unit_ml = capacity * line.units_per_sale_unit
+            line.save(update_fields=["full_volume_per_sale_unit_ml"])
+
+    # VAT snapshot. Prices already include VAT; we only record how much of each line is tax. If the shop is
+    # not VAT registered every figure stays zero and the receipt shows no VAT at all.
+    shop = ShopSettings.load()
+    vat_on = shop.vat_registered
+    tax_total = Decimal("0.00")
+    for item in items:
+        klass = item.product.tax_class
+        rate = tax.rate_for(klass, shop.vat_standard_rate) if vat_on else Decimal("0")
+        taxable, vat = tax.split_line(item.line_total, rate)
+        item.tax_class, item.tax_rate, item.taxable_amount, item.tax_amount = klass, rate, taxable, vat
+        item.save(update_fields=["tax_class", "tax_rate", "taxable_amount", "tax_amount"])
+        tax_total += vat
+
+    now = timezone.now()
+    for part in payments:
+        Payment.objects.create(sale=sale, status=Payment.CONFIRMED, received_by=user, **part)
+    if customer_name:
+        sale.customer_name = customer_name[:120]
+    sale.number, sale.status, sale.completed_at = number, Sale.COMPLETED, now
+    sale.subtotal, sale.discount_total, sale.total = subtotal, discount, total
+    sale.vat_applied, sale.tax_total = vat_on, tax_total
+    sale.save(update_fields=["number", "status", "completed_at", "subtotal", "discount_total", "total",
+                             "vat_applied", "tax_total", "customer_name"])
+    for part in payments:
+        if part["method"] != Payment.MPESA:
+            continue
+        txn = part["mpesa_transaction"]
+        txn.status, txn.sale, txn.matched_by, txn.matched_at = MpesaTransaction.MATCHED, sale, user, now
+        txn.save(update_fields=["status", "sale", "matched_by", "matched_at", "updated_at"])
+        applied = {"receipt": txn.trans_id, "amount": str(txn.amount),
+                   "name_from_mpesa": bool(txn.customer_name)}
+        if len(payments) > 1:
+            applied["part_of_split"] = True
+        audit.record("mpesa.payment_applied", actor=user, object_type="sale", object_ref=number,
+                     new=applied, till_number=shift.till.number)
+    etims.create_submission(sale)       # the invoice number is taken inside this same transaction
+    audit.record("sale.completed", actor=user,
+                 approver=_authority(user, negative_approval) if shortages else None,
+                 object_type="sale", object_ref=number,
+                 new={"total": str(total), "method": "+".join(dict.fromkeys(p["method"] for p in payments)),
+                      "items": len(items), "vat": str(tax_total), "negative_stock": bool(shortages)},
+                 till_number=shift.till.number)
+    return sale
+
+
+# --- receipts ------------------------------------------------------------------------------------
+
+@transaction.atomic
+def mark_original_printed(user, sale_id):
+    """First print of a receipt: only the cashier who made the sale, once. Later prints are duplicates."""
+    sale = Sale.objects.select_for_update().filter(pk=sale_id, status=Sale.COMPLETED).first()
+    if sale is None:
+        raise SaleError("Sale not found.")
+    if sale.cashier_id != user.pk or not user.can("sales.view_own"):
+        raise NotAllowed("You can only print the receipt of your own sale.")
+    if sale.printed_at is not None:
+        raise SaleError("The original receipt was already printed. Ask a supervisor for a reprint.")
+    sale.printed_at = timezone.now()
+    sale.save(update_fields=["printed_at"])
+    return sale
+
+
+@transaction.atomic
+def mark_reprint(user, sale_id, ip=None):
+    """A reprint is always a marked duplicate and always audited."""
+    _need(user, "receipts.reprint", "You are not allowed to reprint receipts.")
+    sale = Sale.objects.select_for_update().filter(pk=sale_id, status=Sale.COMPLETED).first()
+    if sale is None:
+        raise SaleError("Sale not found.")
+    sale.reprint_count += 1
+    sale.save(update_fields=["reprint_count"])
+    audit.record("receipt.reprinted", actor=user, object_type="sale", object_ref=sale.number,
+                 new={"reprint_number": sale.reprint_count}, ip=ip, till_number=sale.till.number)
+    return sale
+
+
+# --- shift summary (F11) -------------------------------------------------------------------------
+
+def shift_summary(shift):
+    """A cashier's running view of their shift (F11). The figures come from tills.cashup.snapshot, the same
+    numbers the cash-up uses when the shift is closed, so the two can never disagree.
+    Only CASH counts towards the drawer: M-PESA and other electronic money never does."""
+    from tills import cashup
+    snap = cashup.snapshot(shift)
+    return {"sales_count": snap["sales_count"], "sales_total": str(snap["sales_total"]),
+            "cash_sales": str(snap["cash_sales"]), "mpesa_sales": str(snap["mpesa_sales"]),
+            "other_sales": str(snap["other_sales"]),
+            "cash_refunds": str(snap["cash_refunds"]), "mpesa_refunds_paid": str(snap["mpesa_refunds_paid"]),
+            "refunds_waiting": str(snap["refunds_waiting"]), "cash_paid_out": str(snap["cash_paid_out"]),
+            "opening_float": str(shift.opening_float), "cash_in_drawer_expected": str(snap["expected_cash"])}
+
+
+def cart_total(sale):
+    """The amount payable for a cart, worked out from its lines (never trusted from the screen)."""
+    return rules.totals((i.quantity, i.unit_price, i.discount) for i in sale.items.all())[2]

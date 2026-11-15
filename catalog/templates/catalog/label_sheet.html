@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Labels</title>
+<style>
+  @page { size: {% if size.page %}{{ size.page }}{% else %}{{ size.w }}mm {{ size.h }}mm{% endif %}; margin: {% if size.page %}8mm{% else %}0{% endif %}; }
+  * { box-sizing:border-box; } body { margin:0; font-family:"Segoe UI",Arial,sans-serif; color:#000; background:#fff; }
+  .bar { padding:10px 14px; background:#222; color:#fff; font-size:14px; } .bar button { padding:6px 14px; font-size:14px; margin-left:10px; }
+  .sheet { display:grid; grid-template-columns: repeat({{ size.cols }}, {{ size.w }}mm); {% if size.page %}gap:0;{% endif %} }
+  .label { width:{{ size.w }}mm; height:{{ size.h }}mm; padding:1.5mm 2mm; overflow:hidden; display:flex; flex-direction:column; justify-content:space-between; page-break-inside:avoid; {% if not size.page %}page-break-after:always;{% else %}border:0.1mm dotted #bbb;{% endif %} }
+  .name { font-size:{% if size.h < 30 %}8{% else %}10{% endif %}pt; font-weight:700; line-height:1.1; max-height:{% if size.h < 30 %}8{% else %}11{% endif %}mm; overflow:hidden; }
+  .meta { font-size:6.5pt; color:#222; } .price { font-size:{% if size.h < 30 %}12{% else %}16{% endif %}pt; font-weight:800; }
+  .codes { display:flex; align-items:flex-end; gap:2mm; min-height:0; } .bars { flex:1; height:{% if size.h < 30 %}8{% else %}11{% endif %}mm; } .bars svg { width:100%; height:100%; }
+  .qr { width:{% if size.h < 30 %}10{% else %}13{% endif %}mm; height:{% if size.h < 30 %}10{% else %}13{% endif %}mm; } .qr svg { width:100%; height:100%; }
+  .txt { font-size:7pt; letter-spacing:.04em; text-align:center; }
+  @media print { .bar { display:none; } .label { border:0 !important; } }
+</style></head><body>
+<div class="bar">{{ sheet|length }} label{{ sheet|length|pluralize }} &middot; {{ size.description }} &middot; Press <b>Ctrl+P</b> to print, <b>Esc</b> to close.
+  <button onclick="window.print()" autofocus>Print</button></div>
+<div class="sheet">
+{% for item in sheet %}
+<div class="label">
+  <div><div class="name">{{ item.product.name }}</div>
+  {% if opts.brand or opts.shelf %}<div class="meta">{% if opts.brand and item.product.brand %}{{ item.product.brand.name }}{% endif %}{% if opts.shelf and item.shelf %} &middot; Shelf {{ item.shelf }}{% endif %}</div>{% endif %}</div>
+  {% if opts.price %}<div class="price">KES {{ item.product.selling_price }}</div>{% endif %}
+  <div>
+    <div class="codes">{% if opts.barcode %}<div class="bars">{{ item.bars|safe }}</div>{% endif %}{% if opts.qr %}<div class="qr">{{ item.qr|safe }}</div>{% endif %}</div>
+    {% if opts.code %}<div class="txt">{{ item.code }}</div>{% endif %}
+  </div>
+</div>
+{% endfor %}
+</div>
+<script>document.addEventListener("keydown",function(e){if(e.key==="Escape"){window.close();}});</script>
+</body></html>

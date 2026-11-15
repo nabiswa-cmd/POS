@@ -1,0 +1,10 @@
+{% extends "core/base.html" %}{% block title %}Home{% endblock %}
+{% block content %}
+<h1>{{ shop_name }}</h1><p class="sub">Choose a screen. Everything here is also reachable with the keyboard.</p>
+<div class="grid">
+{% for item in nav %}<a class="tile" href="{{ item.url }}"><b>{{ item.label }}</b></a>{% endfor %}
+{% if is_manager %}<a class="tile" href="/admin/"><b>Staff, roles &amp; settings</b><span class="muted">Management screens</span></a>{% endif %}
+</div>
+{% if pending_receivings %}<h2>Deliveries waiting for approval</h2><p><a href="/manage/receiving/?status=PENDING">{{ pending_receivings }} waiting</a></p>{% endif %}
+{% if low_count %}<h2>Low stock</h2><p><a href="/manage/stock/?low=1">{{ low_count }} product{{ low_count|pluralize }} at or below reorder level</a></p>{% endif %}
+{% endblock %}

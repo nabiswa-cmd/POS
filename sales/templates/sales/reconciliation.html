@@ -1,0 +1,55 @@
+{% extends "core/base.html" %}{% block title %}M-PESA reconciliation{% endblock %}
+{% block content %}
+<h1>M-PESA reconciliation</h1>
+<p class="sub">Money Safaricom confirmed against what sales used. Nothing here edits a payment: a payment can only be <b>set aside</b> (with a reason) or <b>put back</b>.</p>
+
+<form method="get" class="row" style="margin-bottom:14px">
+  <div><label for="day">Day</label><input id="day" type="date" name="day" value="{{ day|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}"></div>
+  <div style="flex:0 0 auto"><button type="submit">Show</button></div>
+  <div style="flex:0 0 auto"><a class="btn ghost" href="?day={{ day|date:'Y-m-d' }}&amp;csv=1">Download this day (CSV)</a></div>
+</form>
+
+<div class="grid">
+  <div class="tile"><b>Received on {{ day|date:"d M Y" }}</b><span class="muted">{{ r.received.count }} payment{{ r.received.count|pluralize }}<br>KES {{ r.received.total }}</span></div>
+  <div class="tile"><b>Used on sales that day</b><span class="muted">KES {{ r.used_today }}</span></div>
+  <div class="tile"><b>Waiting, nobody used yet</b><span class="muted">{{ r.waiting.count }} &middot; KES {{ r.waiting.total }}{% if r.old_waiting.count %}<br><span style="color:var(--bad)">{{ r.old_waiting.count }} older than {{ r.old_hours }} hours (KES {{ r.old_waiting.total }})</span>{% endif %}</span></div>
+  <div class="tile"><b>Set aside</b><span class="muted">{{ r.ignored.count }} &middot; KES {{ r.ignored.total }}</span></div>
+  <div class="tile"><b>M-PESA refunds paid back that day</b><span class="muted">{{ r.refunds_paid.count }} &middot; KES {{ r.refunds_paid.total }}</span></div>
+</div>
+
+<h2>Online relay</h2>
+<div class="card">
+{% if not relay.enabled %}<p class="muted">The relay is <b>not set up</b> on this computer. Payments reach this shop only when Safaricom can call it directly. To also catch payments made while the shop was offline, set MPESA_RELAY_URL and MPESA_RELAY_TOKEN (see the README).</p>
+{% else %}
+{% if relay.failing %}<p style="color:var(--bad)"><b>Cannot reach the online server.</b> {{ relay.error }} Payments made meanwhile are safe there and will arrive when it works again.</p>{% endif %}
+<p>{% if relay.last_ok %}Last successful check: <b>{{ relay.last_ok|date:"d M H:i" }}</b>.{% else %}This computer has <b>never pulled</b> from the online server yet.{% endif %}</p>
+{% if can_act %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="pull"><input type="hidden" name="day" value="{{ day|date:'Y-m-d' }}"><button type="submit" value="pull">Pull now</button></form>{% endif %}
+{% endif %}
+</div>
+
+<h2>Checks ({{ r.checks }} run)</h2>
+<div class="card">
+{% if r.problems %}<p style="color:var(--bad)"><b>{{ r.problems|length }} thing{{ r.problems|length|pluralize }} to look at:</b></p><ul>{% for p in r.problems %}<li>{{ p }}</li>{% endfor %}</ul>
+{% else %}<p style="color:var(--ok)"><b>All checks passed.</b> Every M-PESA payment on a receipt is backed by a Safaricom payment, and today's payments add up by status.</p>{% endif %}
+</div>
+
+<h2>Received on {{ day|date:"d M Y" }}, by status</h2>
+<table><tr><th>Status</th><th class="num">Payments</th><th class="num">KES</th></tr>
+{% for status, v in r.by_status.items %}<tr><td>{{ status }}</td><td class="num">{{ v.count }}</td><td class="num">{{ v.total }}</td></tr>{% endfor %}</table>
+
+<h2>Waiting: confirmed by Safaricom, not used on any sale</h2>
+<p class="muted">Cashiers see only the newest of these at the till (last 90 minutes). Anything older stays here until it is used, or set aside with a reason.</p>
+<table><tr><th>Received</th><th>M-PESA code</th><th>From</th><th>Source</th><th class="num">KES</th><th></th></tr>
+{% for t in r.waiting.rows %}<tr><td>{{ t.created_at|date:"d M H:i" }}</td><td><b>{{ t.trans_id }}</b></td><td>{{ t.customer_name|default:"Name not provided" }} <span class="muted">{{ t.payer_ref }}</span></td><td>{{ t.get_source_display }}</td><td class="num">{{ t.amount }}</td>
+<td>{% if can_act %}<form method="post" style="display:flex;gap:6px">{% csrf_token %}<input type="hidden" name="action" value="set_aside"><input type="hidden" name="txn_id" value="{{ t.pk }}"><input type="hidden" name="day" value="{{ day|date:'Y-m-d' }}">
+<input name="reason" placeholder="Why? (at least 8 letters)" style="width:230px" required minlength="8"><button class="ghost" type="submit">Set aside</button></form>{% endif %}</td></tr>
+{% empty %}<tr><td colspan="6" class="muted">Nothing is waiting.</td></tr>{% endfor %}</table>
+
+<h2>Set aside</h2>
+<table><tr><th>Received</th><th>M-PESA code</th><th class="num">KES</th><th>Set aside by</th><th>Reason</th><th></th></tr>
+{% for t in r.ignored.rows %}<tr><td>{{ t.created_at|date:"d M H:i" }}</td><td>{{ t.trans_id }}</td><td class="num">{{ t.amount }}</td><td>{{ t.resolved_by.display_name }}<br><span class="muted">{{ t.resolved_at|date:"d M H:i" }}</span></td><td>{{ t.resolution_reason }}</td>
+<td>{% if can_act %}<form method="post" style="display:flex;gap:6px">{% csrf_token %}<input type="hidden" name="action" value="restore"><input type="hidden" name="txn_id" value="{{ t.pk }}"><input type="hidden" name="day" value="{{ day|date:'Y-m-d' }}">
+<input name="reason" placeholder="Why put back?" style="width:190px" required minlength="8"><button class="ghost" type="submit">Put back</button></form>{% endif %}</td></tr>
+{% empty %}<tr><td colspan="6" class="muted">Nothing is set aside.</td></tr>{% endfor %}</table>
+{% if not can_act %}<p class="muted">You can look at this screen. Setting payments aside needs the “Reconcile M-PESA” permission (the owner has it).</p>{% endif %}
+{% endblock %}
