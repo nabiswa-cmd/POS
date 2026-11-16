@@ -6,24 +6,37 @@
  PostgreSQL up by itself on a PC that does not have it. Without it the installer asks for an existing PostgreSQL.
 #>
 param([string]$Version = "1.0.0", [switch]$SkipTests)
-$ErrorActionPreference = "Stop"
+# "Continue": in Windows PowerShell 5.1 "Stop" turns any text a program (pip, PyInstaller) writes to stderr into a crash.
+# Every program call below is checked through its exit code instead.
+$ErrorActionPreference = "Continue"
 Set-Location (Split-Path $PSScriptRoot)
 
 if (-not (Test-Path .build-venv)) {
-    # Use the newest installed Python that is 3.12 or later (3.12, 3.13, 3.14 ...).
-    $found = $null
-    foreach ($v in "3.14", "3.13", "3.12") {
-        & py "-$v" --version *> $null
-        if ($LASTEXITCODE -eq 0) { $found = $v; break }
+    # Find a 64-bit Python 3.12 or newer: the py launcher first, then plain "python" on the PATH.
+    function Test-Py([string]$exe, [string[]]$prefix) {
+        $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+        try {
+            $out = & $exe @prefix -c "import sys; print(sys.version_info[0]*100+sys.version_info[1], sys.maxsize > 2**32)" 2>$null
+            if ($LASTEXITCODE -ne 0 -or -not $out) { return $false }
+            $parts = ("$out").Trim().Split(" ")
+            return ([int]$parts[0] -ge 312 -and $parts[1] -eq "True")
+        } catch { return $false } finally { $ErrorActionPreference = $old }
     }
-    if (-not $found) { throw "Python 3.12 or newer (64-bit) was not found. Install it from python.org (tick 'py launcher'), then run again. 'py -0' lists what is installed." }
-    Write-Host "Using Python $found"
-    & py "-$found" -m venv .build-venv
+    $pyExe = $null; $pyPrefix = @()
+    foreach ($v in "3.14", "3.13", "3.12") {
+        if ((Get-Command py -ErrorAction SilentlyContinue) -and (Test-Py "py" @("-$v"))) { $pyExe = "py"; $pyPrefix = @("-$v"); break }
+    }
+    if (-not $pyExe -and (Get-Command python -ErrorAction SilentlyContinue) -and (Test-Py "python" @())) { $pyExe = "python" }
+    if (-not $pyExe) { throw "Python 3.12 or newer (64-bit) was not found. Install it from python.org, then run again." }
+    Write-Host "Using $pyExe $($pyPrefix -join ' ')"
+    & $pyExe @pyPrefix -m venv .build-venv
     if ($LASTEXITCODE -ne 0) { throw "Could not create the build environment." }
 }
 $py = ".\.build-venv\Scripts\python.exe"
 & $py -m pip install --upgrade pip
+if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
 & $py -m pip install -r requirements.txt pyinstaller
+if ($LASTEXITCODE -ne 0) { throw "Installing the requirements failed." }
 
 # Build-time settings only: the installed program uses the shop's own settings file, never these.
 $env:DJANGO_SECRET_KEY = "build-only-not-used-by-the-shop"
