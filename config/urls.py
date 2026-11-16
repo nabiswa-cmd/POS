@@ -34,6 +34,7 @@ urlpatterns = [
     path("api/sync/upload/", sync_views.api_upload),
     path("api/sync/status/", sync_views.api_status),
     path("api/sync/latest/", sync_views.api_latest),
+    path("api/sync/tunnel-key/", sync_views.api_tunnel_key),
     path("manage/sales/<int:sale_id>/reprint/", sales_views.reprint_page, name="sale-reprint"),
     path("api/", include("accounts.urls")),
     path("api/pos/", include("tills.urls")),

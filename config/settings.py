@@ -217,6 +217,8 @@ SYNC_PULL_MPESA = env_bool("SYNC_PULL_MPESA", True)              # shop PC: also
 SYNC_MAX_UPLOAD_MB = env_int("SYNC_MAX_UPLOAD_MB", 500)          # online server: refuse bigger uploads
 SYNC_INBOX_DIR = env("SYNC_INBOX_DIR", str(BASE_DIR / "sync_inbox"))   # online server: where received backups are kept
 SYNC_INBOX_KEEP = env_int("SYNC_INBOX_KEEP", 60)                 # online server: newest backups kept
+SYNC_TUNNEL_AUTHORIZED_KEYS = env("SYNC_TUNNEL_AUTHORIZED_KEYS", "")   # online server: file a new shop PC may add its tunnel key to (empty = off)
+SYNC_TUNNEL_PORT = env_int("SYNC_TUNNEL_PORT", 8021)             # online server: the port the tunnel listens on
 
 # --- Kenya tax: KRA eTIMS (see README, "VAT and eTIMS") -------------------------------------------
 # Secrets and device details come only from .env. ETIMS_MODE=off means receipts show the VAT breakdown

@@ -230,3 +230,93 @@ def newest_received():
         return None
     files = [(rules.parse_name(p.name)[0], p) for p in folder.iterdir() if rules.parse_name(p.name) and p.is_file()]
     return max(files, key=lambda t: t[0])[1] if files else None
+
+
+# --- first install: copy the online server's newest backup into an empty shop PC -----------------------------------
+
+def local_is_empty():
+    """True when this PC holds no real shop data yet (no products, sales or extra users). Safe to seed over."""
+    from django.contrib.auth import get_user_model
+    from catalog.models import Product
+    from sales.models import Sale
+    return not (Product.objects.exists() or Sale.objects.exists() or get_user_model().objects.exists())
+
+
+def download_latest(dest_dir):
+    """Download the newest backup from the online server into dest_dir. Returns the file path."""
+    if not (settings.SYNC_SERVER_URL and settings.SYNC_TOKEN):
+        raise SyncError("Set the online server address and the sync token first.")
+    req = urllib.request.Request(settings.SYNC_SERVER_URL.rstrip("/") + "/api/sync/latest/",
+                                 headers={"Authorization": f"Bearer {settings.SYNC_TOKEN}"})
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    part = dest_dir / "seed-download.part"
+    h = hashlib.sha256()
+    try:
+        with urllib.request.urlopen(req, timeout=settings.SYNC_TIMEOUT_SECONDS) as resp:
+            claimed = (resp.headers.get("X-Content-SHA256") or "").lower()
+            disposition = resp.headers.get("Content-Disposition") or ""
+            name = disposition.split("filename=")[-1].strip('"; ') if "filename=" in disposition else ""
+            with open(part, "wb") as out:
+                while True:
+                    chunk = resp.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    h.update(chunk)
+                    out.write(chunk)
+    except urllib.error.HTTPError as exc:
+        part.unlink(missing_ok=True)
+        if exc.code == 404:
+            raise SyncError("The online server has no backup yet, or the token/address is wrong.")
+        raise SyncError(f"The online server answered with an error ({exc.code}).")
+    except (urllib.error.URLError, OSError):
+        part.unlink(missing_ok=True)
+        raise SyncError("Cannot reach the online server (no internet, or the address is wrong).")
+    if claimed and h.hexdigest() != claimed:
+        part.unlink(missing_ok=True)
+        raise SyncError("The download does not match its checksum; try again.")
+    if not rules.parse_name(name or ""):
+        name = "winespos-seed.zip"
+    final = dest_dir / name
+    os.replace(part, final)
+    return final
+
+
+def seed_from_server(force=False, user=None):
+    """Make this PC start from the online server's newest backup. Stop the shop server first.
+    Without force it only runs on an empty PC, so it can never overwrite real sales. Returns the restore summary."""
+    if not force and not local_is_empty():
+        raise SyncError("This PC already has data. Seeding would replace it; use --force only if that is what you want.")
+    folder = Path(settings.BACKUP_DIR) if getattr(settings, "BACKUP_DIR", None) else Path(settings.BASE_DIR) / "backups"
+    path = download_latest(folder / "seed")
+    try:
+        return backup.restore_backup(path, user=user)
+    except BackupError as exc:
+        raise SyncError(f"The downloaded backup could not be restored: {exc}")
+
+
+_KEY_RE = None
+
+
+def enrol_tunnel_key(public_key):
+    """Online server: let a shop PC's tunnel key in, restricted to opening the one tunnel port (no shell).
+    Does nothing unless SYNC_TUNNEL_AUTHORIZED_KEYS is set. Returns "added" or "already there"."""
+    import re
+    target = settings.SYNC_TUNNEL_AUTHORIZED_KEYS
+    if not target:
+        raise SyncError("Automatic tunnel enrolment is switched off on this server.")
+    key = " ".join(str(public_key or "").split())
+    if not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/]{43}=?( [A-Za-z0-9._@-]{1,40})?", key):
+        raise SyncError("That is not an ssh-ed25519 public key.")
+    material = key.split()[1]
+    path = Path(target)
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    if any(material in line for line in existing.splitlines()):
+        return "already there"
+    line = f'restrict,port-forwarding,permitlisten="127.0.0.1:{settings.SYNC_TUNNEL_PORT}" {key}\n'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        if existing and not existing.endswith("\n"):
+            f.write("\n")
+        f.write(line)
+    return "added"

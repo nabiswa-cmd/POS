@@ -141,3 +141,22 @@ and restore it as described in `docs/BACKUP_AND_RESTORE.md`.
 The sales screen shows a **Camera** button on phones. Browsers only allow the camera on **HTTPS** pages, so open the shop on an
 https address (for example through the online server, or Caddy on the shop LAN). On a plain `http://192.168...` address the button
 explains this and the cashier types the code instead. Chrome on Android uses its built-in reader; other browsers use a bundled one.
+
+## Automatic first connection when installing a shop PC
+
+1. On the online server (Server settings in admin) set **Tunnel keys file** to `/home/tunnel/.ssh/authorized_keys`
+   (the `tunnel` user from the tunnel guide; the app's user must be able to write that file). This lets a new shop PC
+   enrol its own key. The key can only open the one tunnel port, never a shell. **Clear the setting again when every
+   PC is installed.**
+2. Run the installer on the shop PC, choose *Shop server PC*, and on the **Online server (optional)** page type the
+   address (for example `https://pos.devs.surf`) and the sync token. Setup then:
+   * writes the sync settings,
+   * downloads the online server's newest backup and loads it into this PC, so both start identical
+     (only on a PC with no data; it never overwrites real sales),
+   * creates the tunnel key, registers it on the server and starts the "WinesPOS Tunnel" task.
+   If the online server has no backup yet, or cannot be reached, the shop is set up fresh and sync starts later.
+3. Same thing from a command line, with the shop server stopped:
+   `WinesPOSAdmin.exe manage sync_seed` (add `--force` only to deliberately replace data on this PC).
+
+Note: secrets stored in the database (M-PESA/eTIMS) are encrypted with `INTEGRATION_SETTINGS_KEY`. A reinstalled PC
+creates a new key, so re-enter those secrets once in admin (or copy the old key into the settings file first).

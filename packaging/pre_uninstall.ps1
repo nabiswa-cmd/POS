@@ -3,4 +3,5 @@ $ErrorActionPreference = "SilentlyContinue"
 Stop-ScheduledTask -TaskName "WinesPOS Server"
 Unregister-ScheduledTask -TaskName "WinesPOS Server" -Confirm:$false
 Unregister-ScheduledTask -TaskName "WinesPOS Backup" -Confirm:$false
+Unregister-ScheduledTask -TaskName "WinesPOS Tunnel" -Confirm:$false -ErrorAction SilentlyContinue
 Get-NetFirewallRule -DisplayName "WinesPOS second till" | Remove-NetFirewallRule

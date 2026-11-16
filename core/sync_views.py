@@ -7,6 +7,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
+from . import backup_rules as rules
 from . import integration_settings, runtime, sync
 from .decorators import perm_required
 from .http import bad, client_ip
@@ -62,7 +63,25 @@ def api_latest(request):
         raise Http404()
     response = FileResponse(open(path, "rb"), as_attachment=True, filename=path.name, content_type="application/zip")
     response["Cache-Control"] = "no-store"
+    response["X-Content-SHA256"] = rules.sha256_file(path)
     return response
+
+
+@csrf_exempt
+@require_POST
+def api_tunnel_key(request):
+    """A new shop PC registers its tunnel public key (only when the administrator switched this on)."""
+    _guard(request)
+    import json
+    try:
+        key = json.loads(request.body.decode("utf-8") or "{}").get("public_key", "")
+    except (ValueError, UnicodeDecodeError):
+        return bad("Unreadable request.", 400)
+    try:
+        result = sync.enrol_tunnel_key(key)
+    except sync.SyncError as exc:
+        return bad(str(exc), 400)
+    return JsonResponse({"ok": True, "result": result, "port": settings.SYNC_TUNNEL_PORT})
 
 
 def _callback_urls():

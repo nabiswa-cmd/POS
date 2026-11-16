@@ -31,7 +31,7 @@ def _clean(value):
     return value
 
 
-def build_values(role, *, root, existing=None, lan_host="", server_url="", port=8000):
+def build_values(role, *, root, existing=None, lan_host="", server_url="", port=8000, sync_url="", sync_token=""):
     """The settings for this PC. `existing` (a dict from an earlier run) wins for every secret."""
     existing = dict(existing or {})
     if role == "till":
@@ -42,7 +42,13 @@ def build_values(role, *, root, existing=None, lan_host="", server_url="", port=
         raise ConfigError("Role must be 'server' or 'till'.")
     root = Path(root)
     hosts = ["localhost", "127.0.0.1"] + ([lan_host] if lan_host else [])
+    sync_values = {}
+    if sync_url or sync_token:
+        if not sync_url.startswith(("http://", "https://")) or len(sync_token) < 16:
+            raise ConfigError("The online server address must start with https:// and the sync token must be at least 16 characters.")
+        sync_values = {"SYNC_ENABLED": "true", "SYNC_SERVER_URL": sync_url.rstrip("/"), "SYNC_TOKEN": sync_token}
     return {
+        **sync_values,
         "DJANGO_DEBUG": "false",
         "DJANGO_SECRET_KEY": existing.get("DJANGO_SECRET_KEY") or generate_secret(),
         "DJANGO_ALLOWED_HOSTS": ",".join(hosts),
@@ -98,6 +104,8 @@ def main(argv=None):
     p.add_argument("--lan-host", default="", help="Server PC: its shop-network address, if a second till connects to it.")
     p.add_argument("--server-url", default="", help="Till PC: http://<server address>:8000")
     p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--sync-url", default="", help="Server PC: the online server's address, e.g. https://pos.example.com")
+    p.add_argument("--sync-token", default="", help="Server PC: the sync token (or set WINESPOS_SYNC_TOKEN in the environment).")
     p.add_argument("--force", action="store_true", help="Generate new secrets even if a settings file exists (breaks saved logins).")
     p.add_argument("--provision-db", action="store_true", help="Server PC: create the PostgreSQL login and database.")
     a = p.parse_args(argv)
@@ -105,7 +113,8 @@ def main(argv=None):
     existing = {} if a.force or not path.is_file() else paths.parse_env(path.read_text(encoding="utf-8"))
     try:
         values = build_values(a.role, root=paths.data_root(), existing=existing, lan_host=a.lan_host,
-                              server_url=a.server_url, port=a.port)
+                              server_url=a.server_url, port=a.port,
+                              sync_url=a.sync_url, sync_token=a.sync_token or os.environ.get("WINESPOS_SYNC_TOKEN", ""))
     except ConfigError as exc:
         print(f"Cannot configure: {exc}", file=sys.stderr)
         return 2

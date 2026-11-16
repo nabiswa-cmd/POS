@@ -55,6 +55,7 @@ var
   ShopPage: TInputQueryWizardPage;
   AccountPage: TInputQueryWizardPage;
   TillPage: TInputQueryWizardPage;
+  SyncPage: TInputQueryWizardPage;
 
 function IsServer: Boolean;
 begin
@@ -85,12 +86,20 @@ begin
     'Type the shop server address: http://192.168.1.10:8000 locally, or https://pos.yourdomain.com online.');
   TillPage.Add('Server address:', False);
   TillPage.Values[0] := 'http://';
+
+  SyncPage := CreateInputQueryPage(AccountPage.ID, 'Online server (optional)', 'Server PC',
+    'Leave both empty for a shop that is not connected to an online server. If filled, setup connects this PC by itself, ' +
+    'copies the online server''s data here, and sets up the secure tunnel.');
+  SyncPage.Add('Online server address, for example https://pos.devs.surf:', False);
+  SyncPage.Add('Sync token (the same long text as on the online server):', True);
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
   Result := False;
   if (PageID = ShopPage.ID) or (PageID = AccountPage.ID) then
+    Result := not IsServer;
+  if PageID = SyncPage.ID then
     Result := not IsServer;
   if PageID = TillPage.ID then
     Result := IsServer;
@@ -130,6 +139,18 @@ begin
       Result := False;
     end;
   end;
+  if CurPageID = SyncPage.ID then
+  begin
+    if (Trim(SyncPage.Values[0]) <> '') or (Trim(SyncPage.Values[1]) <> '') then
+    begin
+      if (Pos('http', Trim(SyncPage.Values[0])) <> 1) or (Length(Trim(SyncPage.Values[1])) < 16) or
+         HasQuote(SyncPage.Values[0]) or HasQuote(SyncPage.Values[1]) then
+      begin
+        MsgBox('Type the full online address (https://...) and the sync token, or leave both empty.', mbError, MB_OK);
+        Result := False;
+      end;
+    end;
+  end;
   if CurPageID = TillPage.ID then
   begin
     if ((Pos('http://', Lowercase(TillPage.Values[0])) <> 1) and
@@ -156,11 +177,13 @@ begin
           '" -AppDir "' + ExpandConstant('{app}') + '"';
   if IsServer then
   begin
-    SaveStringToFile(SecretsPath, AccountPage.Values[0] + #13#10 + AccountPage.Values[2] + #13#10, False);
+    SaveStringToFile(SecretsPath, AccountPage.Values[0] + #13#10 + AccountPage.Values[2] + #13#10 + Trim(SyncPage.Values[1]) + #13#10, False);
     Args := Args + ' -Role server -ShopName "' + Trim(ShopPage.Values[0]) + '" -ManagerUser "' + Trim(ShopPage.Values[1]) +
             '" -SecretsFile "' + SecretsPath + '"';
     if Trim(ShopPage.Values[2]) <> '' then
       Args := Args + ' -LanHost "' + Trim(ShopPage.Values[2]) + '"';
+    if Trim(SyncPage.Values[0]) <> '' then
+      Args := Args + ' -SyncUrl "' + Trim(SyncPage.Values[0]) + '"';
   end
   else
     Args := Args + ' -Role till -ServerUrl "' + Trim(TillPage.Values[0]) + '"';
