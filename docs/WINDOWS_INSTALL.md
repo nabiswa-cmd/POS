@@ -6,7 +6,7 @@
 ## What you need
 | | |
 |---|---|
-| Build PC (once) | Windows 10/11 64-bit, **Python 3.12 (64-bit)**, **Inno Setup 6**. Optional: the PostgreSQL 16 Windows installer (EDB, `postgresql-16.x-windows-x64.exe`) copied to `packaging\prereqs\` |
+| Build PC (once) | Windows 10/11 64-bit, **Python 3.12 or newer (64-bit)**, **Inno Setup 6**. Optional: the PostgreSQL 16 Windows installer (EDB, `postgresql-16.x-windows-x64.exe`) copied to `packaging\prereqs\` |
 | Shop PCs | Windows 10/11 64-bit. The server PC needs ~2 GB free. Nothing else to install |
 
 ## 1. Build the installer (on the build PC)

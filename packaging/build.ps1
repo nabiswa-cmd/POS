@@ -1,5 +1,5 @@
 <#
- Builds the Windows installer.  Run on a Windows PC with Python 3.12 (64-bit) and Inno Setup 6 installed:
+ Builds the Windows installer.  Run on a Windows PC with Python 3.12 or newer (64-bit) and Inno Setup 6 installed:
      powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Version 1.0.0
  Output: dist\installer\WinesPOS-Setup-<version>.exe
  Put the PostgreSQL 16 Windows installer (the EDB one) in packaging\prereqs\ if the installer should be able to set
@@ -9,7 +9,18 @@ param([string]$Version = "1.0.0", [switch]$SkipTests)
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path $PSScriptRoot)
 
-if (-not (Test-Path .build-venv)) { py -3.12 -m venv .build-venv }
+if (-not (Test-Path .build-venv)) {
+    # Use the newest installed Python that is 3.12 or later (3.12, 3.13, 3.14 ...).
+    $found = $null
+    foreach ($v in "3.14", "3.13", "3.12") {
+        & py "-$v" --version *> $null
+        if ($LASTEXITCODE -eq 0) { $found = $v; break }
+    }
+    if (-not $found) { throw "Python 3.12 or newer (64-bit) was not found. Install it from python.org (tick 'py launcher'), then run again. 'py -0' lists what is installed." }
+    Write-Host "Using Python $found"
+    & py "-$found" -m venv .build-venv
+    if ($LASTEXITCODE -ne 0) { throw "Could not create the build environment." }
+}
 $py = ".\.build-venv\Scripts\python.exe"
 & $py -m pip install --upgrade pip
 & $py -m pip install -r requirements.txt pyinstaller
