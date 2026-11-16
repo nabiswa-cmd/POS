@@ -86,3 +86,9 @@ class InstallerSettingsTests(TestCase):
         for bad in ("https://shop.devs.surf", "shop", "a b.c"):
             with self.assertRaises(configure.ConfigError, msg=bad):
                 configure.build_values("server", root="/x", remote_host=bad)
+
+    def test_both_shop_and_pos_hosts(self):
+        v = configure.build_values("server", root="/x", remote_host="shop.devs.surf,pos.devs.surf")
+        hosts = v["DJANGO_ALLOWED_HOSTS"].split(",")
+        self.assertTrue({"shop.devs.surf", "pos.devs.surf"} <= set(hosts))
+        self.assertEqual(v["DJANGO_CSRF_TRUSTED_ORIGINS"], "https://shop.devs.surf,https://pos.devs.surf")

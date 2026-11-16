@@ -87,6 +87,9 @@ try {
             $h = ([Uri]$SyncUrl).Host
             if ($h -like "pos.*") { $RemoteHost = "shop." + $h.Substring(4) }
         }
+        # Allow the online server's own address too (pos.*) next to the shop address (shop.*).
+        $syncHost = ([Uri]$SyncUrl).Host
+        if ($RemoteHost -and ($RemoteHost -split ",") -notcontains $syncHost) { $RemoteHost = "$RemoteHost,$syncHost" }
         if ($RemoteHost) { $cfgArgs += @("--remote-host", $RemoteHost); Write-Host "Remote access address: $RemoteHost" }
     }
     Run $Admin $cfgArgs

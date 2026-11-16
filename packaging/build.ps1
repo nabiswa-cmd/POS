@@ -58,8 +58,12 @@ if ($LASTEXITCODE -ne 0) { throw "collectstatic failed." }
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
 
 $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
-if (-not $iscc) { $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" }
-if (-not (Test-Path $iscc)) { throw "Inno Setup 6 was not found. Install it from jrsoftware.org." }
+if (-not $iscc) {
+    foreach ($c in "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "C:\Program Files (x86)\Inno Setup 6\ISCC.exe", "C:\Program Files\Inno Setup 6\ISCC.exe") {
+        if (Test-Path $c) { $iscc = $c; break }
+    }
+}
+if (-not $iscc -or -not (Test-Path $iscc)) { throw "Inno Setup 6 was not found. Install it from jrsoftware.org." }
 & $iscc "/DAppVersion=$Version" packaging\WinesPOS.iss
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed." }
 Write-Host "Done: dist\installer\WinesPOS-Setup-$Version.exe"

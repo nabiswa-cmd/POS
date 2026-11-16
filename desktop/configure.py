@@ -41,16 +41,17 @@ def build_values(role, *, root, existing=None, lan_host="", server_url="", port=
     if role != "server":
         raise ConfigError("Role must be 'server' or 'till'.")
     root = Path(root)
-    remote_host = remote_host.strip().lower().rstrip("/")
-    if remote_host and (not all(c.isalnum() or c in ".-" for c in remote_host) or "." not in remote_host):
-        raise ConfigError("The remote access address must be a host name such as shop.example.com (no https:// and no slash).")
-    hosts = ["localhost", "127.0.0.1"] + ([lan_host] if lan_host else []) + ([remote_host] if remote_host else [])
+    remote_hosts = [h.strip().lower().rstrip("/") for h in str(remote_host).split(",") if h.strip()]
+    for h in remote_hosts:
+        if "." not in h or not all(c.isalnum() or c in ".-" for c in h):
+            raise ConfigError("Remote addresses must be host names such as shop.example.com (no https:// and no slash).")
+    hosts = ["localhost", "127.0.0.1"] + ([lan_host] if lan_host else []) + remote_hosts
     sync_values = {}
     if sync_url or sync_token:
         if not sync_url.startswith(("http://", "https://")) or len(sync_token) < 16:
             raise ConfigError("The online server address must start with https:// and the sync token must be at least 16 characters.")
         sync_values = {"SYNC_ENABLED": "true", "SYNC_SERVER_URL": sync_url.rstrip("/"), "SYNC_TOKEN": sync_token}
-    remote_values = {"DJANGO_CSRF_TRUSTED_ORIGINS": f"https://{remote_host}"} if remote_host else {}
+    remote_values = {"DJANGO_CSRF_TRUSTED_ORIGINS": ",".join(f"https://{h}" for h in remote_hosts)} if remote_hosts else {}
     return {
         **sync_values,
         **remote_values,
