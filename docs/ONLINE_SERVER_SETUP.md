@@ -160,3 +160,8 @@ explains this and the cashier types the code instead. Chrome on Android uses its
 
 Note: secrets stored in the database (M-PESA/eTIMS) are encrypted with `INTEGRATION_SETTINGS_KEY`. A reinstalled PC
 creates a new key, so re-enter those secrets once in admin (or copy the old key into the settings file first).
+
+Remote access: when the installer is given an online address starting with `pos.` (for example `https://pos.devs.surf`),
+it also allows `shop.devs.surf` on the shop PC (allowed host + CSRF trusted origin), so nothing else needs editing on the PC.
+The server side is still yours: a DNS A record for `shop.devs.surf` pointing at the server, the nginx site on port 8021 and
+`certbot --nginx -d shop.devs.surf`.

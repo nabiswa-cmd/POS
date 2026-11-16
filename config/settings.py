@@ -78,7 +78,7 @@ if env_bool("ONLINE_SERVER_HTTPS", False):
     USE_X_FORWARDED_HOST = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
-CSRF_TRUSTED_ORIGINS = [o.strip() for o in env("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
+CSRF_TRUSTED_ORIGINS = [o.strip().rstrip("/") for o in env("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]   # a trailing / is tolerated
 
 INSTALLED_APPS = [
     "django.contrib.admin",

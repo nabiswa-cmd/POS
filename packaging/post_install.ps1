@@ -10,6 +10,7 @@ param(
     [string]$ShopName = "",
     [string]$ManagerUser = "",
     [string]$SecretsFile = "",     # a temp file the installer wrote: line 1 manager password, line 2 PostgreSQL admin password, line 3 sync token
+    [string]$RemoteHost = "",      # optional override of the remote-access address; default: pos.example.com -> shop.example.com
     [string]$SyncUrl = ""          # optional: the online server, e.g. https://pos.devs.surf. With the token it connects this PC automatically.
 )
 $ErrorActionPreference = "Stop"
@@ -80,7 +81,14 @@ try {
     $cfgArgs = @("configure", "--role", "server", "--provision-db")
     if ($LanHost) { $cfgArgs += @("--lan-host", $LanHost) }
     $env:WINESPOS_PG_ADMIN_PASSWORD = $pgAdminPw
-    if ($SyncUrl -and $syncToken) { $cfgArgs += @("--sync-url", $SyncUrl); $env:WINESPOS_SYNC_TOKEN = $syncToken }
+    if ($SyncUrl -and $syncToken) {
+        $cfgArgs += @("--sync-url", $SyncUrl); $env:WINESPOS_SYNC_TOKEN = $syncToken
+        if (-not $RemoteHost) {
+            $h = ([Uri]$SyncUrl).Host
+            if ($h -like "pos.*") { $RemoteHost = "shop." + $h.Substring(4) }
+        }
+        if ($RemoteHost) { $cfgArgs += @("--remote-host", $RemoteHost); Write-Host "Remote access address: $RemoteHost" }
+    }
     Run $Admin $cfgArgs
     Remove-Item Env:\WINESPOS_SYNC_TOKEN -ErrorAction SilentlyContinue
     Remove-Item Env:\WINESPOS_PG_ADMIN_PASSWORD

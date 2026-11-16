@@ -78,3 +78,11 @@ class InstallerSettingsTests(TestCase):
         self.assertNotIn("SYNC_TOKEN", configure.build_values("server", root="/x"))
         with self.assertRaises(configure.ConfigError):
             configure.build_values("server", root="/x", sync_url="https://a.b", sync_token="short")
+
+    def test_remote_host_is_allowed_and_trusted_for_csrf(self):
+        v = configure.build_values("server", root="/x", remote_host="shop.devs.surf")
+        self.assertIn("shop.devs.surf", v["DJANGO_ALLOWED_HOSTS"].split(","))
+        self.assertEqual(v["DJANGO_CSRF_TRUSTED_ORIGINS"], "https://shop.devs.surf")
+        for bad in ("https://shop.devs.surf", "shop", "a b.c"):
+            with self.assertRaises(configure.ConfigError, msg=bad):
+                configure.build_values("server", root="/x", remote_host=bad)
