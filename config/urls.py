@@ -10,6 +10,7 @@ from sales import report_views as sales_report_views
 from sales import views as sales_views
 from core import backup_views, sync_views
 from sales import analytics_views
+from sales import mpesa_views
 from tills import cashup_views
 from tills import views as tills_views
 
@@ -17,6 +18,7 @@ admin.site.site_header = "Wines & Spirits POS: Manager Admin"
 admin.site.site_title = "POS Admin"
 
 urlpatterns = [
+    path("", mpesa_views.root_c2b_callback, name="mpesa-root-c2b"),
     path("admin/", admin.site.urls),
     path("pos/sell/", sales_views.pos_page, name="pos-sell"),
     path("manage/tills/", tills_views.overview, name="tills-overview"),

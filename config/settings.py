@@ -253,6 +253,8 @@ MPESA = {
     "TIMEOUT": env_int("MPESA_TIMEOUT_SECONDS", 12),
     "INITIATOR_NAME": env("MPESA_INITIATOR_NAME", ""),
     "SECURITY_CREDENTIAL": env("MPESA_SECURITY_CREDENTIAL", ""),
+    "ALLOWED_IPS": env("MPESA_ALLOWED_IPS", ""),                       # optional comma-separated Safaricom IPs/ranges
+    "TRUST_PROXY": env_bool("MPESA_TRUST_PROXY", False),               # only enable behind the shop's reverse proxy
     # Relay (reconciliation part 2). On the SHOP PC: where the online server is, and the token to ask it.
     # On the ONLINE server: only the token (the same value) is needed; it also uses MPESA_CALLBACK_SECRET.
     "RELAY_URL": env("MPESA_RELAY_URL", ""),
