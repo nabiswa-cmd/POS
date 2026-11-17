@@ -143,7 +143,7 @@
       if (s.locked_shift) {
         lockedTillNo = Number(s.locked_shift.till);
         tillNo = lockedTillNo;
-        $("authorized-note").textContent = "Sign in as " + s.locked_shift.cashier +
+        $("authorized-note").textContent = "  s " + s.locked_shift.cashier +
           " to resume this locked till. Supervisor authorization is not required.";
       }
       if (cashierLoginWithoutSupervisor && lockedTillNo === null) {

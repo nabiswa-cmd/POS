@@ -9,7 +9,7 @@ from accounting.models import ExpenseCategory
 from core.models import AuditLog
 from sales import mpesa_services as ms
 from sales import refunds, services
-from sales.models import MpesaTransaction, Sale
+from sales.models import MpesaStkRequest, MpesaTransaction, Sale
 from sales.test_phase4a import CFG
 from sales.tests import SalesCase
 
@@ -115,6 +115,21 @@ class CloseTests(CashupBase):
         self.assertTrue(Sale.objects.filter(shift=self.shift, status=Sale.OPEN).exists())
         self.close(count_of(5000))
         self.assertFalse(Sale.objects.filter(shift=self.shift, status=Sale.OPEN).exists())
+
+    def test_empty_cart_with_failed_stk_request_is_voided_instead_of_deleted(self):
+        sale, line = self.scan()
+        services.remove_item(self.cashier, self.shift, line.pk, approval_token=self.approval(
+            "remove_item", f"sale:{sale.pk}:item:{line.pk}"))
+        MpesaStkRequest.objects.create(
+            sale=sale, cashier=self.cashier, shift=self.shift, phone="254712345678",
+            amount=D("3500.00"), checkout_request_id="CASHUP_FAILED_STK",
+            status=MpesaStkRequest.FAILED, result_code=1032,
+        )
+        self.close(count_of(5000))
+        sale.refresh_from_db()
+        self.assertEqual(sale.status, Sale.VOIDED)
+        self.assertEqual(sale.void_reason, "Empty cart tidied during cash-up")
+        self.assertTrue(MpesaStkRequest.objects.filter(sale=sale).exists())
 
     def test_waiting_refunds_are_warned_about_not_counted(self):
         sale = self.cash_sale()

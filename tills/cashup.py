@@ -84,7 +84,18 @@ def close_shift(user, shift_id, counts, reason="", *, ip=None):
     var = rules.variance(counted, snap["expected_cash"])
     why = rules.check_reason(var, reason)
     # An empty cart the POS opened by itself is not a sale: tidy it away so nothing is left dangling.
-    carts.annotate(n=Count("items")).filter(n=0).delete()
+    # Keep the cart when an M-PESA payment request references it: the request and its audit trail are protected
+    # history and cannot be cascaded away with the sale.
+    empty_carts = carts.annotate(n=Count("items")).filter(n=0)
+    for cart in empty_carts:
+        if cart.stk_requests.exists():
+            cart.status = cart.VOIDED
+            cart.voided_at = timezone.now()
+            cart.voided_by = user
+            cart.void_reason = "Empty cart tidied during cash-up"
+            cart.save(update_fields=["status", "voided_at", "voided_by", "void_reason"])
+        else:
+            cart.delete()
 
     cashup = CashUp.objects.create(
         shift=shift, closed_by=user, opening_float=snap["opening_float"], cash_sales=snap["cash_sales"],
