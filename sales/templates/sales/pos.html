@@ -73,13 +73,17 @@
     color:var(--text);background:transparent;border:0;text-align:left;text-transform:none;letter-spacing:0}
   .search-result::after{display:none}
   .search-result small{color:var(--muted)}
+  .pick-result{display:flex;width:100%;min-height:52px;align-items:center;justify-content:space-between;gap:12px;margin:0;padding:10px 12px;
+    color:var(--text);background:transparent;border:0;text-align:left;text-transform:none;letter-spacing:0}
+  .pick-result::after{display:none}
+  .opts li.on .pick-result{background:var(--nav-on)}
   .cartbox tbody tr{cursor:pointer}
   .keys{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px}
   /* Touch action bar: the same actions as the keyboard shortcuts, on screen. Shown on phones and small tablets only. */
   .actionbar{display:none}
   @media (max-width:900px){
     body.pos{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
-    .actionbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) minmax(0,1.7fr);gap:8px;position:fixed;z-index:30;left:0;right:0;bottom:0;
+    .actionbar{display:grid;grid-template-columns:repeat(5,minmax(0,1fr)) minmax(0,1.7fr);gap:8px;position:fixed;z-index:30;left:0;right:0;bottom:0;
       padding:8px 10px calc(8px + env(safe-area-inset-bottom));background-color:var(--surface-nav);border-top:1px solid var(--border)}
     .actionbar button{min-height:52px;padding:6px 4px;font-size:11px;letter-spacing:.04em;margin:0}
     .actionbar button svg{display:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
@@ -183,6 +187,9 @@
   </button>
   <button type="button" class="ghost" data-act="hold" aria-label="Hold sale" title="Hold sale">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5z"/><path d="M9 8v8m6-8v8"/></svg><span class="action-label">Hold</span>
+  </button>
+  <button type="button" class="ghost" data-act="retrieve" aria-label="Retrieve held sale" title="Retrieve held sale">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v12H4z"/><path d="m9 12 3-3 3 3m-3-3v7"/></svg><span class="action-label">Retrieve</span>
   </button>
   <button type="button" class="ghost" data-act="customer" aria-label="Customer details" title="Customer details">
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c.7-3.5 3.2-5.3 7.5-5.3s6.8 1.8 7.5 5.3"/></svg><span class="action-label">Customer</span>
@@ -613,10 +620,22 @@
     var idx = 0;
     var d = openDialog("<h2>" + esc(title) + '</h2><ul class="opts" id="pl"></ul><div class="err" id="pl-e"></div><div class="btns"><button class="ghost" id="pl-no" type="button" data-first>Close (Esc)</button></div>');
     function paint() {
-      $("pl").innerHTML = rows.length ? rows.map(function (x, i) { return '<li class="' + (i === idx ? "on" : "") + '"><span>' + left(x) + "</span><span>" + right(x) + "</span></li>"; }).join("")
+      $("pl").innerHTML = rows.length ? rows.map(function (x, i) {
+        return '<li class="' + (i === idx ? "on" : "") + '"><button type="button" class="pick-result" data-pick-index="' + i +
+          '"><span>' + left(x) + "</span><span>" + right(x) + "</span></button></li>";
+      }).join("")
         : '<li class="off"><span>' + esc(emptyText) + "</span></li>";
     }
-    paint(); $("pl-no").onclick = function () { closeDialog(d); };
+    paint();
+    Array.prototype.forEach.call(d.root.querySelectorAll("[data-pick-index]"), function (button) {
+      button.addEventListener("click", function () {
+        var row = rows[Number(button.getAttribute("data-pick-index"))];
+        if (!row) return;
+        closeDialog(d);
+        choose(row);
+      });
+    });
+    $("pl-no").onclick = function () { closeDialog(d); };
     d.onKey = function (e) {
       if (e.key === "ArrowDown") { e.preventDefault(); idx = Math.min(rows.length - 1, idx + 1); paint(); return true; }
       if (e.key === "ArrowUp") { e.preventDefault(); idx = Math.max(0, idx - 1); paint(); return true; }
@@ -736,10 +755,12 @@
       '<div class="btns" style="justify-content:flex-start"><button class="ghost" id="mp-pull" type="button">Get latest payments</button></div>' +
       "<label>  </label>" +
       '<input id="mp-code" autocomplete="off" autocapitalize="characters" maxlength="14" placeholder="e.g. SGL1ABC23D or ABC23D">' +
+      '<div class="btns" style="justify-content:flex-start"><button class="ghost" id="mp-code-find" type="button">Search M-PESA code</button></div>' +
       '<div class="note" id="mp-found"></div>' +
       "<label>Or send a payment request to the customer's phone</label>" +
       '<input id="mp-phone" inputmode="tel" autocomplete="off" placeholder="0712 345 678"' + (mcfg.stk ? "" : " disabled") + ">" +
       '<label>Amount to request (KES, whole shillings)</label><input id="mp-amt" inputmode="decimal" autocomplete="off" value="' + whole + '"' + (mcfg.stk ? "" : " disabled") + ">" +
+      '<div class="btns" style="justify-content:flex-start"><button id="mp-send-stk" type="button"' + (mcfg.stk ? "" : " disabled") + '>Send STK push</button></div>' +
       '<div class="note" id="mp-stk">' + (mcfg.stk ? "" : "Phone requests are not set up. The customer can still pay the Till.") + "</div>" +
       '<div class="err" id="mp-err"></div>' +
       '<div class="btns"><button class="ghost" id="mp-no" type="button">Back (Esc)</button><button id="mp-ok" data-first type="button">Use selected payment (Enter)</button></div>');
@@ -844,6 +865,8 @@
     poller = setInterval(poll, 3000); poll(); paint();
     pull(false); pullTimer = setInterval(function () { pull(false); }, 15000);
     $("mp-pull").onclick = function () { pull(true); };
+    $("mp-code-find").onclick = find;
+    $("mp-send-stk").onclick = sendStk;
     $("mp-code").addEventListener("input", function () { codeFilter = cleanCode(this.value); idx = 0; $("mp-found").textContent = ""; paint(); });
     $("mp-no").onclick = function () { closeDialog(d); };
     $("mp-ok").onclick = function () {

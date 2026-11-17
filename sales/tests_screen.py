@@ -243,6 +243,13 @@ class ReceiptAsTheScreenUsesItTests(ScreenCase):
         back = post(self.c, "/api/sales/held/resume/", {"sale_id": held[0]["id"]}).json()
         self.assertEqual((back["cart"]["count"], back["cart"]["customer"]), (2, "Mr Otieno"))
 
+    def test_small_screen_pos_has_touch_buttons_for_held_sales_and_mpesa_actions(self):
+        from django.template.loader import render_to_string
+        page = render_to_string("sales/pos.html", {"shop_name": "Test Shop", "till_number": 1})
+        self.assertIn('data-act="retrieve"', page)
+        self.assertIn("Search M-PESA code", page)
+        self.assertIn("Send STK push", page)
+
     def test_shift_summary_fields_the_screen_shows(self):
         self.sell()
         s = self.c.get("/api/sales/shift/summary/").json()["shift"]
