@@ -7,7 +7,7 @@ from unittest.mock import patch
 from django.test import Client, override_settings
 from django.utils import timezone
 
-from . import mpesa_services as ms
+from . import daraja, mpesa_services as ms
 from .models import MpesaStkRequest, MpesaTransaction, Payment, Sale
 from .tests import SalesCase
 
@@ -27,6 +27,20 @@ def stk_ok(checkout="ws_CO_1", receipt="SGL1ABC23D", amount=3500):
             "ResultDesc": "ok", "CallbackMetadata": {"Item": [
                 {"Name": "Amount", "Value": amount}, {"Name": "MpesaReceiptNumber", "Value": receipt},
                 {"Name": "TransactionDate", "Value": 20261107201500}, {"Name": "PhoneNumber", "Value": 254712345678}]}}}}
+
+
+@override_settings(MPESA={**CFG, "SHORTCODE": "4348331", "TILL_NUMBER": "3453945",
+                         "CALLBACK_BASE_URL": "https://pos.devs.surf"})
+class C2bRegistrationTests(SalesCase):
+    def test_registers_the_public_root_for_validation_and_confirmation(self):
+        with patch.object(daraja, "_auth", return_value={"Authorization": "Bearer test"}), \
+             patch.object(daraja, "_call", return_value={"ResponseCode": "0"}) as call:
+            daraja.register_c2b_urls()
+        args = call.call_args.args
+        body = args[2]
+        self.assertEqual(body["ShortCode"], "3453945")
+        self.assertEqual(body["ConfirmationURL"], "https://pos.devs.surf/")
+        self.assertEqual(body["ValidationURL"], "https://pos.devs.surf/")
 
 
 @override_settings(MPESA=CFG)

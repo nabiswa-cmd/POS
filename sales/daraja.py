@@ -127,10 +127,11 @@ def stk_query(checkout_request_id):
 
 
 def register_c2b_urls():
-    """One-off: tell Safaricom where to send till/paybill payments. Run the command on the server that is public."""
+    """Tell Safaricom to send till/paybill validation and confirmation notices to the public root callback."""
     c = cfg()
+    root_url = c["CALLBACK_BASE_URL"].rstrip("/") + "/"
     body = {"ShortCode": c["TILL_NUMBER"] or c["SHORTCODE"], "ResponseType": "Completed",
-            "ConfirmationURL": callback_url("c2b/confirm", c), "ValidationURL": callback_url("c2b/validate", c)}
+            "ConfirmationURL": root_url, "ValidationURL": root_url}
     return _call("POST", "/mpesa/c2b/v2/registerurl", body, _auth(c), config=c)
 
 
