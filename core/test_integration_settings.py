@@ -43,6 +43,18 @@ class IntegrationSettingsTests(TestCase):
         self.assertNotIn("db-consumer-secret", config.mpesa_config_ciphertext)
         self.assertNotIn("db-etims-key", config.etims_config_ciphertext)
 
+    def test_old_database_mpesa_config_gets_new_proxy_defaults(self):
+        old = dict(integration_settings.environment_mpesa())
+        old.pop("ALLOWED_IPS", None)
+        old.pop("TRUST_PROXY", None)
+        config = IntegrationConfiguration(mpesa_source=IntegrationConfiguration.SOURCE_DATABASE)
+        config.set_mpesa_values(old)
+        config.save()
+
+        loaded = integration_settings.mpesa()
+        self.assertEqual(loaded["ALLOWED_IPS"], "")
+        self.assertEqual(loaded["TRUST_PROXY"], integration_settings.environment_mpesa()["TRUST_PROXY"])
+
     def test_barcode_lookup_key_can_be_saved_encrypted_or_read_from_environment(self):
         with override_settings(BARCODE_LOOKUP_API_KEY="environment-barcode-key"):
             self.assertEqual(integration_settings.barcode_lookup(), {"API_KEY": "environment-barcode-key"})

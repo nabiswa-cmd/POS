@@ -70,6 +70,9 @@ if not SECRET_KEY:
 ALLOWED_HOSTS = [h.strip() for h in env("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if h.strip()]
 # More hosts can be added later from the Django admin (Server settings > EXTRA_ALLOWED_HOSTS) without editing this file.
 EXTRA_ALLOWED_HOSTS = env("EXTRA_ALLOWED_HOSTS", "")
+for extra_host in [h.strip() for h in EXTRA_ALLOWED_HOSTS.split(",") if h.strip()]:
+    if extra_host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(extra_host)
 
 # Online server behind HTTPS (Caddy / nginx). Set ONLINE_SERVER_HTTPS=true there so cookies are marked secure and
 # Django trusts the proxy's X-Forwarded-Proto header. Leave it false on the shop PC (plain http on the LAN).

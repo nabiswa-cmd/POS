@@ -23,6 +23,8 @@ MPESA_FIELDS = {
     "RELAY_TOKEN": "mpesa_relay_token",
     "INITIATOR_NAME": "mpesa_initiator_name",
     "SECURITY_CREDENTIAL": "mpesa_security_credential",
+    "ALLOWED_IPS": "mpesa_allowed_ips",
+    "TRUST_PROXY": "mpesa_trust_proxy",
 }
 ETIMS_FIELDS = {
     "MODE": "etims_mode",
@@ -64,6 +66,8 @@ class IntegrationConfigurationForm(forms.ModelForm):
     mpesa_relay_token = forms.CharField(required=False, widget=forms.PasswordInput(render_value=False))
     mpesa_initiator_name = forms.CharField(required=False, max_length=100)
     mpesa_security_credential = forms.CharField(required=False, widget=forms.PasswordInput(render_value=False))
+    mpesa_allowed_ips = forms.CharField(required=False, max_length=500)
+    mpesa_trust_proxy = forms.BooleanField(required=False)
 
     etims_mode = forms.ChoiceField(choices=[("off", "Off"), ("sandbox", "Sandbox"), ("live", "Live")])
     etims_integration = forms.ChoiceField(choices=[("vscu", "VSCU"), ("oscu", "OSCU")])

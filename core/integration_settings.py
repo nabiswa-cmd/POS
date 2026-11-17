@@ -65,9 +65,9 @@ def _configured_values(source_field, ciphertext_field, environment_values, label
     values = decrypt_values(getattr(row, ciphertext_field), label)
     if not values:
         raise ImproperlyConfigured(f"{label} is set to database source but has no saved configuration.")
-    missing = set(environment_values()) - set(values)
-    if missing:
-        raise ImproperlyConfigured(f"{label} database configuration is missing: {', '.join(sorted(missing))}.")
+    # Older encrypted records may predate newly introduced settings. Fill them from the
+    # external environment instead of crashing the entire M-PESA callback.
+    values = {**environment_values(), **values}
     return values
 
 
