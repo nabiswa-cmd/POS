@@ -32,15 +32,17 @@ def stk_ok(checkout="ws_CO_1", receipt="SGL1ABC23D", amount=3500):
 @override_settings(MPESA={**CFG, "SHORTCODE": "4348331", "TILL_NUMBER": "3453945",
                          "CALLBACK_BASE_URL": "https://pos.devs.surf"})
 class C2bRegistrationTests(SalesCase):
-    def test_registers_the_public_root_for_validation_and_confirmation(self):
+    def test_registers_the_secret_callback_urls_for_validation_and_confirmation(self):
         with patch.object(daraja, "_auth", return_value={"Authorization": "Bearer test"}), \
              patch.object(daraja, "_call", return_value={"ResponseCode": "0"}) as call:
             daraja.register_c2b_urls()
         args = call.call_args.args
         body = args[2]
         self.assertEqual(body["ShortCode"], "3453945")
-        self.assertEqual(body["ConfirmationURL"], "https://pos.devs.surf/")
-        self.assertEqual(body["ValidationURL"], "https://pos.devs.surf/")
+        self.assertEqual(body["ConfirmationURL"],
+                         f"https://pos.devs.surf/api/pay/c2b/confirm/{SECRET}/")
+        self.assertEqual(body["ValidationURL"],
+                         f"https://pos.devs.surf/api/pay/c2b/validate/{SECRET}/")
 
 
 @override_settings(MPESA=CFG)
