@@ -716,6 +716,9 @@ def _post(receiving, poster):
             post_movement(product_id=item.product_id, movement_type=mr.RECEIVE, quantity=item.good_units,
                           user=receiving.created_by, approved_by=poster if poster.pk != receiving.created_by_id else None,
                           reference=receiving.number, unit_cost=unit_cost, reason=receiving.delivery_note or "")
+            Product.objects.filter(
+                pk=item.product_id, active=False, description__startswith="Imported from ", buying_cost=0,
+            ).update(buying_cost=unit_cost)
     receiving.status = Receiving.POSTED
     receiving.decided_by = poster
     receiving.decided_at = timezone.now()

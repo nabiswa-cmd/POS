@@ -12,6 +12,8 @@ from django.db import transaction
 from django.utils import timezone
 
 from core import audit
+from tills import cashup as tills_cashup
+from tills.cashup_rules import CashupError
 from tills.models import CashierShift
 
 from . import rules, services
@@ -21,31 +23,57 @@ from .services import SaleError
 
 @transaction.atomic
 def close_shift(user, shift, counted, note=""):
-    services._need(user, "shifts.view_own", "You are not allowed to close a shift.")
-    locked = CashierShift.objects.select_for_update().select_related("till").filter(pk=shift.pk).first()
-    if locked is None or locked.closed_at is not None:
-        raise SaleError("This shift is already closed.")
-    if locked.cashier_id != user.pk:
-        raise services.NotAllowed("Only the cashier of this shift can close it.")
-    if Sale.objects.filter(shift=locked, status=Sale.OPEN, items__isnull=False).exists():
-        raise SaleError("A sale is still in progress. Finish, hold or void it before closing the shift.")
+    """Compatibility wrapper for the older sales API.
+
+    Cash-up figures are stored on tills.CashUp now; this adapter accepts the old
+    total-only input and delegates the closing rules and persistence to tills.cashup.
+    """
     try:
         counted = rules.parse_money(counted, field="Cash counted", allow_zero=True)
     except rules.RuleError as exc:
         raise SaleError(str(exc)) from exc
+
+    if shift.cashier_id != user.pk:
+        raise services.NotAllowed("Only the cashier of this shift can close it.")
+
+    snap = tills_cashup.snapshot(shift)
+    variance = counted - Decimal(snap["expected_cash"])
+    if variance != 0 and len(" ".join(str(note or "").split())) < 3:
+        direction = "over" if variance > 0 else "short"
+        raise SaleError(
+            f"The drawer is {direction} by KES {abs(variance):,.2f}. Write a note saying why."
+        )
+
+    whole = counted
+    cents = (counted - counted.to_integral_value()) * 100
+    if cents != 0:
+        raise SaleError("The counted cash must be a whole amount of Kenyan shillings.")
+
+    counts = {}
+    remaining = int(whole)
+    for denomination in (1000, 500, 200, 100, 50, 40, 20, 10, 5, 1):
+        pieces, remaining = divmod(remaining, denomination)
+        if pieces:
+            counts[str(denomination)] = pieces
+    if remaining:
+        raise SaleError("The counted cash cannot be represented by Kenyan notes and coins.")
+
+    try:
+        cashup, _warnings = tills_cashup.close_shift(user, shift.pk, counts, str(note or "").strip())
+    except (CashupError, PermissionError) as exc:
+        message = str(exc)
+        if isinstance(exc, PermissionError):
+            raise services.NotAllowed(message) from exc
+        raise SaleError(message) from exc
+
+    locked = CashierShift.objects.select_related("till").get(pk=shift.pk)
     summary = services.shift_summary(locked)
-    expected = Decimal(summary["cash_in_drawer_expected"])
-    variance = counted - expected
-    note = " ".join(str(note or "").split())[:250]
-    if variance != 0 and len(note) < 3:
-        raise SaleError(f"The drawer is {'over' if variance > 0 else 'short'} by KES {abs(variance):,.2f}. Write a note saying why.")
-    locked.expected_cash, locked.counted_cash, locked.variance = expected, counted, variance
-    locked.close_note, locked.closed_at = note, timezone.now()
-    locked.save(update_fields=["expected_cash", "counted_cash", "variance", "close_note", "closed_at"])
-    audit.record("shift.closed", actor=user, object_type="shift", object_ref=locked.pk,
-                 new={"expected": str(expected), "counted": str(counted), "variance": str(variance),
-                      "sales": summary["sales_count"], "cash_sales": summary["cash_sales"],
-                      "mpesa_sales": summary["mpesa_sales"], "other_sales": summary["other_sales"],
-                      "refunds_waiting": summary["refunds_waiting"]},
-                 reason=note, till_number=locked.till.number)
+    summary["card_sales"] = "0.00"
+    summary["bank_sales"] = "0.00"
+
+    # Preserve the sales.cashup compatibility attributes for older callers/tests.
+    locked.expected_cash = cashup.expected_cash
+    locked.counted_cash = cashup.counted_cash
+    locked.variance = cashup.variance
+    locked.close_note = cashup.reason
     return locked, summary

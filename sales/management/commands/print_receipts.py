@@ -14,9 +14,6 @@ class Command(BaseCommand):
         parser.add_argument("--interval", type=float, default=2, help="Seconds between checks when looping.")
 
     def handle(self, *args, **options):
-        printer_name = printing.configured_printer()
-        if not printer_name:
-            raise CommandError("Set WINESPOS_RECEIPT_PRINTER to the installed server printer before starting this worker.")
         if options["interval"] <= 0:
             raise CommandError("--interval must be greater than zero.")
 
@@ -31,8 +28,11 @@ class Command(BaseCommand):
                 time.sleep(options["interval"])
                 continue
 
+            printer_name = printing.configured_printer()
             job = ReceiptPrintJob.objects.get(pk=job_id)
             try:
+                if not printer_name:
+                    raise ValueError("No receipt printer is configured in Receipt settings.")
                 printing.print_receipt_payload(job.payload, printer_name)
             except (OSError, RuntimeError, ValueError) as exc:
                 message = str(exc) or exc.__class__.__name__

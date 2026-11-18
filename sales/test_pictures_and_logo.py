@@ -1,11 +1,12 @@
 """The till shows a product's picture (or the POS logo when it has none) and every receipt starts with the logo."""
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
+from unittest.mock import patch
 
 from catalog import views as catalog_views
 from core.models import ReceiptSettings
 
-from . import services, views
+from . import printing, services, views
 from .tests import SalesCase
 
 
@@ -78,3 +79,31 @@ class ReceiptLogoTests(SalesCase):
         self.assertIn("height:18mm", html)
         self.assertIn("max-width:calc(58mm - 4mm)", html)
         self.assertIn("html,body{width:58mm;margin:0 auto", html)
+
+
+class ReceiptPrinterSettingsTests(SalesCase):
+    def test_printer_name_is_read_from_database_by_authenticated_app_sessions(self):
+        self.assertEqual(self.client.get("/api/receipt/printer/").status_code, 401)
+
+        self.client.force_login(self.cashier)
+        settings = ReceiptSettings.load()
+        settings.printer_name = "Shop Receipt Printer"
+        settings.save()
+
+        response = self.client.get("/api/receipt/printer/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True, "printer_name": "Shop Receipt Printer"})
+
+    def test_database_printer_setting_overrides_the_environment_fallback(self):
+        settings = ReceiptSettings.load()
+        settings.printer_name = "Database Printer"
+        settings.save()
+        with patch.dict("os.environ", {"WINESPOS_RECEIPT_PRINTER": "Legacy Environment Printer"}):
+            self.assertEqual(printing.configured_printer(), "Database Printer")
+
+    def test_empty_database_printer_keeps_environment_fallback(self):
+        settings = ReceiptSettings.load()
+        settings.printer_name = ""
+        settings.save()
+        with patch.dict("os.environ", {"WINESPOS_RECEIPT_PRINTER": "Legacy Environment Printer"}):
+            self.assertEqual(printing.configured_printer(), "Legacy Environment Printer")

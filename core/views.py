@@ -1,3 +1,5 @@
+import os
+
 from django.conf import settings
 from django.db import connection
 from django.http import Http404, JsonResponse
@@ -5,7 +7,8 @@ from django.shortcuts import redirect, render
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET
 
-from .models import ShopSettings
+from .http import login_required_json
+from .models import ReceiptSettings, ShopSettings
 
 AREAS = {
     "pos": "OPEN POS / CASHIER",
@@ -37,6 +40,16 @@ def health(request):
     with connection.cursor() as cursor:
         cursor.execute("SELECT 1")
     return JsonResponse({"ok": True})
+
+
+@require_GET
+@login_required_json
+def receipt_printer(request):
+    configured = ReceiptSettings.load().printer_name.strip()
+    return JsonResponse({
+        "ok": True,
+        "printer_name": configured or os.environ.get("WINESPOS_RECEIPT_PRINTER", "").strip(),
+    })
 
 
 @require_GET

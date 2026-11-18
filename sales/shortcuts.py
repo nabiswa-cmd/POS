@@ -51,6 +51,8 @@ def merged(overrides):
         if action not in ACTIONS:
             raise ShortcutError(f"Unknown action '{action}'.")
         key = str(key).strip()
+        if len(key) >= 5 and key[:4].lower() == "alt+" and len(key) == 5:
+            key = "Alt+" + key[-1].upper()
         if key in FIXED_KEYS:
             raise ShortcutError(f"{key} is reserved and cannot be a shortcut.")
         if key not in ALLOWED_KEYS:

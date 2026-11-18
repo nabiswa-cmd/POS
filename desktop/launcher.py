@@ -121,17 +121,33 @@ def main(argv=None):
                 message = ctypes.FormatError(error).strip() if error else "Windows rejected the sleep request."
                 QMessageBox.warning(self, TITLES[args.mode], f"Could not put the computer to sleep: {message}")
 
-        def print_receipt(self):
-            """Send the page to the receipt printer named in WINESPOS_RECEIPT_PRINTER, with no dialog."""
+        def print_receipt(self, name):
+            """Send the page to the configured receipt printer with no dialog."""
             from PySide6.QtPrintSupport import QPrinter, QPrinterInfo
-            name = os.environ["WINESPOS_RECEIPT_PRINTER"].strip()
             if name not in QPrinterInfo.availablePrinterNames():
                 QMessageBox.warning(self, TITLES[args.mode], f"The receipt printer '{name}' was not found.\n"
-                                    "Check it is on and plugged in, or ask the manager to check WINESPOS_RECEIPT_PRINTER.")
+                                    "Check it is on and plugged in, or ask the manager to check Receipt settings.")
                 return
             self._printer = QPrinter(QPrinter.PrinterMode.HighResolution)
             self._printer.setPrinterName(name)
             self.view.print(self._printer)
+
+        def _print_with_settings(self, printer_name):
+            if printer_name is None:
+                QMessageBox.warning(self, TITLES[args.mode], "Could not read the receipt printer setting from the shop server.")
+            elif printer_name:
+                self.print_receipt(printer_name)
+            else:
+                self._show_print_preview()
+
+        def _show_print_preview(self):
+            from PySide6.QtPrintSupport import QPrintPreviewDialog, QPrinter
+
+            printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+            preview = QPrintPreviewDialog(printer, self)
+            preview.setWindowTitle("Print preview")
+            preview.paintRequested.connect(self.view.print)
+            preview.exec()
 
         def print_requested(self):
             """Keep label sheets previewable; only receipt pages use the configured silent printer."""
@@ -139,8 +155,12 @@ def main(argv=None):
             label_preview = path.startswith("/manage/labels/print/")
             receipt_page = path == "/pos/sell/" or (
                 path.startswith("/manage/sales/") and path.endswith("/reprint/"))
-            if receipt_page and os.environ.get("WINESPOS_RECEIPT_PRINTER", "").strip():
-                self.print_receipt()
+            if receipt_page:
+                self.view.page().runJavaScript(
+                    "fetch('/api/receipt/printer/', {credentials:'same-origin', cache:'no-store'})"
+                    ".then(function(r){return r.ok?r.json():Promise.reject();})"
+                    ".then(function(d){return d.printer_name;}).catch(function(){return null;})",
+                    self._print_with_settings)
                 return
 
             from PySide6.QtPrintSupport import QPrintPreviewDialog, QPrinter

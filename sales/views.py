@@ -30,6 +30,9 @@ def _guard(view):
             shift = services.open_shift_for(request.user, request.session.get("pos_till"))
             return view(request, *args, shift=shift, **kwargs)
         except services.ApprovalNeeded as exc:
+            if exc.action in {"refund", "remove_item", "exceptional_discount"}:
+                return JsonResponse({"ok": False, "error": str(exc), "approval_required": exc.action,
+                                     "object_ref": exc.object_ref}, status=409)
             return JsonResponse({"ok": False, "error": str(exc),
                                  "approval_required": {"action": exc.action, "label": exc.label,
                                                        "object_ref": exc.object_ref, "detail": exc.detail}},

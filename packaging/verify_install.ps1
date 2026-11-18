@@ -32,9 +32,8 @@ if ($serverPc) {
     $acl = (& icacls $envFile) -join " "
     Check "Settings file (holds secrets) is not readable by ordinary users" ($acl -notmatch "Users:|Everyone:|Authenticated Users:") $acl
     Check "Server task exists" ([bool](Get-ScheduledTask -TaskName "WinesPOS Server" -ErrorAction SilentlyContinue))
-    $printerConfigured = [bool](Select-String -Path $envFile -Pattern '^WINESPOS_RECEIPT_PRINTER=.+$' -Quiet)
     $printerTask = [bool](Get-ScheduledTask -TaskName "WinesPOS Printer" -ErrorAction SilentlyContinue)
-    Check "Receipt printer task matches printer configuration" ($printerTask -eq $printerConfigured)
+    Check "Receipt printer task exists" $printerTask
     Check "Nightly backup task exists" ([bool](Get-ScheduledTask -TaskName "WinesPOS Backup" -ErrorAction SilentlyContinue))
     $ok = $false
     try { $ok = (Invoke-WebRequest "http://127.0.0.1:8000/health/" -UseBasicParsing -TimeoutSec 5).StatusCode -eq 200 } catch {}

@@ -99,7 +99,10 @@ def run_checks():
             add(WARN, "M-PESA is in SANDBOX mode: payments are not real.")
         if etims_config["MODE"] == "sandbox":
             add(WARN, "eTIMS is in SANDBOX mode: receipts are not real tax invoices.")
-    printer = os.environ.get("WINESPOS_RECEIPT_PRINTER", "")
+    from core.models import ReceiptSettings
+
+    printer = (ReceiptSettings.objects.filter(pk=1).values_list("printer_name", flat=True).first() or "").strip()
+    printer = printer or os.environ.get("WINESPOS_RECEIPT_PRINTER", "").strip()
     add(OK, f"Receipts print silently to '{printer}'." if printer else
-        "Receipts use the Windows print dialog (set WINESPOS_RECEIPT_PRINTER for silent printing).")
+        "Receipts use the Windows print dialog (set the printer in Receipt settings for silent printing).")
     return out

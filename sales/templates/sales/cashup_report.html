@@ -4,6 +4,6 @@
 <p>{{ rows|length }} shift{{ rows|length|pluralize }} closed &middot; {{ off }} with a difference &middot; {{ open_now }} still open.
 Total variance: <b>{{ totals.v|default:"0.00" }}</b></p>
 <table><tr><th>Closed</th><th>Till</th><th>Cashier</th><th class="num">Float</th><th class="num">Expected</th><th class="num">Counted</th><th class="num">Variance</th><th>Note</th></tr>
-{% for s in rows %}<tr><td>{{ s.closed_at|date:"d M Y H:i" }}</td><td>{{ s.till.name }}</td><td>{{ s.cashier.display_name }}</td><td class="num">{{ s.opening_float }}</td><td class="num">{{ s.expected_cash|default_if_none:"-" }}</td><td class="num">{{ s.counted_cash|default_if_none:"-" }}</td>
-<td class="num">{% if s.variance %}<span class="pill bad">{{ s.variance }}</span>{% elif s.variance == 0 %}<span class="pill ok">0.00</span>{% else %}-{% endif %}</td><td>{{ s.close_note }}</td></tr>
+{% for r in rows %}{% with s=r.shift c=r.cashup %}<tr><td>{{ s.closed_at|date:"d M Y H:i" }}</td><td>{{ s.till.name }}</td><td>{{ s.cashier.display_name }}</td><td class="num">{% if c %}{{ c.opening_float }}{% else %}{{ s.opening_float }}{% endif %}</td><td class="num">{{ c.expected_cash|default_if_none:"-" }}</td><td class="num">{{ c.counted_cash|default_if_none:"-" }}</td>
+<td class="num">{% if c %}{% if c.variance %}<span class="pill bad">{{ c.variance }}</span>{% elif c.variance == 0 %}<span class="pill ok">0.00</span>{% endif %}{% else %}-{% endif %}</td><td>{{ c.reason|default:"" }}</td></tr>{% endwith %}
 {% empty %}<tr><td colspan="8" class="muted">No shifts closed in this period.</td></tr>{% endfor %}</table>{% endblock %}

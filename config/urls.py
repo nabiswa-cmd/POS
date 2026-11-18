@@ -12,6 +12,7 @@ from core import backup_views, sync_views
 from sales import analytics_views
 from sales import mpesa_views
 from sales import pages as sales_pages
+from sales import cashup_report as sales_cashup_report
 from tills import cashup_views
 from tills import views as tills_views
 
@@ -31,6 +32,7 @@ urlpatterns = [
     path("manage/sales/", sales_pages.manage_sales, name="manage-sales"),
     path("manage/sales/<int:pk>/", sales_pages.manage_sale_detail, name="manage-sale-detail"),
     path("manage/cashups/", cashup_views.cashups, name="cashups"),
+    path("manage/cash-up/", sales_cashup_report.cashup_report, name="cash-up-legacy"),
     path("manage/cashups/<int:shift_id>/", cashup_views.cashup_detail, name="cashup-detail"),
     path("manage/cashups/<int:shift_id>/slip/", cashup_views.cashup_slip, name="cashup-slip"),
     path("pos/cashup/", cashup_views.pos_cashup, name="pos-cashup"),

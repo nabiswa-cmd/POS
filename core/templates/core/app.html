@@ -85,9 +85,9 @@
 
   <!-- Manager / receiving login -->
   <form id="f-login" hidden autocomplete="off">
-    <label for="l-user">Username</label>
+    <label for="l-user" id="l-user-label">Username</label>
     <input id="l-user" autocomplete="off">
-    <label for="l-secret">Password or PIN</label>
+    <label for="l-secret" id="l-secret-label">Password or PIN</label>
     <input id="l-secret" type="password" autocomplete="off">
     <button type="submit">Log in</button>
     <div class="msg" id="m-login" role="alert"></div>
@@ -327,6 +327,10 @@
     }
   } else {
     var NEEDS = { manager: "Manager area", receiving: "Stock receiving" };
+    if (MODE === "manager") {
+      $("l-user-label").textContent = "Manager / supervisor username";
+      $("l-secret-label").textContent = "Manager / supervisor password or PIN";
+    }
     function home(user) {
       if (MODE === "manager") { PosLoader.show("Opening manager", "Loading the management screens"); location.replace("/manage/"); return; }
       if (MODE === "receiving") { PosLoader.show("Opening receiving", "Loading stock receiving"); location.replace("/manage/receiving/"); return; }

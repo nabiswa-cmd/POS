@@ -96,4 +96,7 @@ def finish_receipt_print_job(job_id, *, error=""):
 
 
 def configured_printer():
-    return os.environ.get("WINESPOS_RECEIPT_PRINTER", "").strip()
+    from core.models import ReceiptSettings
+
+    configured = (ReceiptSettings.objects.filter(pk=1).values_list("printer_name", flat=True).first() or "").strip()
+    return configured or os.environ.get("WINESPOS_RECEIPT_PRINTER", "").strip()

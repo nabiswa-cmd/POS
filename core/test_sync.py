@@ -192,7 +192,9 @@ class ShopCycleTests(SyncCase):
         c1.force_login(boss)
         c2.force_login(clerk)
         self.assertEqual(c2.get("/manage/sync/").status_code, 403)
-        self.assertContains(c1.get("/manage/sync/"), "Server sync")
+        page = c1.get("/manage/sync/")
+        self.assertContains(page, "Server sync")
+        self.assertContains(page, "overflow-wrap:anywhere")
         with mock.patch.object(sync, "_upload", lambda p: {"ok": True}):
             c1.post("/manage/sync/", {"action": "now"})
         page = c1.get("/manage/sync/")

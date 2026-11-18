@@ -27,6 +27,34 @@ def receive(user, product, packs, cost_per_pack, packaging=None, **doc):
 
 
 class ReceivingTests(CatalogCase):
+    def test_new_received_products_appear_on_manager_dashboard_until_activated(self):
+        imported = Product.objects.create(
+            name="New Imported Wine", sku="NEW-WINE", active=False,
+            description="Imported from Open Food Facts. Verify details and set price before activation.",
+        )
+        not_received = Product.objects.create(
+            name="Scanned Only", sku="SCAN-ONLY", active=False,
+            description="Imported from Open Food Facts. Verify details and set price before activation.",
+        )
+        receiving = receive(self.clerk, imported, 4, "2400")
+        services.submit_receiving(receiving.pk, self.clerk)
+
+        imported.refresh_from_db()
+        self.assertEqual(imported.buying_cost, Decimal("2400.0000"))
+        self.client.force_login(self.manager)
+        dashboard = self.client.get("/manage/")
+        self.assertContains(dashboard, "1 newly received product")
+        self.assertContains(dashboard, "/manage/products/?imported=1&amp;received=1")
+
+        review_list = self.client.get("/manage/products/?imported=1&received=1")
+        self.assertContains(review_list, imported.name)
+        self.assertNotContains(review_list, not_received.name)
+
+        imported.active = True
+        imported.selling_price = Decimal("3500.00")
+        imported.save(update_fields=["active", "selling_price"])
+        self.assertNotContains(self.client.get("/manage/"), "newly received product")
+
     def test_receiving_adds_stock_with_movement_and_lot(self):
         r = receive(self.clerk, self.product, 10, "2400", delivery_note="DN-1", invoice_ref="INV-9")
         self.assertEqual(stock(self.product), 0)          # nothing changes until the delivery is posted

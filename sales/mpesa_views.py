@@ -107,8 +107,6 @@ def c2b_confirm(request, secret):
         payload = _payload(request)
         svc.record_c2b(payload)
     except rules.MpesaError:
-        if payload is not None:
-            mpesa_relay_log.log_callback("c2b", payload, _source_ip(request), "error")
         return JsonResponse({"ResultCode": 1, "ResultDesc": "Rejected"}, status=400)
     mpesa_relay_log.log_callback("c2b", payload, _source_ip(request), "ok")
     return JsonResponse(ACK)
@@ -164,3 +162,15 @@ def relay_feed(request, secret):
     response = JsonResponse(relay.feed(after, limit, hours))
     response["Cache-Control"] = "no-store"
     return response
+
+
+@require_GET
+def relay_export(request):
+    """Public relay feed for an online server; protected by a configured bearer token."""
+    if not relay_rules.bearer_ok(request.headers.get("Authorization"),
+                                 integration_settings.mpesa().get("RELAY_TOKEN")):
+        raise Http404()
+    after = relay_rules.feed_params(request.GET)[0]
+    rows = mpesa_relay_log.export_after(after)
+    last_id = rows[-1]["id"] if rows else after
+    return JsonResponse({"ok": True, "records": rows, "last_id": last_id}, status=200)

@@ -371,9 +371,34 @@
         beep(); return;
       }
       s.originalPrinted = true;
+      if (r.print_job_id) { waitForReceiptPrint(r.print_job_id, boxId, first); return; }
       PosPrint.print(r.lines, r.paper_mm);
       var done = first ? "Receipt sent to the printer." : "Duplicate sent to the printer.";
       if (boxId) say(boxId, done + (CAPS.reprint ? "" : " Another copy needs a supervisor.")); else flash(done, true);
+    });
+  }
+
+  function waitForReceiptPrint(jobId, boxId, first, attempts) {
+    attempts = attempts || 0;
+    api("GET", API + "receipt/jobs/" + jobId + "/").then(function (job) {
+      if (!job.ok) { if (boxId) say(boxId, job.error); else fail(job); return; }
+      if (job.status === "PRINTED") {
+        var done = first ? "Receipt printed on the server printer." : "Duplicate printed on the server printer.";
+        if (boxId) say(boxId, done + (CAPS.reprint ? "" : " Another copy needs a supervisor."));
+        else flash(done, true);
+        return;
+      }
+      if (job.status === "FAILED") {
+        var message = job.error || "The server printer could not print this receipt.";
+        if (boxId) say(boxId, message); else fail({ error: message });
+        return;
+      }
+      if (attempts >= 60) {
+        var delayed = "Receipt is still waiting for the server printer. Check printer status before requesting another copy.";
+        if (boxId) say(boxId, delayed); else flash(delayed);
+        return;
+      }
+      setTimeout(function () { waitForReceiptPrint(jobId, boxId, first, attempts + 1); }, 1000);
     });
   }
 

@@ -123,15 +123,10 @@ try {
         -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask -TaskName "WinesPOS Server" -Action $serverAction -Trigger (New-ScheduledTaskTrigger -AtStartup) `
         -Principal $account -Settings $serverSettings -Force | Out-Null
-    $printerConfigured = [bool](Select-String -Path $EnvFile -Pattern '^WINESPOS_RECEIPT_PRINTER=.+$' -Quiet)
     Stop-ScheduledTask -TaskName "WinesPOS Printer" -ErrorAction SilentlyContinue
-    if ($printerConfigured) {
-        $printerAction = New-ScheduledTaskAction -Execute $Admin -Argument "manage print_receipts --loop" -WorkingDirectory $AppDir
-        Register-ScheduledTask -TaskName "WinesPOS Printer" -Action $printerAction -Trigger (New-ScheduledTaskTrigger -AtStartup) `
-            -Principal $account -Settings $serverSettings -Force | Out-Null
-    } else {
-        Unregister-ScheduledTask -TaskName "WinesPOS Printer" -Confirm:$false -ErrorAction SilentlyContinue
-    }
+    $printerAction = New-ScheduledTaskAction -Execute $Admin -Argument "manage print_receipts --loop" -WorkingDirectory $AppDir
+    Register-ScheduledTask -TaskName "WinesPOS Printer" -Action $printerAction -Trigger (New-ScheduledTaskTrigger -AtStartup) `
+        -Principal $account -Settings $serverSettings -Force | Out-Null
     $backupAction = New-ScheduledTaskAction -Execute $Admin -Argument "manage backup_db" -WorkingDirectory $AppDir
     $backupSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask -TaskName "WinesPOS Backup" -Action $backupAction -Trigger (New-ScheduledTaskTrigger -Daily -At 23:00) `
@@ -183,7 +178,7 @@ while (`$true) {
     }
     if (-not $up) { throw "The server did not start. See $Logs and run: WinesPOSAdmin.exe manage selfcheck" }
     Write-Host "The server is running."
-    if ($printerConfigured) { Start-ScheduledTask -TaskName "WinesPOS Printer" }
+    Start-ScheduledTask -TaskName "WinesPOS Printer"
     & $Admin manage selfcheck
     Stop-Transcript | Out-Null
     exit 0

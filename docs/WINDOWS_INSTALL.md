@@ -49,7 +49,7 @@ It prints PASS/FAIL for: shortcuts exist and start the right window, settings fi
 By default receipts use the current device's print dialog. To send receipts from a till or phone to the server computer, install the printer driver on that server PC, then:
 1. Install its Windows driver for all users (the printer task runs as SYSTEM). Set the paper size to its roll width (80 mm or 58 mm) and margins to 0 in Printing preferences.
 2. List the exact names: `"C:\Program Files\WinesPOS\WinesPOS.exe" printers`. Test one: `... printers --test "EPSON TM-T20III Receipt"`.
-3. Add `WINESPOS_RECEIPT_PRINTER=EPSON TM-T20III Receipt` to the server's `C:\ProgramData\WinesPOS\config\winespos.env`, then rerun the installer or create/start the **WinesPOS Printer** task. When enabled, the phone does not need a printer or a print dialog.
+3. In Manager > Receipt settings, enter the exact printer name in **Printer name**. The server printer task is installed automatically and reads this database setting. `WINESPOS_RECEIPT_PRINTER` in `C:\ProgramData\WinesPOS\config\winespos.env` remains a fallback when the database setting is blank. With a printer selected, the phone does not need a printer or a print dialog.
 4. Check the printer status in Windows Task Scheduler. If it is offline, receipt jobs remain visible as failed in the POS screen; restore the printer and ask a manager to reprint.
 *Server printing is new and untested on real hardware. Without the server printer setting, receipts continue to use the current device's print dialog.*
 

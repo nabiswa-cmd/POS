@@ -3,6 +3,7 @@ import json
 import shutil
 import tempfile
 import zipfile
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -181,15 +182,15 @@ class CopyAndPruneTests(BackupCase):
 
 class CommandTests(BackupCase):
     def test_commands_back_up_verify_and_restore(self):
-        call_command("backup_db", stdout=open("/dev/null", "w"))
+        call_command("backup_db", stdout=open(os.devnull, "w"))
         path = backup.list_backups()[0]["path"]
-        call_command("verify_backup", str(path), stdout=open("/dev/null", "w"))
+        call_command("verify_backup", str(path), stdout=open(os.devnull, "w"))
         ExpenseCategory.objects.create(name="Later")
         from django.core.management.base import CommandError
         with self.assertRaises(CommandError):
             call_command("restore_db", str(path))                  # refuses without --yes
         self.assertIn("Later", self.names())
-        call_command("restore_db", str(path), yes=True, stdout=open("/dev/null", "w"))
+        call_command("restore_db", str(path), yes=True, stdout=open(os.devnull, "w"))
         self.assertEqual(self.names(), ["Original category"])
 
 

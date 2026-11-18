@@ -1,10 +1,16 @@
 {% extends "core/base.html" %}{% block title %}Server sync{% endblock %}
 {% block content %}
+<style>
+  .sync-page code{overflow-wrap:anywhere;word-break:break-word}
+  .sync-page .actions form{flex:1 1 220px;min-width:0}
+  .sync-page .actions button{max-width:100%;white-space:normal}
+</style>
+<div class="sync-page">
 <h1>Server sync</h1>
 <h2>This shop PC</h2>
 <div class="card">
 {% if enabled %}
-  <p>Switched on. Online server: <b>{{ url }}</b>. A backup is sent about every <b>{{ interval }}</b> minutes.</p>
+  <p>Switched on. Online server: <b><span class="sync-url">{{ url }}</span></b>. A backup is sent about every <b>{{ interval }}</b> minutes.</p>
 {% else %}
   <p>Not switched on. In the Django admin open <b>Server settings</b> and fill in <code>SYNC_SERVER_URL</code>, <code>SYNC_TOKEN</code> and set <code>SYNC_ENABLED</code> to <code>true</code>. {% if not url %}<span class="muted">(No server address yet.)</span>{% endif %}</p>
 {% endif %}
@@ -73,4 +79,5 @@
 <table><tr><th>Received</th><th>File</th><th class="num">Size</th><th>From</th><th>Check</th></tr>
 {% for r in receipts %}<tr><td>{{ r.received_at|date:"d M Y H:i" }}</td><td>{{ r.name }}</td><td class="num">{{ r.size|filesizeformat }}</td><td>{{ r.source_ip|default:"-" }}</td><td>{{ r.checked }}</td></tr>
 {% empty %}<tr><td colspan="5" class="muted">Nothing received on this computer. (This list is only filled on the online server.)</td></tr>{% endfor %}</table>
+</div>
 {% endblock %}

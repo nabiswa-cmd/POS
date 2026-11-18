@@ -17,6 +17,9 @@ class LogoPageTests(BaseCase):
     def test_sign_in_theme_control_is_a_small_icon_button(self):
         page = self.client.get("/app/manager/")
         self.assertContains(page, 'class="theme-toggle floating"')
+        self.assertContains(page, 'type="password"')
+        self.assertContains(page, 'id="l-secret-label"')
+        self.assertContains(page, "Manager / supervisor password or PIN")
         self.assertContains(page, 'aria-label="Switch to light mode"')
         self.assertNotContains(page, 'class="t-label"')
         self.assertLess(page.content.index(b'<main class="auth">'),

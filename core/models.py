@@ -87,6 +87,8 @@ class ShopSettings(SingletonModel):
 
 class ReceiptSettings(SingletonModel):
     paper_width_mm = models.PositiveSmallIntegerField(default=80, choices=[(58, "58 mm"), (80, "80 mm")])
+    printer_name = models.CharField(max_length=120, blank=True,
+                                    help_text="Optional Windows printer name used for silent receipt printing.")
     header_text = models.CharField(max_length=200, blank=True)
     footer_text = models.CharField(max_length=200, default="Thank you for shopping with us!")
     logo_path = models.CharField(max_length=300, blank=True)

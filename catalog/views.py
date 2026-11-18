@@ -44,8 +44,13 @@ def manage_home(request):
                if user.can("stock.approve_receiving") else 0)
     low = (Product.objects.filter(active=True, reorder_level__gt=0, stock_qty__lte=F("reorder_level")).count()
            if user.can("stock.view") else 0)
-    imported_inactive = (Product.objects.filter(active=False, description__startswith="Imported from ").count()
-                         if user.can("products.manage") else 0)
+    imported_inactive = 0
+    if user.can("products.manage"):
+        imported_inactive = (Product.objects.filter(
+            active=False, description__startswith="Imported from ",
+            receiving_items__qty_good__gt=0,
+            receiving_items__receiving__status__in=(Receiving.PENDING, Receiving.POSTED),
+        ).distinct().count())
     refunds = Refund.objects.filter(status=Refund.REQUESTED).count() if user.can("approve.refund") else 0
 
     sales_today = sales_last_week = delta = None
@@ -85,6 +90,11 @@ def product_list(request):
         qs = qs.filter(active=True)
     if imported:
         qs = qs.filter(active=False, description__startswith="Imported from ")
+    if imported and request.GET.get("received") == "1":
+        from inventory.models import Receiving
+
+        qs = qs.filter(receiving_items__qty_good__gt=0,
+                       receiving_items__receiving__status__in=(Receiving.PENDING, Receiving.POSTED)).distinct()
     page = Paginator(qs, PAGE_SIZE).get_page(request.GET.get("page"))
     page_query = request.GET.copy()
     page_query.pop("page", None)
@@ -92,7 +102,8 @@ def product_list(request):
         "page": page, "q": q, "categories": Category.objects.filter(active=True), "shelves": Shelf.objects.filter(active=True),
         "show_cost": services.can_see_cost(request.user), "selected_category": request.GET.get("category", ""),
         "selected_shelf": request.GET.get("shelf", ""), "inactive": request.GET.get("inactive") == "1" or imported,
-        "imported": imported, "page_query": page_query.urlencode()})
+        "imported": imported, "received": request.GET.get("received") == "1",
+        "page_query": page_query.urlencode()})
 
 
 @perm_required("products.manage")

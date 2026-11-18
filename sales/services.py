@@ -740,7 +740,7 @@ def shift_summary(shift):
     snap = cashup.snapshot(shift)
     return {"sales_count": snap["sales_count"], "sales_total": str(snap["sales_total"]),
             "cash_sales": str(snap["cash_sales"]), "mpesa_sales": str(snap["mpesa_sales"]),
-            "other_sales": str(snap["other_sales"]),
+            "card_sales": "0.00", "bank_sales": "0.00", "other_sales": str(snap["other_sales"]),
             "cash_refunds": str(snap["cash_refunds"]), "mpesa_refunds_paid": str(snap["mpesa_refunds_paid"]),
             "refunds_waiting": str(snap["refunds_waiting"]), "cash_paid_out": str(snap["cash_paid_out"]),
             "opening_float": str(shift.opening_float), "cash_in_drawer_expected": str(snap["expected_cash"])}

@@ -41,7 +41,7 @@ Note on 17: the tests that check the sales screen's shortcut guide (`sales/tests
 - [ ] Unplug the USB/second location: tonight's backup still completes and the Backups screen/selfcheck warn
 - [ ] Printer: `WinesPOS.exe printers` lists the receipt printer; check receipt width and local print-dialog fallback
 - [ ] On a phone-width POS screen, action buttons use icons and Pay opens the F8 payment chooser; confirm M-PESA and cash options are available
-- [ ] With `WINESPOS_RECEIPT_PRINTER` configured on the server and the printer task running, finalize a phone sale: one receipt prints on the server printer without a phone print dialog
+- [ ] With the printer selected in Manager > Receipt settings and the printer task running, finalize a phone sale: one receipt prints on the server printer without a phone print dialog
 - [ ] Open a shift, sell for cash and M-PESA, close the shift: the cash-up expects only the cash
 **Till 2**
 - [ ] `verify_install.ps1` prints "All checks passed" (it can reach the server)
