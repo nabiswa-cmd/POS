@@ -48,8 +48,15 @@ reported as a local barcode miss; a source that is only rate-limited is skipped 
 
 ## Lock and sleep
 `Ctrl+Alt+L` (or the Lock & sleep button) signs the cashier out and puts the computer to sleep. The sale
-in progress and shift stay open, but the shared till is not locked. On waking, use the normal till-opening
-flow: a supervisor authorizes the till, then the cashier on the open shift signs back in. If the shop uses
-the resume-open-shift policy, the same cashier can sign back in without a new supervisor authorization.
+in progress and shift stay open, but the shared till is not locked. On waking, the cashier signs in again.
+By default, a supervisor authorizes the till first. The manager can change this in Django admin >
+**Shop settings** > **POS opening policy**:
+
+* **Supervisor authorizes every POS login** (default): each new POS session needs supervisor authorization.
+* **Supervisor authorizes; the same cashier may log back in while their shift is open**: supervisors authorize
+  new shifts; the cashier can resume their own open shift.
+* **Cashier may log in and open a shift without a supervisor**: cashiers sign in with their own credentials.
+  Their login is recorded as the authorizer, and each till still allows only one open shift at a time.
+
 Sleep works on Windows only. Windows decides between sleep and hibernate: if the computer hibernates instead,
 turn hibernation off with `powercfg /hibernate off` in an administrator command prompt.

@@ -54,7 +54,8 @@ def state(request):
     shop = ShopSettings.load()
     tills = list(Till.objects.filter(active=True).order_by("number").values("number", "name"))
     return JsonResponse({"ok": True, "shop": shop.shop_name, "tills": tills,
-                         "biometric": settings.BIOMETRIC_ENABLED, "locked_shift": None})
+                         "biometric": settings.BIOMETRIC_ENABLED, "locked_shift": None,
+                         "cashier_login_without_supervisor": shop.pos_open_policy == ShopSettings.POLICY_CASHIER_LOGIN})
 
 
 @post_json
@@ -152,19 +153,48 @@ def cashier_login(request, data):
                          ip=ip, till_number=till.number)
         authorized_by = user
     else:
-        # Optional manager policy: the same cashier may log back in while their own shift is open.
         till = _till_from(data)
-        shift = _open_shift(till) if till else None
-        resume_ok = (ShopSettings.load().pos_open_policy == ShopSettings.POLICY_RESUME
-                     and shift is not None and shift.cashier_id == user.pk)
-        if not resume_ok:
-            return bad("Supervisor authorization is required first.", 403)
-        authorized_by = shift.authorized_by
-        with transaction.atomic():
-            shift = CashierShift.objects.select_for_update().select_related("authorized_by", "till").get(pk=shift.pk)
-            _clear_shift_lock(shift, user, ip)
-            audit.record("pos.session_resumed", actor=user, approver=authorized_by, object_type="till",
-                         object_ref=till.number, ip=ip, till_number=till.number)
+        if till is None:
+            return bad("Choose a valid till.")
+        policy = ShopSettings.load().pos_open_policy
+        if policy == ShopSettings.POLICY_CASHIER_LOGIN:
+            now = timezone.now()
+            _raw, token_hash = approval_rules.new_token()
+            with transaction.atomic():
+                till = Till.objects.select_for_update().filter(pk=till.pk, active=True).first()
+                if till is None:
+                    return bad("Choose a valid till.")
+                shift = _open_shift(till)
+                if shift is not None and shift.cashier_id != user.pk:
+                    return bad(f"This till already has an open shift for {shift.cashier.display_name}.", 409)
+                if shift is not None:
+                    shift = CashierShift.objects.select_for_update().select_related(
+                        "authorized_by", "till").get(pk=shift.pk)
+                    _clear_shift_lock(shift, user, ip)
+                approval = Approval.objects.create(
+                    action="open_pos", requester=None, approver=user, method=method,
+                    reason="Cashier self-authorized under the manager POS opening policy",
+                    till_number=till.number, token_hash=token_hash, expires_at=now, consumed_at=now)
+                authorization = PosAuthorization.objects.create(
+                    till=till, approval=approval, cashier=user, cashier_logged_in_at=now)
+                audit.record("pos.session_opened", actor=user, approver=user, object_type="till",
+                             object_ref=till.number,
+                             reason="Cashier self-authorized under the manager POS opening policy",
+                             ip=ip, till_number=till.number)
+            authorized_by = user
+        else:
+            # Optional manager policy: the same cashier may log back in while their own shift is open.
+            shift = _open_shift(till)
+            resume_ok = (policy == ShopSettings.POLICY_RESUME
+                         and shift is not None and shift.cashier_id == user.pk)
+            if not resume_ok:
+                return bad("Supervisor authorization is required first.", 403)
+            authorized_by = shift.authorized_by
+            with transaction.atomic():
+                shift = CashierShift.objects.select_for_update().select_related("authorized_by", "till").get(pk=shift.pk)
+                _clear_shift_lock(shift, user, ip)
+                audit.record("pos.session_resumed", actor=user, approver=authorized_by, object_type="till",
+                             object_ref=till.number, ip=ip, till_number=till.number)
 
     login(request, user, backend=BACKEND)
     request.session["pos_till"] = till.number

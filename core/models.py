@@ -29,6 +29,7 @@ class ShopSettings(SingletonModel):
     COSTING_FIFO = "FIFO"
     POLICY_EVERY_LOGIN = "EVERY_LOGIN"
     POLICY_RESUME = "RESUME_OPEN_SHIFT"
+    POLICY_CASHIER_LOGIN = "CASHIER_LOGIN"
 
     shop_name = models.CharField(max_length=120, default="My Wines & Spirits")
     address = models.CharField(max_length=250, blank=True)
@@ -48,10 +49,12 @@ class ShopSettings(SingletonModel):
         help_text="If on, deliveries recorded by a receiving clerk wait for a supervisor/manager before stock changes.",
     )
     pos_open_policy = models.CharField(
-        max_length=20, default=POLICY_EVERY_LOGIN,
+        "POS opening policy", max_length=20, default=POLICY_EVERY_LOGIN,
+        help_text="Cashier-only login skips supervisor authorization and records the cashier as the authorizer.",
         choices=[
             (POLICY_EVERY_LOGIN, "Supervisor authorizes every POS login"),
             (POLICY_RESUME, "Supervisor authorizes; the same cashier may log back in while their shift is open"),
+            (POLICY_CASHIER_LOGIN, "Cashier may log in and open a shift without a supervisor"),
         ],
     )
 

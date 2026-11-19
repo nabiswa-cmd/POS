@@ -11,8 +11,8 @@
   --charcoal:#171717; --forest:#06110C; --crimson:#A31C1B; --crimson-hi:#c42625;
   --bg:var(--forest); --text:#f1eee8; --muted:#a7b1ab; --accent:#cfc9bd; --bad:#ff7a76; --ok:#6fd3a0; --warn:#ffcd8a;
   --line:rgba(255,255,255,.14); --line-strong:rgba(255,255,255,.28);
-  --glass:rgba(10,20,15,.38); --glass-hi:rgba(18,32,25,.55); --glass-field:rgba(0,0,0,.38); --field-focus:rgba(0,0,0,.5);
-  --th:rgba(0,0,0,.35); --hover:rgba(255,255,255,.06); --nav-on:rgba(255,255,255,.09); --opt-bg:#101a15;
+  --glass:rgba(15,22,18,.76); --glass-hi:rgba(18,32,25,.84); --glass-field:rgba(0,0,0,.52); --field-focus:rgba(0,0,0,.62);
+  --th:rgba(0,0,0,.48); --hover:rgba(255,255,255,.06); --nav-on:rgba(255,255,255,.09); --opt-bg:#101a15;
   --ghost:rgba(255,255,255,.04); --ghost-hi:rgba(255,255,255,.12); --kbd:rgba(255,255,255,.08);
   --link:#f08a86; --link-hi:#fff; --focus-ring:#f1eee8; --shadow:0 10px 30px rgba(0,0,0,.35); --cap-img:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Cpath d='M60.0 10.0Q68.9 0.7 74.7 12.2Q86.0 5.9 88.2 18.7Q100.8 16.0 99.1 28.8Q112.0 30.0 106.5 41.7Q118.5 46.6 109.9 56.3Q119.8 64.5 108.7 71.1Q115.9 81.9 103.3 85.0Q106.9 97.4 94.0 96.7Q93.8 109.6 81.7 105.0Q77.7 117.3 67.5 109.4Q60.0 120.0 52.5 109.4Q42.3 117.3 38.3 105.0Q26.2 109.6 26.0 96.7Q13.1 97.4 16.7 85.0Q4.1 81.9 11.3 71.1Q0.2 64.5 10.1 56.3Q1.5 46.6 13.5 41.7Q8.0 30.0 20.9 28.8Q19.2 16.0 31.8 18.7Q34.0 5.9 45.3 12.2Q51.1 0.7 60.0 10.0Z' fill='%23d9d5cc'/%3E%3Ccircle cx='60' cy='60' r='40' fill='none' stroke='%237d8580' stroke-width='3'/%3E%3C/svg%3E"); --cap-op:.2; --btn:#8f1a19; --btn-hi:#a82120; --focus-line:rgba(255,255,255,.55);
   --overlay:linear-gradient(115deg,rgba(6,17,12,.62) 0%,rgba(6,17,12,.25) 50%,rgba(23,23,23,.55) 100%);
@@ -206,10 +206,11 @@ main.auth ul{padding-left:18px;color:var(--muted);font-size:14px}
     transition:transform .2s ease,visibility 0s linear .2s}
   header .workspace-nav.is-open{transform:translateX(0);visibility:visible;transition:transform .2s ease,visibility 0s}
   body:has(.workspace-nav.is-open){overflow:hidden}
-  header a.nav{padding:12px 14px}
+  header a.nav{min-height:44px;padding:12px 14px}
   header a.nav.on{background:var(--hover);font-weight:600}
-  header .who{margin-left:auto}
-  header .theme-toggle{margin-left:0}
+  header .who{display:flex;align-items:center;gap:6px;margin-left:auto}
+  header .theme-toggle{min-height:44px;margin-left:0}
+  header .mobile-nav-toggle{min-height:44px}
   .nav-scrim.is-open{display:block;position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.48);border:0;padding:0}
   main{padding:22px 14px 56px}
   .grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,210px),1fr))}
@@ -218,8 +219,9 @@ main.auth ul{padding-left:18px;color:var(--muted);font-size:14px}
   main.auth .tillpick{flex-wrap:wrap}
   main.auth .tillpick button{flex:1 1 120px;min-height:44px}
   .theme-toggle.floating{top:10px;left:10px;right:auto}
+  main>p.noprint{display:none}
 }
-@media (max-width:520px){header .brand-text{display:none}}
+@media (max-width:520px){header .brand-text,header .who .staff-name{display:none}}
 @media print{body{background:#fff;color:#000}header,.noprint{display:none !important}
   .card,table,.tile{background:#fff;box-shadow:none;border-color:#999;-webkit-backdrop-filter:none;backdrop-filter:none}th,td{color:#000}}
 

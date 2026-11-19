@@ -179,6 +179,46 @@ class PosOpeningFlowTests(BaseCase):
         self.client.logout()
         self.assertEqual(self.cashier_login().status_code, 403)
 
+    def test_manager_policy_allows_direct_cashier_login_and_audits_self_authorization(self):
+        ShopSettings.objects.update_or_create(
+            pk=1, defaults={"pos_open_policy": ShopSettings.POLICY_CASHIER_LOGIN})
+
+        response = self.cashier_login()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["authorized_by"], self.cashier.display_name)
+        authorization = PosAuthorization.objects.get()
+        self.assertEqual(authorization.cashier, self.cashier)
+        self.assertEqual(authorization.approval.approver, self.cashier)
+        self.assertIn("self-authorized", authorization.approval.reason)
+        self.assertEqual(self.post("/api/pos/shift/open/", {"opening_float": "500"}).status_code, 200)
+        shift = CashierShift.objects.get()
+        self.assertEqual((shift.cashier, shift.authorized_by), (self.cashier, self.cashier))
+        self.assertTrue(AuditLog.objects.filter(
+            action="pos.session_opened", actor=self.cashier, approver=self.cashier).exists())
+
+    def test_direct_login_policy_still_checks_credentials_and_pos_permission(self):
+        ShopSettings.objects.update_or_create(
+            pk=1, defaults={"pos_open_policy": ShopSettings.POLICY_CASHIER_LOGIN})
+
+        self.assertEqual(self.cashier_login(secret="wrong").status_code, 401)
+        self.assertEqual(self.cashier_login(username="clerk", secret="Str0ng-pass!").status_code, 403)
+        self.assertFalse(PosAuthorization.objects.exists())
+
+    def test_direct_login_policy_refuses_a_till_with_another_cashiers_open_shift(self):
+        self.authorize()
+        self.cashier_login()
+        self.assertEqual(self.post("/api/pos/shift/open/", {"opening_float": "500"}).status_code, 200)
+        self.client.logout()
+        self.client.session.flush()
+        ShopSettings.objects.update_or_create(
+            pk=1, defaults={"pos_open_policy": ShopSettings.POLICY_CASHIER_LOGIN})
+
+        response = self.cashier_login(username="cash2", secret="Str0ng-pass!")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(PosAuthorization.objects.count(), 1)
+
     def test_cashier_screen_lock_does_not_lock_the_till(self):
         self.authorize()
         self.cashier_login()
@@ -258,3 +298,20 @@ class PagesTests(TestCase):
             self.assertContains(pos_page, f'id="{element_id}"')
         self.assertEqual(self.client.get("/app/nope/").status_code, 404)
         self.assertEqual(self.client.get("/health/").status_code, 200)
+
+    def test_cashier_login_screen_uses_manager_pos_opening_policy(self):
+        from django.core.management import call_command
+        from core.models import ShopSettings
+
+        call_command("setup_shop", verbosity=0)
+        state = self.client.get("/api/pos/state/").json()
+        self.assertFalse(state["cashier_login_without_supervisor"])
+        ShopSettings.objects.update_or_create(
+            pk=1, defaults={"pos_open_policy": ShopSettings.POLICY_CASHIER_LOGIN})
+
+        state = self.client.get("/api/pos/state/").json()
+        page = self.client.get("/app/pos/")
+
+        self.assertTrue(state["cashier_login_without_supervisor"])
+        self.assertContains(page, "Supervisor authorization is disabled by the manager.")
+        self.assertContains(page, "Step 1 of 2: Cashier login")

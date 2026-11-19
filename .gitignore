@@ -1,9 +1,3 @@
-.env
-h
-loader.html
-packaging\postgresql-16.16-1-windows-x64.exe
-
-
 # Python
 __pycache__/
 *.py[cod]
@@ -18,6 +12,7 @@ db.sqlite3
 venv/
 .venv/
 env/
+.build-venv/
 
 # Environment variables
 .env
@@ -39,22 +34,7 @@ Thumbs.db
 build/
 dist/
 *.spec.bak
+packaging/prereqs/postgresql-16.16-1-windows-x64.exe
 
 # Logs
 *.log
-@"
-__pycache__/
-*.py[cod]
-*.pyo
-.env
-.venv/
-venv/
-env/
-dev.sqlite3
-db.sqlite3
-staticfiles/
-.DS_Store
-Thumbs.db
-"@ | Set-Content .gitignore
-
-.build-venv

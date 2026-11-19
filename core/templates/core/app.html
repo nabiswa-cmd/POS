@@ -26,7 +26,7 @@
   <h1>{{ area_title }}</h1>
   <p class="shop">{{ shop_name }}</p>
 
-  <!-- POS step 1: supervisor authorization -->
+  <!-- POS step 1 when required: supervisor authorization -->
   <form id="f-authorize" hidden autocomplete="off">
     <p class="step">Step 1 of 3: Supervisor authorization</p>
     <label for="a-till">Till</label>
@@ -42,7 +42,7 @@
 
   <!-- POS step 2: cashier login -->
   <form id="f-cashier" hidden autocomplete="off">
-    <p class="step">Step 2 of 3: Cashier login</p>
+    <p class="step" id="cashier-step-label">Step 2 of 3: Cashier login</p>
     <p class="hint" id="authorized-note"></p>
     <label>Till</label>
     <div class="tillpick" data-tillpick data-msg="m-cashier" role="group" aria-label="Choose till"></div>
@@ -57,7 +57,7 @@
 
   <!-- POS step 3: shift -->
   <form id="f-shift" hidden autocomplete="off">
-    <p class="step">Step 3 of 3: Open your shift</p>
+    <p class="step" id="shift-step-label">Step 3 of 3: Open your shift</p>
     <p class="hint" id="shift-note"></p>
     <label>Till</label>
     <div class="tillpick" data-tillpick data-msg="m-shift" role="group" aria-label="Choose till"></div>
@@ -101,10 +101,12 @@
 (function () {
   var MODE = "{{ mode }}";
   var $ = function (id) { return document.getElementById(id); };
-  var current = null, tills = [], authBy = "";
+  var current = null, tills = [], authBy = "", cashierLoginWithoutSupervisor = false;
   var show = function (id) {
     current = id;
     ["f-authorize","f-cashier","f-shift","s-ready","f-login","s-home"].forEach(function (x) { $(x).hidden = (x !== id); });
+    $("b-back-authorize").hidden = id === "f-cashier" && cashierLoginWithoutSupervisor;
+    $("b-change-authorizer").hidden = cashierLoginWithoutSupervisor;
     if (typeof renderPicks === "function") renderPicks();
     var first = $(id).querySelector("input:not([type=hidden]), select");
     if (first) first.focus();
@@ -136,11 +138,18 @@
     PosLoader.show("Getting the till ready");
     api("GET", stateUrl).then(function (s) {
       tills = s.tills || [];
+      cashierLoginWithoutSupervisor = s.cashier_login_without_supervisor === true;
+      if (cashierLoginWithoutSupervisor) {
+        $("cashier-step-label").textContent = "Step 1 of 2: Cashier login";
+        $("shift-step-label").textContent = "Step 2 of 2: Open your shift";
+        $("authorized-note").textContent = "Sign in with your cashier account. Supervisor authorization is disabled by the manager.";
+      }
       var sel = $("a-till");
       (s.tills || []).forEach(function (t) {
         var o = document.createElement("option"); o.value = t.number; o.textContent = t.name; sel.appendChild(o);
       });
       if (requestedTill) { sel.value = requestedTill; tillNo = Number(requestedTill); }
+      else if (tills.length) { tillNo = tills[0].number; }
       return api("GET", "/api/auth/me/");
     }).then(function (me) {
       if (me.user) { return api("GET", "/api/pos/shift/").then(function (s) {
@@ -149,13 +158,24 @@
         if (s.ok && s.till_busy_with) {
           tillNo = s.till; $("a-till").value = s.till;
           return api("POST", "/api/auth/logout/", {}).then(function () {
-            show("f-authorize");
-            say("m-authorize", "There is an open shift for " + s.till_busy_with + ". A supervisor can authorize this till; its cashier must sign in to continue.");
+            if (cashierLoginWithoutSupervisor) {
+              show("f-cashier");
+              say("m-cashier", "There is an open shift for " + s.till_busy_with + ". Choose another till.");
+            } else {
+              show("f-authorize");
+              say("m-authorize", "There is an open shift for " + s.till_busy_with + ". A supervisor can authorize this till; its cashier must sign in to continue.");
+            }
           });
         }
-        return api("POST", "/api/auth/logout/", {}).then(function () { show("f-authorize"); });
+        return api("POST", "/api/auth/logout/", {}).then(function () {
+          show(cashierLoginWithoutSupervisor ? "f-cashier" : "f-authorize");
+        });
       }); }
-      show("f-authorize");
+      if (cashierLoginWithoutSupervisor) {
+        show("f-cashier");
+      } else {
+        show("f-authorize");
+      }
     }).then(function () { PosLoader.hide(); }, function () { PosLoader.hide(); });
     submit("f-authorize", "m-authorize", function () {
       var typed = $("a-user").value;
@@ -209,14 +229,19 @@
       for (var i = 0; i < tills.length; i++) { if (String(tills[i].number) === String(n)) return tills[i].name; }
       return "till " + n;
     }
-    // Till buttons on steps 2 and 3: the current till is highlighted, the others switch to it.
+    // Till buttons on the cashier and shift steps: the selected till stays highlighted.
     function renderPicks() {
       Array.prototype.forEach.call(document.querySelectorAll("[data-tillpick]"), function (box) {
         box.innerHTML = "";
         tills.forEach(function (t) {
           var b = document.createElement("button"), cur = String(t.number) === String(tillNo);
           b.type = "button"; b.textContent = t.name; b.setAttribute("aria-pressed", cur ? "true" : "false");
-          if (!cur) { b.className = "ghost"; b.addEventListener("click", function () { switchTill(t.number, box.getAttribute("data-msg")); }); }
+          if (!cur) { b.className = "ghost"; b.addEventListener("click", function () {
+            if (cashierLoginWithoutSupervisor) {
+              tillNo = t.number; say(box.getAttribute("data-msg"), ""); renderPicks(); return;
+            }
+            switchTill(t.number, box.getAttribute("data-msg"));
+          }); }
           box.appendChild(b);
         });
       });
