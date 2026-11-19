@@ -16,9 +16,9 @@
 <style>
   .bar-mark{display:block;height:30px;width:auto;flex:0 0 auto}
   body.pos{min-height:100vh;display:flex;flex-direction:column;overflow:hidden;height:100vh}
-  .bar{display:flex;gap:18px;align-items:center;padding:8px 18px;background:var(--glass);border-bottom:1px solid var(--line);
-    -webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);font-size:13px;color:var(--muted)}
-  .bar b{color:var(--text)} .bar .grow{flex:1}
+  .bar{display:flex;gap:18px;align-items:center;padding:8px 18px;background-color:#14171a;background-image:var(--grad-header);border-bottom:1px solid var(--border);
+    font-size:13px;color:#b9b4ab}
+  .bar b{color:#ece8e1} .bar .grow{flex:1}
   .pill{display:inline-block;padding:2px 9px;border:1px solid var(--line-strong);font-size:11px;letter-spacing:.1em;text-transform:uppercase}
   .pill.owner{border-color:var(--ok);color:var(--ok)} .pill.bad{border-color:var(--bad);color:var(--bad)}
   .work{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:14px;padding:14px 18px;min-height:0}
@@ -60,6 +60,18 @@
   .opts li:last-child{border-bottom:0} .opts li.on{background:var(--nav-on);box-shadow:inset 0 0 0 1px var(--line-strong)}
   .opts li.off{opacity:.45}
   .keys{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px}
+  /* Touch action bar: the same actions as the keyboard shortcuts, on screen. Shown on phones and small tablets only. */
+  .actionbar{display:none}
+  @media (max-width:900px){
+    body.pos{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
+    .actionbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) minmax(0,1.7fr);gap:8px;position:fixed;z-index:30;left:0;right:0;bottom:0;
+      padding:8px 10px calc(8px + env(safe-area-inset-bottom));background-color:var(--surface-nav);border-top:1px solid var(--border)}
+    .actionbar button{min-height:52px;padding:6px 4px;font-size:11px;letter-spacing:.04em;margin:0}
+    .actionbar button.pay{font-size:15px;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.15;letter-spacing:.06em}
+    .actionbar button.pay small{font:600 12px var(--sans);letter-spacing:0;opacity:.9;text-transform:none}
+    .scanrow button,.dlg .btns>*,button{min-height:48px}
+    .cartbox td{padding:10px 8px}
+  }
   /* Phones and small tablets: one column, page scrolls, bigger touch targets */
   @media (max-width:900px){
     body.pos{height:auto;min-height:100vh;overflow:auto}
@@ -135,6 +147,13 @@
     <div class="panel"><div class="tot"><span>Customer</span><span id="t-cust" style="color:var(--text)">-</span></div></div>
     <div class="panel hints" id="hints"></div>
   </div>
+</div>
+<div class="actionbar" id="actionbar" role="toolbar" aria-label="Sale actions">
+  <button type="button" class="ghost" data-act="search">Search</button>
+  <button type="button" class="ghost" data-act="quantity">Qty</button>
+  <button type="button" class="ghost" data-act="hold">Hold</button>
+  <button type="button" class="ghost" data-act="customer">Customer</button>
+  <button type="button" class="pay" data-act="complete">Pay<small id="ab-total">0.00</small></button>
 </div>
 <iframe id="printframe" title="Receipt printer"></iframe>
 <div id="dialogs"></div>
@@ -224,6 +243,18 @@
     else if (e.key === "Delete") { e.preventDefault(); removeSelected(); }
     else if (/^F\d{1,2}$/.test(e.key)) { e.preventDefault(); }   // unassigned F-keys do nothing (not even reload)
   }, true);
+
+  /* Touch action bar: each button runs the same action as its keyboard shortcut. */
+  document.getElementById("actionbar").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-act]");
+    if (!b || topDialog() || !S.keymap) return;
+    run(b.getAttribute("data-act"));
+  });
+  (function () {                                            // mirror the total into the Pay button
+    var src = document.getElementById("t-total"), dst = document.getElementById("ab-total");
+    function copy() { dst.textContent = src.textContent; }
+    new MutationObserver(copy).observe(src, { childList: true, characterData: true, subtree: true }); copy();
+  })();
 
   /* ---------- rendering ---------- */
   function items() { return (S.cart && S.cart.items) || []; }

@@ -1,5 +1,6 @@
 {% extends "core/base.html" %}{% block title %}Profit and reports{% endblock %}
 {% block content %}
+{% include "core/_report_tabs.html" %}
 {% with f=r.f %}
 <h1>Profit and reports</h1>
 <p class="sub">Profit is worked out from what the stock that was sold actually cost (frozen on every sale), never from selling prices alone. Voided expenses are left out. Days are shop days.</p>

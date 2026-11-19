@@ -1,0 +1,1 @@
+{% if report_tabs|length > 1 %}<nav class="tabstrip noprint" aria-label="Reports">{% for t in report_tabs %}<a href="{{ t.url }}"{% if t.on %} class="on" aria-current="page"{% endif %}>{{ t.label }}</a>{% endfor %}</nav>{% endif %}

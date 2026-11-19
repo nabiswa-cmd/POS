@@ -1,10 +1,27 @@
 {% extends "core/base.html" %}{% block title %}Home{% endblock %}
 {% block content %}
-<h1>{{ shop_name }}</h1><p class="sub">Choose a screen. Everything here is also reachable with the keyboard.</p>
-<div class="grid">
-{% for item in nav %}<a class="tile" href="{{ item.url }}"><b>{{ item.label }}</b></a>{% endfor %}
-{% if is_manager %}<a class="tile" href="/admin/"><b>Staff, roles &amp; settings</b><span class="muted">Management screens</span></a>{% endif %}
+<h1>{{ shop_name }}</h1><p class="sub">What matters now. Everything here is also reachable with the keyboard.</p>
+<div class="dash">
+  {% if sales_today is not None %}
+  <div class="hero">
+    <div class="lbl">Today's sales (KES)</div>
+    <div class="big">{{ sales_today|floatformat:2 }}</div>
+    <div class="delta">{% if sales_delta is not None %}{% if sales_delta >= 0 %}+{% endif %}{{ sales_delta }}% vs same weekday last week ({{ sales_last_week|floatformat:2 }}){% else %}No sales on the same weekday last week to compare with.{% endif %}</div>
+  </div>
+  {% endif %}
+  <div class="dash-card">
+    <h2>Needs attention</h2>
+    {% if refund_count %}<div class="attn"><p><span class="dot blue"></span>{{ refund_count }} refund{{ refund_count|pluralize }} to approve</p><a class="btn btn-action" href="/manage/refunds/">Review</a></div>{% endif %}
+    {% if pending_receivings %}<div class="attn"><p><span class="dot"></span>{{ pending_receivings }} deliver{{ pending_receivings|pluralize:"y,ies" }} waiting for approval</p><a class="btn btn-action" href="/manage/receiving/?status=PENDING">Approve</a></div>{% endif %}
+    {% if low_count %}<div class="attn"><p><span class="dot red"></span>{{ low_count }} product{{ low_count|pluralize }} at or below reorder level</p><a class="btn btn-action" href="/manage/stock/?low=1">Reorder</a></div>{% endif %}
+    {% if not refund_count and not pending_receivings and not low_count %}<p class="allgood">Nothing needs attention.</p>{% endif %}
+  </div>
 </div>
-{% if pending_receivings %}<h2>Deliveries waiting for approval</h2><p><a href="/manage/receiving/?status=PENDING">{{ pending_receivings }} waiting</a></p>{% endif %}
-{% if low_count %}<h2>Low stock</h2><p><a href="/manage/stock/?low=1">{{ low_count }} product{{ low_count|pluralize }} at or below reorder level</a></p>{% endif %}
+<div class="shortcuts">
+  {% if "stock.view" in perms %}<a class="tile" href="/manage/stock/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="{{ icons.box }}"/></svg><b>Stock</b>{% if low_count %}<span class="badge">{{ low_count }} low</span>{% endif %}</a>{% endif %}
+  {% if "stock.receive" in perms or "stock.approve_receiving" in perms %}<a class="tile" href="/manage/receiving/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="{{ icons.truck }}"/></svg><b>Receive</b>{% if pending_receivings %}<span class="badge">{{ pending_receivings }}</span>{% endif %}</a>{% endif %}
+  {% if "products.view" in perms %}<a class="tile" href="/manage/products/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="{{ icons.tag }}"/></svg><b>Products</b></a>{% endif %}
+  {% if "reports.sales.view" in perms or "reports.financial.view" in perms %}<a class="tile main" href="/manage/sales-report/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="{{ icons.reports }}"/></svg><b>Reports</b></a>{% endif %}
+</div>
+{% if is_manager %}<p class="sub" style="margin-top:22px"><a href="/admin/">Staff, roles &amp; settings</a></p>{% endif %}
 {% endblock %}
