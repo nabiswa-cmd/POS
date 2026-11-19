@@ -32,6 +32,12 @@
         });
       });
     }
+    /* Category colour dot next to the category name. Colour is only an aid: the name is always printed. */
+    var CATS = [[/red/i, "--cat-red"], [/white|ros[eé]|sparkling|champagne|wine/i, "--cat-white"], [/whisk|vodka|gin|rum|brandy|tequila|cognac|liqueur|spirit/i, "--cat-spirits"],
+                [/beer|lager|cider|stout|ale/i, "--cat-beer"], [/soda|mixer|water|juice|tonic|cocktail|energy|soft/i, "--cat-mixers"]];
+    document.querySelectorAll(".cat[data-cat]").forEach(function (el) {
+      for (var i = 0; i < CATS.length; i++) if (CATS[i][0].test(el.getAttribute("data-cat"))) { el.style.setProperty("--catc", "var(" + CATS[i][1] + ")"); return; }
+    });
     document.querySelectorAll(".toast").forEach(function (t) {
       function close() { t.classList.add("out"); setTimeout(function () { t.remove(); }, 320); }
       t.addEventListener("click", close);

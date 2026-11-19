@@ -12,10 +12,10 @@
 <table>
 <tr><th>Name</th><th>Brand</th><th>Category</th><th>Shelf</th><th class="num">Price</th>{% if show_cost %}<th class="num">Avg cost</th>{% endif %}<th class="num">Stock</th><th></th></tr>
 {% for p in page %}
-<tr><td><a href="{% url 'product-detail' p.pk %}">{{ p.name }}</a><div class="muted">{{ p.sku }}</div></td><td>{{ p.brand|default:"" }}</td><td>{{ p.category|default:"" }}</td><td>{{ p.shelf.code|default:"" }}</td>
+<tr><td><a href="{% url 'product-detail' p.pk %}">{{ p.name }}</a><div class="muted">{{ p.sku }}</div></td><td>{{ p.brand|default:"" }}</td><td>{% if p.category %}<span class="cat" data-cat="{{ p.category }}">{{ p.category }}</span>{% endif %}</td><td>{{ p.shelf.code|default:"" }}</td>
 <td class="num">{{ p.selling_price }}</td>{% if show_cost %}<td class="num">{{ p.avg_cost }}</td>{% endif %}
-<td class="num">{{ p.stock_qty }} {% if p.is_low %}<span class="pill low">low</span>{% endif %}</td><td>{% if not p.active %}<span class="pill bad">inactive</span>{% endif %}</td></tr>
-{% empty %}<tr><td colspan="8" class="muted">No products found.</td></tr>{% endfor %}
+<td class="num">{{ p.stock_qty }} {% if p.is_low %}<span class="tag warn">Low</span>{% endif %}</td><td>{% if not p.active %}<span class="tag bad">Inactive</span>{% endif %}</td></tr>
+{% empty %}<tr><td colspan="8"><div class="empty-state"><b>No products found.</b><span>{% if q or selected_category or selected_shelf %}Try a different search or <a href="?">clear the filters</a>.{% else %}Add your first product to get started.{% endif %}</span></div></td></tr>{% endfor %}
 </table>
-<p class="noprint">{% if page.has_previous %}<a href="?page={{ page.previous_page_number }}&q={{ q|urlencode }}">Previous</a> {% endif %}Page {{ page.number }} of {{ page.paginator.num_pages }}{% if page.has_next %} <a href="?page={{ page.next_page_number }}&q={{ q|urlencode }}">Next</a>{% endif %}</p>
+<p class="pager noprint">{% if page.has_previous %}<a class="btn ghost" href="?page={{ page.previous_page_number }}&q={{ q|urlencode }}&category={{ selected_category|urlencode }}&shelf={{ selected_shelf|urlencode }}{% if inactive %}&inactive=1{% endif %}">Previous</a>{% endif %}<span>Page {{ page.number }} of {{ page.paginator.num_pages }}</span>{% if page.has_next %}<a class="btn ghost" href="?page={{ page.next_page_number }}&q={{ q|urlencode }}&category={{ selected_category|urlencode }}&shelf={{ selected_shelf|urlencode }}{% if inactive %}&inactive=1{% endif %}">Next</a>{% endif %}</p>
 {% endblock %}

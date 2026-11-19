@@ -331,6 +331,26 @@ th:first-child{border-top-left-radius:var(--radius)} th:last-child{border-top-ri
   table.stack td{display:flex;justify-content:space-between;gap:14px;padding:8px 14px;border:0;text-align:right}
   table.stack td::before{content:attr(data-label);flex:0 0 40%;text-align:left;color:var(--muted);font:600 11px var(--sans);letter-spacing:.08em;text-transform:uppercase}
   table.stack td:empty{display:none}
+  table.stack td:not([data-label]){display:block;text-align:center}
+  table.stack td:not([data-label])::before{display:none}
 }
 @media (hover:none){.kbd-hints,main>p.noprint{display:none}}
 @media (min-width:600px){.nav-scrim{display:none !important}}
+
+/* ---- Lists: filter chips, tags, category labels, empty states, pager ---- */
+.filterchips{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+.fchip{display:inline-flex;align-items:center;min-height:36px;padding:0 14px;font:600 13px var(--sans);color:var(--muted);text-decoration:none;
+  background:var(--surface);border:1px solid var(--border);border-radius:18px}
+.fchip:hover{color:var(--text)}
+.fchip.on{color:#2a1f08;background-color:var(--gold);background-image:var(--grad-gold);border-color:#b8903a}
+.tag{display:inline-block;padding:1px 9px;margin-left:6px;font:600 11px var(--sans);letter-spacing:.04em;border-radius:12px;color:var(--muted);background:var(--th);border:1px solid var(--line)}
+.tag.warn{color:var(--warn);background:#3a2a14;border-color:transparent}
+.tag.bad{color:var(--bad);background:#3a1a1c;border-color:transparent}
+:root[data-theme="light"] .tag.warn{background:#fbefd6}:root[data-theme="light"] .tag.bad{background:#fbe3e3}
+.cat{display:inline-flex;align-items:center;gap:7px;font-size:13px}
+.cat::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--catc,var(--cat-snacks))}
+.empty-state{display:flex;flex-direction:column;align-items:center;gap:4px;padding:34px 12px;text-align:center;color:var(--muted)}
+.empty-state b{color:var(--text);font-size:16px;font-weight:600}
+.pager{display:flex;align-items:center;gap:14px;margin-top:16px;color:var(--muted)}
+.pager .btn{min-height:40px}
+@media (max-width:599.98px){.pager{justify-content:space-between}.filterchips .fchip{flex:1;justify-content:center;min-height:44px}}
