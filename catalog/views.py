@@ -46,6 +46,8 @@ def manage_home(request):
            if user.can("stock.view") else 0)
     refunds = Refund.objects.filter(status=Refund.REQUESTED).count() if user.can("approve.refund") else 0
 
+    open_tabs = (Sale.objects.filter(status=Sale.HELD).count()
+                 if user.can("reports.sales.view") or user.can("sales.view_all") else None)
     sales_today = sales_last_week = delta = None
     if user.can("reports.sales.view"):
         today = timezone.localdate()
@@ -60,7 +62,7 @@ def manage_home(request):
             delta = ((sales_today - sales_last_week) / sales_last_week * 100).quantize(Decimal("1"))
     return render(request, "core/manage_home.html", {
         "shop_name": ShopSettings.load().shop_name, "is_manager": user.is_manager,
-        "pending_receivings": pending, "low_count": low, "refund_count": refunds,
+        "pending_receivings": pending, "low_count": low, "refund_count": refunds, "open_tabs": open_tabs,
         "sales_today": sales_today, "sales_last_week": sales_last_week, "sales_delta": delta})
 
 

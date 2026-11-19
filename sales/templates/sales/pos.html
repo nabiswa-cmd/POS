@@ -60,6 +60,8 @@
   .opts li:last-child{border-bottom:0} .opts li.on{background:var(--nav-on);box-shadow:inset 0 0 0 1px var(--line-strong)}
   .opts li.off{opacity:.45}
   .keys{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px}
+  .quicklabels{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .quicklabels button{min-height:40px;padding:6px 12px;font-size:12px}
   /* Touch action bar: the same actions as the keyboard shortcuts, on screen. Shown on phones and small tablets only. */
   .actionbar{display:none}
   @media (max-width:900px){
@@ -535,10 +537,18 @@
   function hold() {
     if (!S.cfg.can.hold) { say("You are not allowed to hold sales.", "err"); return; }
     if (!items().length) { say("There is nothing to hold.", "err"); return; }
-    promptBox("Hold this sale", "Label (optional, e.g. customer name)", "", function (v, d) {
+    promptBox("Open a tab / hold this sale", "Table or tab name (optional)", "", function (v, d) {
       closeDialog(d);
-      api("POST", "/api/sales/cart/hold/", { label: v }).then(function (r) { if (r.ok) { setCart(r.cart); S.sel = -1; say("Sale held. F6 brings it back.", "ok"); } else say(r.error, "err"); });
+      api("POST", "/api/sales/cart/hold/", { label: v }).then(function (r) { if (r.ok) { setCart(r.cart); S.sel = -1; say("Tab held. F6 brings it back.", "ok"); } else say(r.error, "err"); });
     });
+    var box = $("pb"), chips = document.createElement("div");   // quick table names: they only fill the label box
+    chips.className = "quicklabels";
+    ["Walk-in", "Table 1", "Table 2", "Table 3", "Table 4", "Table 5", "Table 6"].forEach(function (t) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "ghost"; b.textContent = t;
+      b.onclick = function () { box.value = t; box.focus(); };
+      chips.appendChild(b);
+    });
+    box.parentNode.insertBefore(chips, box.nextSibling);
   }
   function retrieve() {
     if (!S.cfg.can.hold) { say("You are not allowed to retrieve sales.", "err"); return; }

@@ -17,6 +17,7 @@
     {% if not refund_count and not pending_receivings and not low_count %}<p class="allgood">Nothing needs attention.</p>{% endif %}
   </div>
 </div>
+{% if open_tabs is not None %}<div class="kpis" style="margin-top:16px"><a class="kpi" href="/manage/tills/" style="text-decoration:none;color:inherit"><div class="lbl">Open tabs and tables</div><div class="val">{{ open_tabs }}</div></a><div class="kpi"><div class="lbl">Low stock</div><div class="val">{{ low_count }}</div></div></div>{% endif %}
 <div class="shortcuts">
   {% if "stock.view" in perms %}<a class="tile" href="/manage/stock/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="{{ icons.box }}"/></svg><b>Stock</b>{% if low_count %}<span class="badge">{{ low_count }} low</span>{% endif %}</a>{% endif %}
   {% if "stock.receive" in perms or "stock.approve_receiving" in perms %}<a class="tile" href="/manage/receiving/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="{{ icons.truck }}"/></svg><b>Receive</b>{% if pending_receivings %}<span class="badge">{{ pending_receivings }}</span>{% endif %}</a>{% endif %}
