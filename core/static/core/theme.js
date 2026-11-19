@@ -17,6 +17,21 @@
       });
     });
     paint();
+    /* Phones: tables on manager pages become stacked cards (labels taken from the header cells). */
+    if (document.body.classList.contains("has-shell")) {
+      document.querySelectorAll("main table").forEach(function (t) {
+        var rows = Array.prototype.slice.call(t.querySelectorAll("tr"));
+        var headRow = rows.filter(function (r) { return r.querySelector("th") && !r.querySelector("td"); })[0];
+        if (!headRow) return;
+        var heads = Array.prototype.map.call(headRow.children, function (h) { return h.textContent.trim(); });
+        t.classList.add("stack");
+        headRow.classList.add("hdr");
+        rows.forEach(function (r) {
+          if (r === headRow) return;
+          Array.prototype.forEach.call(r.children, function (c, i) { if (heads[i] && !c.hasAttribute("colspan")) c.setAttribute("data-label", heads[i]); });
+        });
+      });
+    }
     document.querySelectorAll(".toast").forEach(function (t) {
       function close() { t.classList.add("out"); setTimeout(function () { t.remove(); }, 320); }
       t.addEventListener("click", close);

@@ -29,15 +29,39 @@ def _flash_errors(request, exc):
 
 @perm_required("dashboard.view", "stock.receive", "products.view")
 def manage_home(request):
-    from inventory.models import Receiving
+    """Home: one sales number, what needs attention, four shortcuts. Read-only; it changes no data."""
+    from datetime import timedelta
+    from decimal import Decimal
 
+    from django.db.models import Sum
+    from django.utils import timezone
+
+    from inventory.models import Receiving
+    from sales.models import Refund, Sale
+
+    user = request.user
     pending = (Receiving.objects.filter(status=Receiving.PENDING).count()
-               if request.user.can("stock.approve_receiving") else 0)
+               if user.can("stock.approve_receiving") else 0)
     low = (Product.objects.filter(active=True, reorder_level__gt=0, stock_qty__lte=F("reorder_level")).count()
-           if request.user.can("stock.view") else 0)
+           if user.can("stock.view") else 0)
+    refunds = Refund.objects.filter(status=Refund.REQUESTED).count() if user.can("approve.refund") else 0
+
+    sales_today = sales_last_week = delta = None
+    if user.can("reports.sales.view"):
+        today = timezone.localdate()
+
+        def day_total(day):
+            return (Sale.objects.filter(status=Sale.COMPLETED, completed_at__date=day)
+                    .aggregate(t=Sum("total"))["t"] or Decimal("0.00"))
+
+        sales_today = day_total(today)
+        sales_last_week = day_total(today - timedelta(days=7))
+        if sales_last_week:
+            delta = ((sales_today - sales_last_week) / sales_last_week * 100).quantize(Decimal("1"))
     return render(request, "core/manage_home.html", {
-        "shop_name": ShopSettings.load().shop_name, "is_manager": request.user.is_manager,
-        "pending_receivings": pending, "low_count": low})
+        "shop_name": ShopSettings.load().shop_name, "is_manager": user.is_manager,
+        "pending_receivings": pending, "low_count": low, "refund_count": refunds,
+        "sales_today": sales_today, "sales_last_week": sales_last_week, "sales_delta": delta})
 
 
 # --- Products ---------------------------------------------------------------------------------
