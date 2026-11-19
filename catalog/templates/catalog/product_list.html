@@ -1,6 +1,6 @@
 {% extends "core/base.html" %}{% block title %}Products{% endblock %}
 {% block content %}
-<h1>Products</h1><p class="sub">{{ page.paginator.count }} product{{ page.paginator.count|pluralize }}. Press <kbd>/</kbd> to search by name, brand, SKU or scan a barcode.</p>
+<h1>Products</h1><p class="sub">{{ page.paginator.count }} product{{ page.paginator.count|pluralize }}.</p>
 <form method="get" class="card row noprint">
   <div style="flex:3"><label for="q">Search or scan</label><input id="q" type="search" name="q" value="{{ q }}" data-search data-autofocus></div>
   <div><label for="category">Category</label><select id="category" name="category"><option value="">All</option>{% for c in categories %}<option value="{{ c.pk }}"{% if selected_category == c.pk|stringformat:"s" %} selected{% endif %}>{{ c.name }}</option>{% endfor %}</select></div>

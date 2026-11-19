@@ -1,6 +1,5 @@
 {% extends "core/base.html" %}{% block title %}{{ product.name }} bottles{% endblock %}
 {% block content %}<h1>{{ product.name }}: bottles and measures</h1>
-<p class="sub">Sealed bottles are counted in normal stock. A bottle becomes "opened" when its first measure is sold, and its liquid is tracked in millilitres until it is empty.</p>
 <p class="noprint"><a class="btn ghost" data-back href="{% url 'stock-history' product.pk %}">Stock history</a> <a class="btn ghost" href="{% url 'product-detail' product.pk %}">Product</a> <a class="btn ghost" href="{% url 'selling-units' product.pk %}">Selling units</a>{% if can_adjust %} <a class="btn" href="{% url 'bottle-wastage' product.pk %}">Record wastage</a>{% endif %}</p>
 <div class="card"><div class="row">
 <div><div class="muted">Sealed bottles</div><b>{{ overview.sealed_bottles }}</b></div>
@@ -10,7 +9,7 @@
 <div><div class="muted">Sealed liquid</div><b>{% if overview.sealed_volume_ml is None %}unknown{% else %}{{ overview.sealed_volume_ml }} ml{% endif %}</b></div>
 <div><div class="muted">Partial-sale volume deficit</div><b>{{ overview.partial_volume_deficit_ml }} ml</b></div>
 <div><div class="muted">Total liquid</div><b>{% if overview.total_volume_ml is None %}unknown{% else %}{{ overview.total_volume_ml }} ml{% endif %}</b></div></div>
-{% if overview.sealed_volume_ml is None %}<div class="help">The bottle size is learned when the first bottle is opened, so sealed liquid is not shown until then.</div>{% endif %}</div>
+</div>
 
 <h2>Opened bottles</h2>
 <table><tr><th>Opened</th><th>By</th><th class="num">Remaining (ml)</th><th class="num">Capacity (ml)</th><th></th></tr>

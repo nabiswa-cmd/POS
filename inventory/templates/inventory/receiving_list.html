@@ -1,5 +1,5 @@
 {% extends "core/base.html" %}{% block title %}Stock receiving{% endblock %}
-{% block content %}<h1>Stock receiving</h1><p class="sub">Deliveries from suppliers. Stock only changes when a delivery is posted.</p>
+{% block content %}<h1>Stock receiving</h1>
 {% if can_receive %}<p><a class="btn" href="/manage/receiving/new/" accesskey="n" data-autofocus>New delivery (Alt+N)</a></p>{% endif %}
 <p class="noprint">Show: <a href="?">All</a>{% for k, label in statuses %} &middot; <a href="?status={{ k }}">{{ label }}</a>{% endfor %}</p>
 <table><tr><th>Number</th><th>Date</th><th>Supplier</th><th>Delivery note</th><th>Invoice</th><th>By</th><th>Status</th></tr>

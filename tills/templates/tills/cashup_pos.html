@@ -13,7 +13,7 @@
 <main style="max-width:640px;margin:24px auto;padding:0 16px">
 <h1>Close shift and count cash</h1>
 <p class="sub">{{ shift.till }} &middot; {{ shift.cashier.display_name }} &middot; opened {{ shift.opened_at|date:"d M H:i" }} &middot; float KES {{ shift.opening_float }}</p>
-<p class="muted">Count everything that is in the drawer, including the float: notes and coins only. M-PESA, card and bank money are not in the drawer, so do not count them. You will see how the count compares once you press Close.</p>
+<p class="muted">Count notes and coins, including the float.</p>
 {% if error %}<div class="toast error" role="alert">{{ error }}</div>{% endif %}
 <form method="post" action="{% url 'pos-cashup' %}" autocomplete="off">
   {% csrf_token %}
@@ -25,7 +25,7 @@
     <a class="btn ghost" href="{% url 'pos-sell' %}" data-back>Back to sales</a>
   </p>
 </form>
-<p class="muted">A sale in progress or on hold must be completed or voided first. Closing signs you out.</p>
+<p class="muted">Complete or void open sales before closing.</p>
 </main>
 <script>document.querySelector(".cu-q").focus();</script>
 </body>

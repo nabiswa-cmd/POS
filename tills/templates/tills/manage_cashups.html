@@ -1,7 +1,6 @@
 {% extends "core/base.html" %}{% block title %}Cash-ups{% endblock %}
 {% block content %}
 <h1>Cash-ups</h1>
-<p class="sub">Every till shift, what the drawer should have held, what was counted, and the difference. M-PESA, card and bank money are shown but never mixed into the cash figure.</p>
 
 <form method="get" class="row" style="margin-bottom:14px">
   <div><label for="from">From</label><input id="from" type="date" name="from" value="{{ r.day_from|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}"></div>

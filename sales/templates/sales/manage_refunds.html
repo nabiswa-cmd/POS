@@ -1,7 +1,7 @@
 {% extends "core/base.html" %}{% block title %}Refunds{% endblock %}
 {% block content %}
 <h1>Refunds</h1>
-<p class="sub">Every refund, from the request to the customer being paid back. This screen only shows them: a refund is approved and paid at the till (Alt+R) by someone other than the person who asked for it. The original sale is never changed.</p>
+<p class="sub">Approve or reject pending requests here. Payout is completed from the POS.</p>
 
 <form method="get" class="row" style="margin-bottom:14px">
   <div><label for="from">From</label><input id="from" type="date" name="from" value="{{ r.day_from|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}"></div>
@@ -23,12 +23,16 @@
 {% for label, v in r.by_status.items %}<tr><td>{{ label }}</td><td class="num">{{ v.count }}</td><td class="num">{{ v.total }}</td></tr>{% endfor %}</table>
 
 <h2>Refunds{% if r.status %} ({{ r.status|lower }}){% endif %}</h2>
-<table><tr><th>Requested</th><th>Refund</th><th>Sale</th><th>Method</th><th class="num">KES</th><th>Status</th><th>Reason</th><th>Who</th></tr>
+<table><tr><th>Requested</th><th>Refund</th><th>Sale</th><th>Method</th><th class="num">KES</th><th>Status</th><th>Items</th><th>Reason</th><th>Who</th><th>Action</th></tr>
 {% for x in r.rows %}<tr>
 <td>{{ x.requested_at|date:"d M H:i" }}</td><td><b>{{ x.number }}</b></td><td>{{ x.sale.number }}</td><td>{{ x.get_method_display }}</td><td class="num">{{ x.total }}</td>
 <td>{{ x.get_status_display }}{% if x.pk in r.late_ids %} <span class="pill bad">overdue</span>{% endif %}{% if x.pay_reference %}<br><span class="muted">M-PESA {{ x.pay_reference }}</span>{% endif %}</td>
+<td><details><summary>View items</summary><ul>{% for item in x.items.all %}<li>{{ item.quantity }} &times; {{ item.product_name }}{% if item.selling_unit_name %} ({{ item.selling_unit_name }}){% endif %} &middot; KES {{ item.amount }} &middot; {% if item.restock %}return to stock{% else %}not for resale{% endif %}</li>{% endfor %}</ul></details></td>
 <td>{{ x.reason }}{% if x.reject_reason %}<br><span class="muted">Rejected: {{ x.reject_reason }}</span>{% endif %}</td>
 <td><span class="muted">Asked:</span> {{ x.requested_by.display_name }}{% if x.approved_by %}<br><span class="muted">Approved:</span> {{ x.approved_by.display_name }}{% endif %}{% if x.rejected_by %}<br><span class="muted">Rejected:</span> {{ x.rejected_by.display_name }}{% endif %}{% if x.paid_by %}<br><span class="muted">Paid:</span> {{ x.paid_by.display_name }}{% endif %}</td>
-</tr>
-{% empty %}<tr><td colspan="8" class="muted">No refunds in this period.</td></tr>{% endfor %}</table>
+<td>{% if can_approve_refunds and x.status == "REQUESTED" %}{% if x.requested_by_id != request.user.pk or can_approve_own_refunds %}
+<form method="post">{% csrf_token %}<input type="hidden" name="action" value="approve"><input type="hidden" name="refund_id" value="{{ x.pk }}"><button type="submit">Approve</button></form>
+<form method="post" class="row">{% csrf_token %}<input type="hidden" name="action" value="reject"><input type="hidden" name="refund_id" value="{{ x.pk }}"><input name="reason" placeholder="Reason (optional)" aria-label="Rejection reason (optional)"><button class="ghost" type="submit">Reject</button></form>
+{% else %}<span class="muted">Another approver required</span>{% endif %}{% endif %}</td></tr>
+{% empty %}<tr><td colspan="10" class="muted">No refunds in this period.</td></tr>{% endfor %}</table>
 {% endblock %}

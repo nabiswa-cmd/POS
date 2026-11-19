@@ -3,7 +3,6 @@
 {% block content %}
 {% include "core/_report_tabs.html" %}
 <h1>Charts</h1>
-<p class="sub">How sales are going and which products sell most. Sales are completed sales including VAT, by the day they were completed.</p>
 
 <form method="get" class="charts-filter" aria-label="Filter charts by date">
   <div><label for="f-from">From</label><input id="f-from" type="date" name="from" value="{{ day_from|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}"></div>
@@ -34,7 +33,7 @@
 
     <section class="card chart-card wide">
       <div class="chart-head">
-        <div><h3>Best-selling products</h3><p class="note">The ten products that sell most in this period.</p></div>
+        <div><h3>Best-selling products</h3></div>
         <div class="seg" role="group" aria-label="Rank products by">
           <button type="button" data-products="revenue" aria-pressed="true">By money</button>
           <button type="button" data-products="units" aria-pressed="false">By number sold</button>

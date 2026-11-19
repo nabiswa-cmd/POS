@@ -729,12 +729,12 @@
     var left0 = leftC(); if (left0 <= 0) { say("Nothing is left to pay.", "err"); return; }
     var whole = left0 % 100 === 0 ? String(left0 / 100) : (left0 / 100).toFixed(2);
     var d = openDialog('<h2>M-PESA payment</h2><div class="grandlbl">' + (left0 === t.total ? "Total payable" : "Still to pay") + ' (KES)</div><div class="grand" style="text-align:left">' + money(left0) + "</div>" +
-      '<p class="note">Customer paid to the Till? It shows below as soon as Safaricom confirms it. Choose it and press Enter. Not there yet? Press Get latest payments. A payment smaller than the balance is a part payment: the rest can be cash or another M-PESA. Only payments confirmed by Safaricom appear here.</p>' +
+      '<p class="note"> </p>' +
       (mcfg.till_capture ? "" : '<p class="err">M-PESA capture is not set up on this shop yet. Ask the manager.</p>') +
       '<ul class="opts" id="mp-list"></ul>' +
       '<div class="note" id="mp-sync"></div>' +
       '<div class="btns" style="justify-content:flex-start"><button class="ghost" id="mp-pull" type="button">Get latest payments</button></div>' +
-      "<label>Payment not on the list, or several of the same amount? Type its M-PESA code (the full code, or its last 4 or more characters)</label>" +
+      "<label>  </label>" +
       '<input id="mp-code" autocomplete="off" autocapitalize="characters" maxlength="14" placeholder="e.g. SGL1ABC23D or ABC23D">' +
       '<div class="note" id="mp-found"></div>' +
       "<label>Or send a payment request to the customer's phone</label>" +

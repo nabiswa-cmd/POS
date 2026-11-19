@@ -1,6 +1,5 @@
 {% extends "core/base.html" %}{% block title %}Cash-up report{% endblock %}
 {% block content %}<h1>Cash-up report</h1>
-<p class="sub">Closed shifts. Expected cash = opening float + cash sales - cash refunds paid from the drawer. M-PESA, card and bank are not drawer cash.</p>
 <form method="get" class="row" style="margin-bottom:14px"><div><label for="days">Days back</label><input id="days" name="days" value="{{ days }}"></div><div style="flex:0 0 auto"><button type="submit">Show</button></div></form>
 <p>{{ rows|length }} shift{{ rows|length|pluralize }} closed &middot; {{ off }} with a difference &middot; {{ open_now }} still open.
 Total variance: <b>{{ totals.v|default:"0.00" }}</b></p>

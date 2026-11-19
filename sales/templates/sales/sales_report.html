@@ -2,7 +2,6 @@
 {% block content %}
 {% include "core/_report_tabs.html" %}
 <h1>Sales and partial-stock reports</h1>
-<p class="sub">Sales and refunds use the saved line snapshots. Inventory position is current; movement and audit tables use the selected dates.</p>
 
 <form method="get" class="row" style="margin-bottom:10px">
   <div><label for="from">From</label><input id="from" type="date" name="from" value="{{ day_from|date:'Y-m-d' }}"></div>
@@ -81,7 +80,6 @@
   <tr><td>Full bottles / base units</td><td class="num">{{ r.summary.full_revenue }}</td></tr>
   <tr><td>Partial selling</td><td class="num">{{ r.summary.partial_revenue }}</td></tr>
 </table>
-<p class="muted">Refunds are included on their approval date. Full quantities and full-line volume use sale-time snapshots; partial volume uses saved millilitre snapshots. Volume totals are marked incomplete when a full line has no known capacity snapshot.</p>
 
 <h2>Revenue and refunds by selling unit</h2>
 <table>
@@ -99,7 +97,6 @@
 </table>
 
 <h2>Sales by day, cashier and POS authorizer</h2>
-<p class="muted">Sales revenue is shown before refunds; approved refunds are listed separately by approval day below.</p>
 <table>
   <tr><th>Day</th><th>Cashier</th><th>Shift authorized by</th><th class="num">Sales</th><th class="num">Full bottles</th><th class="num">Partial measures</th><th class="num">Full volume (ml)</th><th class="num">Partial volume (ml)</th><th class="num">Total volume (ml)</th><th class="num">Full sales revenue</th><th class="num">Partial sales revenue</th><th class="num">Sales revenue (excl. VAT)</th></tr>
   {% for row in r.sales_by_cashier %}
@@ -127,7 +124,6 @@
 
 {% if show_stock %}
 <h2>Current inventory and ledger reconciliation</h2>
-<p class="muted">Current counts are not date-filtered. Net liquid includes sealed stock, opened bottles and any outstanding partial-sale volume deficit. Bottle volume is checked against its signed movement ledger; sealed base units are checked against the latest stock movement balance.</p>
 {% if inventory.unknown_capacity_count %}<div class="toast error" role="alert">{{ inventory.unknown_capacity_count }} product(s) have sealed stock with no known bottle capacity; total liquid volume is shown as unknown.</div>{% endif %}
 {% if inventory.unit_mismatch_count or inventory.bottle_mismatch_count %}
 <div class="toast error" role="alert">Reconciliation found {{ inventory.unit_mismatch_count }} sealed-stock mismatch(es) and {{ inventory.bottle_mismatch_count }} bottle-volume mismatch(es), totalling {{ inventory.bottle_mismatch_volume_ml }} ml absolute bottle variance.</div>
@@ -160,7 +156,6 @@
   {% for row in movement_summary %}<tr><td>{{ row.label }}</td><td class="num">{{ row.events }}</td><td class="num">{{ row.units }}</td><td class="num">{{ row.volume_ml }}</td>{% if show_cost %}<td class="num">{{ row.cost }}</td>{% endif %}</tr>
   {% empty %}<tr><td colspan="{% if show_cost %}5{% else %}4{% endif %}" class="muted">No stock movements in this period.</td></tr>{% endfor %}
 </table>
-<p class="muted">Movement values are signed ledger entries. Opening a bottle transfers liquid from sealed to opened stock; it is not additional liquid sold. Sales totals above come from sale snapshots and are not added to these movement totals.</p>
 
 <h3>Stock movement details</h3>
 <table>
@@ -181,7 +176,6 @@ Page {{ movement_page.number }} of {{ movement_page.paginator.num_pages }}{% if 
 
 {% if show_audit %}
 <h2>Manager and supervisor activity</h2>
-<p class="muted">Sensitive actions are shown from the append-only audit log. The actor is the person who performed the action; the approver column is populated when the action required approval.</p>
 <table>
   <tr><th>When</th><th>Action</th><th>Actor</th><th>Approver</th><th>Object</th><th>Reason</th></tr>
   {% for event in activity_page %}

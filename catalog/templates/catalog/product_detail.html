@@ -33,11 +33,11 @@
 {% if pack_form %}<div class="card noprint"><form method="post" action="{% url 'product-add-packaging' product.pk %}" class="row">{% csrf_token %}
   <div>{{ pack_form.name.label_tag }}{{ pack_form.name }}</div><div>{{ pack_form.units_per_pack.label_tag }}{{ pack_form.units_per_pack }}</div><div>{{ pack_form.selling_price.label_tag }}{{ pack_form.selling_price }}</div>
   <div style="flex:0 0 auto"><button type="submit">Add pack size</button></div></form>
-  <div class="help">Each product has its own conversion. Selling one {{ product.base_unit }} takes 1 off stock; selling a pack takes the whole pack off.</div></div>{% endif %}
+  </div>{% endif %}
 
 {% if form %}<h2>Edit product</h2>
 <form method="post" enctype="multipart/form-data" class="card" autocomplete="off">{% csrf_token %}{{ form.non_field_errors }}
-  <div class="row">{% for f in form.visible_fields %}<div style="flex:1 1 {% if f.name == 'description' %}100%{% else %}220px{% endif %}">{% if f.field.widget.input_type == "checkbox" %}<label style="color:var(--text)">{{ f }} {{ f.label }}</label>{% else %}<label for="{{ f.id_for_label }}">{{ f.label }}</label>{{ f }}{% endif %}{% if f.help_text %}<div class="help">{{ f.help_text }}</div>{% endif %}{{ f.errors }}</div>{% endfor %}</div>
+  <div class="row">{% for f in form.visible_fields %}<div style="flex:1 1 {% if f.name == 'description' %}100%{% else %}220px{% endif %}">{% if f.field.widget.input_type == "checkbox" %}<label style="color:var(--text)">{{ f }} {{ f.label }}</label>{% else %}<label for="{{ f.id_for_label }}">{{ f.label }}</label>{{ f }}{% endif %}{{ f.errors }}</div>{% endfor %}</div>
   <div class="actions"><button type="submit">Save changes</button></div></form>{% endif %}
 
 {% if movements %}<h2>Recent stock movements</h2><table><tr><th>When</th><th>Type</th><th class="num">Qty</th><th class="num">Balance</th><th>By</th><th>Reference</th></tr>

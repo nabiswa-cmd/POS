@@ -17,6 +17,7 @@ def _money(x):
 
 def refunds_in(day_from, day_to, status=None):
     qs = (Refund.objects.select_related("sale", "requested_by", "approved_by", "paid_by", "rejected_by")
+          .prefetch_related("items")
           .filter(requested_at__date__gte=day_from, requested_at__date__lte=day_to))
     if status:
         qs = qs.filter(status=status)

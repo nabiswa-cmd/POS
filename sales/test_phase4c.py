@@ -10,6 +10,7 @@ from django.db import connection
 from django.test import Client, override_settings
 from django.utils import timezone
 
+from accounts.models import RolePermission
 from core import db_hardening
 from core.models import AuditLog
 
@@ -254,6 +255,40 @@ class RefundScreenTests(SalesCase):
             c.force_login(user)
             self.assertEqual(c.get("/manage/refunds/").status_code, code, user.username)
         self.assertEqual(Client().get("/manage/refunds/").status_code, 302)
+
+    def test_manager_can_approve_or_reject_from_the_manage_screen(self):
+        approval = self.refund()
+        rejection = self.refund()
+        c = Client()
+        c.force_login(self.manager)
+
+        page = c.get("/manage/refunds/")
+        self.assertContains(page, 'value="approve"')
+        self.assertContains(page, 'value="reject"')
+        self.assertEqual(c.post("/manage/refunds/", {"action": "approve", "refund_id": approval.pk}).status_code, 302)
+        self.assertEqual(c.post("/manage/refunds/", {
+            "action": "reject", "refund_id": rejection.pk, "reason": "Not resalable",
+        }).status_code, 302)
+
+        approval.refresh_from_db()
+        rejection.refresh_from_db()
+        self.assertEqual((approval.status, approval.approved_by), (Refund.APPROVED, self.manager))
+        self.assertEqual((rejection.status, rejection.reject_reason), (Refund.REJECTED, "Not resalable"))
+
+    def test_refund_viewer_without_approval_permission_cannot_approve_from_manage_screen(self):
+        RolePermission.objects.get_or_create(role=self.clerk.role, code="shifts.view_all")
+        refund = self.refund()
+        c = Client()
+        c.force_login(self.clerk)
+
+        page = c.get("/manage/refunds/")
+        self.assertEqual(page.status_code, 200)
+        self.assertNotContains(page, 'value="approve"')
+        self.assertEqual(c.post("/manage/refunds/", {
+            "action": "approve", "refund_id": refund.pk,
+        }).status_code, 302)
+        refund.refresh_from_db()
+        self.assertEqual(refund.status, Refund.REQUESTED)
 
     def test_it_shows_who_asked_who_approved_and_who_paid(self):
         self.refund(Refund.PAID, Refund.MPESA, approved_by=self.supervisor, approved_at=timezone.now(),

@@ -1,6 +1,6 @@
 {% extends "core/base.html" %}{% block title %}Tills &amp; sales{% endblock %}
 {% block content %}
-<h1>Tills &amp; sales</h1><p class="sub">Who is on each till, today's takings per till, and the latest sales.</p>
+<h1>Tills &amp; sales</h1>
 <div class="grid">
 {% for t in tills %}<div class="tile"><b>{{ t.till.name }}</b>
   {% if t.shift %}<span class="muted">Open: {{ t.shift.cashier.display_name }} since {{ t.shift.opened_at|time:"H:i" }}<br>Authorized by {% if t.shift.authorized_by_id == t.shift.cashier_id %}the owner{% else %}{{ t.shift.authorized_by.display_name }}{% endif %}<br>Float {{ t.shift.opening_float }}</span>
@@ -13,9 +13,8 @@
 {% if etims_on %}
   <p>Switched on. Signed: <b>{{ etims_counts.SUBMITTED|default:0 }}</b> &middot; Waiting: <b>{{ etims_counts.PENDING|default:0 }}</b> &middot; Rejected: <b>{{ etims_counts.REJECTED|default:0 }}</b></p>
   {% if etims_problems %}<p class="muted">Not ready: {{ etims_problems|join:"; " }}</p>{% endif %}
-  <p class="muted">Sales that are waiting are sent again after each new sale, or run <code>python manage.py etims_retry</code>. Rejected sales need a person to look at the reason in the admin (eTIMS submissions).</p>
 {% else %}
-  <p>Switched off. Receipts show the VAT inside each price (if the shop is VAT registered) but are <b>not</b> KRA tax invoices. See the README before turning this on.</p>
+  <p>Switched off. Receipts are not KRA tax invoices.</p>
 {% endif %}
 </div>
 
