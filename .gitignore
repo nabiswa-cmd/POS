@@ -56,3 +56,5 @@ staticfiles/
 .DS_Store
 Thumbs.db
 "@ | Set-Content .gitignore
+
+.build-venv

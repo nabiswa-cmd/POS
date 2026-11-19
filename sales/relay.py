@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 from datetime import timedelta
 
+from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 
@@ -144,6 +145,23 @@ def pull_now(user):
     if not user.can("payments.reconcile"):
         raise NotAllowed("You are not allowed to pull payments.")
     return pull()
+
+
+TILL_PULL_GAP_SECONDS = 4          # the till screen asks often; the online server is asked at most this often
+
+
+def pull_for_till(user, *, hours=3, max_pages=2, throttle=True):
+    """The POS screen's "Get latest payments". Anyone who may accept payments can ask, because it only fetches what the
+    online server has already recorded (the same safe pull as the manager's button, never a payment made up here).
+    Returns the counts, or None when another till asked a moment ago (throttled)."""
+    if not (user.can("payments.accept") or user.can("payments.reconcile")):
+        raise NotAllowed("You are not allowed to accept payments.")
+    if not enabled():
+        raise RelayError("This computer is not connected to the online server for M-PESA yet. "
+                         "Ask the manager to set the Relay address and token.")
+    if throttle and not cache.add("mpesa-till-pull", 1, timeout=TILL_PULL_GAP_SECONDS):
+        return None
+    return pull(hours=hours, max_pages=max_pages)
 
 
 def status():

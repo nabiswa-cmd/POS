@@ -9,6 +9,7 @@
 * The cashier can only apply a payment whose amount equals the sale total exactly. Part payments, overpayments
   and refunds are sub-phase 4B.
 """
+import re
 from datetime import timedelta
 
 from django.core.cache import cache
@@ -227,6 +228,30 @@ def recent_unmatched(user, shift, total=None):
     if total is not None:
         qs = qs.filter(amount=total)
     return list(qs[:12])
+
+
+CODE_MIN = 4
+
+
+def clean_code(raw):
+    """What the customer's SMS says, tidied: letters and digits only, upper case."""
+    return re.sub(r"[^A-Za-z0-9]", "", str(raw or "")).upper()
+
+
+def find_by_code(user, raw_code, limit=10):
+    """Payments Safaricom has confirmed to us whose receipt code is, or ends with, what was typed.
+
+    This only LOOKS UP payments that already exist. Typing a code never creates a payment or confirms one: that is
+    the rule at the top of this file. It solves the case of many payments of the same amount waiting at once:
+    the cashier asks the customer for the code in the M-PESA message and picks exactly that payment.
+    The last 4 or more characters are enough. Any status comes back so the cashier can be told why a payment
+    cannot be used (already on a sale, or set aside by the manager)."""
+    sales_services._need(user, "payments.accept", "You are not allowed to accept payments.")
+    code = clean_code(raw_code)
+    if len(code) < CODE_MIN:
+        raise SaleError(f"Type at least {CODE_MIN} characters of the M-PESA code.")
+    return list(MpesaTransaction.objects.select_related("sale").filter(trans_id__iendswith=code)
+                .order_by("-created_at")[:limit])
 
 
 @transaction.atomic

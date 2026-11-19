@@ -610,13 +610,18 @@
     printSale(r.sale_id, false);
   }
   function mpesa() {
-    var t = tender(), rows = [], idx = 0, poller = null, stkTimer = null, mcfg = S.cfg.mpesa || {};
+    var t = tender(), rows = [], idx = 0, poller = null, stkTimer = null, pullTimer = null, pulling = false, codeFilter = "", mcfg = S.cfg.mpesa || {};
     var left0 = leftC(); if (left0 <= 0) { say("Nothing is left to pay.", "err"); return; }
     var whole = left0 % 100 === 0 ? String(left0 / 100) : (left0 / 100).toFixed(2);
     var d = openDialog('<h2>M-PESA payment</h2><div class="grandlbl">' + (left0 === t.total ? "Total payable" : "Still to pay") + ' (KES)</div><div class="grand" style="text-align:left">' + money(left0) + "</div>" +
-      '<p class="note">Customer paid to the Till? It shows below within a few seconds. Choose it and press Enter. A payment smaller than the balance is a part payment: the rest can be cash or another M-PESA. Only payments confirmed by Safaricom appear here.</p>' +
+      '<p class="note">Customer paid to the Till? It shows below as soon as Safaricom confirms it. Choose it and press Enter. Not there yet? Press Get latest payments. A payment smaller than the balance is a part payment: the rest can be cash or another M-PESA. Only payments confirmed by Safaricom appear here.</p>' +
       (mcfg.till_capture ? "" : '<p class="err">M-PESA capture is not set up on this shop yet. Ask the manager.</p>') +
       '<ul class="opts" id="mp-list"></ul>' +
+      '<div class="note" id="mp-sync"></div>' +
+      '<div class="btns" style="justify-content:flex-start"><button class="ghost" id="mp-pull" type="button">Get latest payments</button></div>' +
+      "<label>Payment not on the list, or several of the same amount? Type its M-PESA code (the full code, or its last 4 or more characters)</label>" +
+      '<input id="mp-code" autocomplete="off" autocapitalize="characters" maxlength="14" placeholder="e.g. SGL1ABC23D or ABC23D">' +
+      '<div class="note" id="mp-found"></div>' +
       "<label>Or send a payment request to the customer's phone</label>" +
       '<input id="mp-phone" inputmode="tel" autocomplete="off" placeholder="0712 345 678"' + (mcfg.stk ? "" : " disabled") + ">" +
       '<label>Amount to request (KES, whole shillings)</label><input id="mp-amt" inputmode="decimal" autocomplete="off" value="' + whole + '"' + (mcfg.stk ? "" : " disabled") + ">" +
@@ -625,12 +630,22 @@
       '<div class="btns"><button class="ghost" id="mp-no" type="button">Back (Esc)</button><button id="mp-ok" data-first type="button">Use selected payment (Enter)</button></div>');
     function alive() { return S.stack.indexOf(d) >= 0; }
     function staged(id) { return t.mpesa.some(function (p) { return p.id === id; }); }
-    function visible() { return rows.filter(function (p) { return !staged(p.id); }); }
+    function cleanCode(v) { return String(v || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase(); }
+    function visible() {
+      return rows.filter(function (p) {
+        if (staged(p.id)) return false;
+        if (!codeFilter) return true;
+        var r = String(p.receipt).toUpperCase(); return r.length >= codeFilter.length && r.slice(-codeFilter.length) === codeFilter;
+      });
+    }
     function usable(p) { return cents(p.amount) <= leftC(); }
     function paint() {
       var ul = $("mp-list"); if (!ul) return;
       var v = visible();
-      if (!v.length) { ul.innerHTML = '<li class="off"><span>Waiting for a payment of up to ' + money(leftC()) + "...</span><span></span></li>"; return; }
+      if (!v.length) {
+        ul.innerHTML = '<li class="off"><span>' + (codeFilter ? "No payment ending in " + esc(codeFilter) + " on the list. Press Enter to search for it." : "Waiting for a payment of up to " + money(leftC()) + "...") + "</span><span></span></li>";
+        return;
+      }
       ul.innerHTML = v.map(function (p, i) {
         var ok = usable(p), label = (p.name ? esc(p.name) : "Name not provided") + (p.who ? " " + esc(p.who) : "") + " | " + esc(p.receipt) + " | " + esc(p.time);
         var right = fmt(Number(p.amount)) + (!ok ? " (more than the balance)" : cents(p.amount) === leftC() ? "" : " (part payment)");
@@ -646,6 +661,39 @@
         if (best < 0) v.forEach(function (p, i) { if (best < 0 && usable(p)) best = i; });
         if (idx >= v.length || !usable(v[idx])) idx = best >= 0 ? best : 0;
         paint();
+      });
+    }
+    /* Ask the online server for payments it has confirmed that this PC does not hold yet. */
+    function pull(manual) {
+      if (pulling) return; pulling = true;
+      var b = $("mp-pull"), el = $("mp-sync"); if (manual && b) b.disabled = true;
+      if (manual && el) el.textContent = "Checking the online server...";
+      api("POST", "/api/sales/mpesa/pull/", { manual: !!manual }).then(function (r) {
+        pulling = false; if (b) b.disabled = false; if (!alive()) return;
+        var st = r.status || {}, tail = st.last_ok ? " Last successful check: " + st.last_ok + "." : "";
+        if (!r.ok) el.textContent = (r.error || "Could not check the online server.") + tail;
+        else if (r.checked) el.textContent = "Checked the online server just now: " + (r.new ? r.new + " new payment" + (r.new === 1 ? "." : "s.") : "nothing new.");
+        else if (manual) el.textContent = "Checked a moment ago." + tail;
+        poll();
+      });
+    }
+    /* Look a payment up by its M-PESA code. This only finds payments Safaricom has already confirmed. */
+    function find() {
+      var code = cleanCode($("mp-code").value), out = $("mp-found"), er = $("mp-err");
+      out.textContent = ""; er.textContent = "";
+      if (code.length < 4) { er.textContent = "Type at least 4 characters of the M-PESA code."; return; }
+      out.textContent = "Searching...";
+      api("GET", "/api/sales/mpesa/find/?code=" + encodeURIComponent(code)).then(function (r) {
+        if (!alive()) return; out.textContent = "";
+        if (!r.ok) { er.textContent = r.error || "Could not search."; return; }
+        codeFilter = code;
+        (r.payments || []).forEach(function (p) { if (!rows.some(function (x) { return x.id === p.id; })) rows.unshift(p); });
+        var v = visible(); idx = 0; paint();
+        if (v.length === 1) out.textContent = "Found it. Press Use selected payment (Enter).";
+        else if (v.length > 1) out.textContent = v.length + " payments end with that code. Choose the right one.";
+        else if ((r.used || []).length) { var u = r.used[0]; er.textContent = "That payment (" + u.receipt + ", " + fmt(Number(u.amount)) + ") was already used on sale " + (u.sale || "") + " at " + u.time + "."; }
+        else if ((r.set_aside || []).length) er.textContent = "That payment was set aside by the manager and cannot be used here. Ask the manager.";
+        else er.textContent = (r.pull_error ? r.pull_error + " " : "") + "No confirmed payment with that code has reached this system yet. Press Get latest payments and try again in a minute. If it never appears, ask the manager to check Reconciliation.";
       });
     }
     /* Add one confirmed payment. If that clears the balance the sale completes; otherwise back to the list. */
@@ -677,8 +725,11 @@
         }, 2500);
       });
     }
-    d.onClose = function () { clearInterval(poller); clearInterval(stkTimer); };
+    d.onClose = function () { clearInterval(poller); clearInterval(stkTimer); clearInterval(pullTimer); };
     poller = setInterval(poll, 3000); poll(); paint();
+    pull(false); pullTimer = setInterval(function () { pull(false); }, 15000);
+    $("mp-pull").onclick = function () { pull(true); };
+    $("mp-code").addEventListener("input", function () { codeFilter = cleanCode(this.value); idx = 0; $("mp-found").textContent = ""; paint(); });
     $("mp-no").onclick = function () { closeDialog(d); };
     $("mp-ok").onclick = function () {
       var p = visible()[idx];
@@ -689,7 +740,7 @@
       var n = visible().length;
       if (e.key === "ArrowDown") { e.preventDefault(); idx = Math.max(0, Math.min(n - 1, idx + 1)); paint(); return true; }
       if (e.key === "ArrowUp") { e.preventDefault(); idx = Math.max(0, idx - 1); paint(); return true; }
-      if (e.key === "Enter") { e.preventDefault(); var ae = document.activeElement; if (ae === $("mp-phone") || ae === $("mp-amt")) sendStk(); else $("mp-ok").onclick(); return true; }
+      if (e.key === "Enter") { e.preventDefault(); var ae = document.activeElement; if (ae === $("mp-code")) find(); else if (ae === $("mp-phone") || ae === $("mp-amt")) sendStk(); else $("mp-ok").onclick(); return true; }
       return false;
     };
   }

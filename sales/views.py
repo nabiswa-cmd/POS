@@ -14,7 +14,7 @@ from core.http import bad, client_ip, login_required_json, post_json
 from core.models import ShopSettings
 from tills.models import CashierShift
 
-from . import cashup, daraja, etims, mpesa_rules, mpesa_services, receipt, refunds, rules, services, shortcuts, tax
+from . import cashup, daraja, etims, mpesa_rules, mpesa_services, receipt, refunds, relay, rules, services, shortcuts, tax
 from .models import Sale
 
 
@@ -348,6 +348,59 @@ def mpesa_recent(request, shift):
     rows.sort(key=lambda t: (total is None or t.amount != total))       # stable: newest first inside each group
     return JsonResponse({"ok": True, "total": str(total) if total is not None else None,
                          "payments": [_mpesa_row(t, total) for t in rows]})
+
+
+def _relay_status():
+    from django.utils import timezone
+    st = relay.status()
+    return {"enabled": st["enabled"], "failing": st["failing"], "error": st["error"],
+            "last_ok": timezone.localtime(st["last_ok"]).strftime("%H:%M") if st["last_ok"] else ""}
+
+
+@login_required_json
+@post_json
+@_guard
+def mpesa_pull(request, data, shift):
+    """"Get latest payments": ask the online server for payments Safaricom confirmed that this PC has not stored yet."""
+    manual = bool(data.get("manual"))
+    try:
+        totals = relay.pull_for_till(request.user, hours=24 if manual else 3, max_pages=5 if manual else 2,
+                                     throttle=not manual)
+    except relay.RelayError as exc:
+        return JsonResponse({"ok": False, "error": str(exc), "status": _relay_status()})
+    return JsonResponse({"ok": True, "checked": totals is not None, "new": totals["new"] if totals else 0,
+                         "status": _relay_status()})
+
+
+@require_GET
+@login_required_json
+@_guard
+def mpesa_find(request, shift):
+    """Find payments by their M-PESA code (the full code or its last 4+ characters). If this PC does not hold it yet,
+    ask the online server once, then look again. Only payments Safaricom confirmed can ever be found."""
+    from django.utils import timezone
+    code = request.GET.get("code", "")
+    txns = mpesa_services.find_by_code(request.user, code)
+    pull_error = ""
+    if not txns and relay.enabled():
+        try:
+            relay.pull_for_till(request.user, hours=72, max_pages=5, throttle=False)
+        except relay.RelayError as exc:
+            pull_error = str(exc)
+        txns = mpesa_services.find_by_code(request.user, code)
+    try:
+        total = mpesa_services._cart_total(request.user, shift)[1]
+    except services.SaleError:
+        total = None
+    T = mpesa_services.MpesaTransaction
+    stamp = lambda t: timezone.localtime(t.created_at).strftime("%d %b %H:%M")
+    return JsonResponse({
+        "ok": True, "code": mpesa_services.clean_code(code), "pull_error": pull_error, "relay": relay.enabled(),
+        "payments": [_mpesa_row(t, total) for t in txns if t.status == T.UNMATCHED],
+        "used": [{"receipt": t.trans_id, "amount": str(t.amount), "sale": t.sale.number if t.sale_id else "",
+                  "time": stamp(t)} for t in txns if t.status == T.MATCHED],
+        "set_aside": [{"receipt": t.trans_id, "amount": str(t.amount), "time": stamp(t)} for t in txns if t.status == T.IGNORED],
+    })
 
 
 @login_required_json
