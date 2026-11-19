@@ -17,6 +17,7 @@
 <header>
   <a class="brand" href="/manage/" accesskey="h" aria-label="Wine POS home"><img class="brand-mark" src="{% static 'core/logo-mark.png' %}" alt=""><span class="brand-text"><b>WINE</b> <i>POS</i></span></a>
   {% if "products.view" in perms %}<form class="hsearch" action="/manage/products/" method="get" role="search"><input type="search" name="q" data-header-search placeholder="Search products ( / )" aria-label="Search products" autocomplete="off"></form>{% endif %}
+  <span class="chip" id="sync-chip" role="status" aria-live="polite" title="Connection to the shop server">Checking</span>
   <span class="who"><span class="staff-name">{{ staff_name }} &middot;</span><a href="#" id="logout-link">Log out</a></span>
   <button type="button" class="theme-toggle" data-theme-toggle title="Switch light / dark mode"><svg class="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg><svg class="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/></svg><span class="t-label">Dark</span></button>
 </header>
@@ -76,6 +77,15 @@
     if (e.key === "/" && !typing) { var s = document.querySelector("[data-search]") || document.querySelector("[data-header-search]"); if (s) { e.preventDefault(); s.focus(); s.select(); } }
     if (e.key === "Escape") { var b = document.querySelector("[data-back]"); if (b && !typing) { location.href = b.getAttribute("href"); } else if (typing) { e.target.blur(); } }
   });
+  (function () {                                            // sync / server status chip (read-only ping)
+    var chip = document.getElementById("sync-chip");
+    function paint(ok) { chip.textContent = ok ? "Synced" : "Offline"; chip.className = "chip " + (ok ? "ok" : "bad"); }
+    function ping() {
+      fetch("/health/", { credentials: "same-origin", cache: "no-store" })
+        .then(function (r) { paint(r.ok); }).catch(function () { paint(false); });
+    }
+    ping(); setInterval(ping, 30000);
+  })();
   var first = document.querySelector("[data-autofocus]"); if (first) first.focus();
 })();
 </script>

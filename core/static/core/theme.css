@@ -88,6 +88,10 @@ body.auth{row-gap:18px}
 .badge{display:inline-block;min-width:22px;padding:1px 8px;font:600 11px var(--sans);text-align:center;color:var(--warn);background:#3a2a14;border-radius:12px}
 body.has-shell{padding-left:var(--side-w)}
 body.has-shell>header{margin-left:calc(-1*var(--side-w));padding-left:20px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;font:600 11px var(--sans);letter-spacing:.04em;color:#b9b4ab;background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.14);border-radius:12px;white-space:nowrap}
+.chip::before{content:"";width:7px;height:7px;border-radius:50%;background:#9a968f}
+.chip.ok{color:#58c47a}.chip.ok::before{background:#58c47a}
+.chip.bad{color:#f09595}.chip.bad::before{background:#f09595}
 .bottom-nav{display:none}
 .nav-scrim{display:none}
 
