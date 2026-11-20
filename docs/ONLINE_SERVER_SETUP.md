@@ -132,9 +132,10 @@ pos.yourdomain.com {
 
 ## Disaster recovery (shop PC lost)
 
-New PC: install the program, then download the newest backup:
-`curl -H "Authorization: Bearer <SYNC_TOKEN>" -o latest.zip https://pos.yourdomain.com/api/sync/latest/`
-and restore it as described in `docs/BACKUP_AND_RESTORE.md`.
+For a new local Shop server PC, follow [SHOP_PC_SETUP.md](./SHOP_PC_SETUP.md). The `/api/sync/latest/` download
+contains the newest backup received by the online server; it is not an on-demand dump of the online server's live
+database. If the online server is the live POS and its current data is the source, create a backup there with
+`python manage.py backup_db` and securely transfer that file before restoring.
 
 ## Phone camera scanning
 
@@ -149,7 +150,7 @@ explains this and the cashier types the code instead. Chrome on Android uses its
    enrol its own key. The key can only open the one tunnel port, never a shell. **Clear the setting again when every
    PC is installed.**
 2. Run the installer on the shop PC, choose *Shop server PC*, and on the **Online server (optional)** page type the
-   address (for example `https://pos.devs.surf`) and the sync token. Setup then:
+   address (for example `https://pos.dev.surf`) and the sync token. Setup then:
    * writes the sync settings,
    * downloads the online server's newest backup and loads it into this PC, so both start identical
      (only on a PC with no data; it never overwrites real sales),
@@ -161,7 +162,8 @@ explains this and the cashier types the code instead. Chrome on Android uses its
 Note: secrets stored in the database (M-PESA/eTIMS) are encrypted with `INTEGRATION_SETTINGS_KEY`. A reinstalled PC
 creates a new key, so re-enter those secrets once in admin (or copy the old key into the settings file first).
 
-Remote access: when the installer is given an online address starting with `pos.` (for example `https://pos.devs.surf`),
-it also allows `shop.devs.surf` on the shop PC (allowed host + CSRF trusted origin), so nothing else needs editing on the PC.
-The server side is still yours: a DNS A record for `shop.devs.surf` pointing at the server, the nginx site on port 8021 and
-`certbot --nginx -d shop.devs.surf`.
+Remote access: when the installer is given an online address starting with `pos.` (for example `https://pos.dev.surf`),
+it also allows `shop.dev.surf` on the shop PC (allowed host + CSRF trusted origin). The server side still needs a DNS
+record for `shop.dev.surf` pointing at the online server, the nginx site on port 8021, and a valid certificate, for
+example `certbot --nginx -d shop.dev.surf`. For tills on the shop Wi-Fi, use the shop server's LAN address; access via
+the public domain from inside the shop depends on router DNS/NAT loopback support.
