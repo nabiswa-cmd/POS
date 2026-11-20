@@ -38,7 +38,7 @@ class C2bRegistrationTests(SalesCase):
             daraja.register_c2b_urls()
         args = call.call_args.args
         body = args[2]
-        self.assertEqual(body["ShortCode"], "3453945")
+        self.assertEqual(body["ShortCode"], "4348331")
         self.assertEqual(body["ConfirmationURL"],
                          f"https://pos.devs.surf/api/pay/c2b/confirm/{SECRET}/")
         self.assertEqual(body["ValidationURL"],

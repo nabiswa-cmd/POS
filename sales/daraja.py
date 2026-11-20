@@ -129,7 +129,7 @@ def stk_query(checkout_request_id):
 def register_c2b_urls():
     """Tell Safaricom to send till/paybill validation and confirmation notices to the secret callback URLs."""
     c = cfg()
-    body = {"ShortCode": c["TILL_NUMBER"] or c["SHORTCODE"], "ResponseType": "Completed",
+    body = {"ShortCode": c["SHORTCODE"], "ResponseType": "Completed",
             "ConfirmationURL": callback_url("c2b/confirm", c),
             "ValidationURL": callback_url("c2b/validate", c)}
     return _call("POST", "/mpesa/c2b/v2/registerurl", body, _auth(c), config=c)
