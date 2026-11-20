@@ -44,12 +44,9 @@ class ExpectedCashTests(unittest.TestCase):
         self.assertEqual(cr.describe("-300"), "Short by KES 300.00")
         self.assertEqual(cr.describe("0"), "Balanced")
 
-    def test_a_mismatch_needs_a_real_reason_but_a_match_does_not(self):
+    def test_variance_reason_is_optional(self):
         self.assertEqual(cr.check_reason("0", ""), "")
-        with self.assertRaises(cr.CashupError):
-            cr.check_reason("-5", "")
-        with self.assertRaises(cr.CashupError):
-            cr.check_reason("-5", "short")
+        self.assertEqual(cr.check_reason("-5", ""), "")
         self.assertEqual(cr.check_reason("-5", "  gave wrong change twice  "), "gave wrong change twice")
 
     def test_cannot_close_with_sales_in_progress_or_on_hold(self):
@@ -85,8 +82,8 @@ class ExpenseRuleTests(unittest.TestCase):
         with self.assertRaises(ar.ExpenseError):
             ar.check_paid_from("PETTY")
         self.assertEqual(ar.check_paid_from("CASH_TILL"), "CASH_TILL")
-        with self.assertRaises(ar.ExpenseError):
-            ar.check_void_reason("oops")
+        self.assertEqual(ar.check_void_reason(""), "")
+        self.assertEqual(ar.check_void_reason("  oops  "), "oops")
 
     def test_default_categories_are_unique(self):
         self.assertEqual(len(ar.DEFAULT_CATEGORIES), len(set(ar.DEFAULT_CATEGORIES)))

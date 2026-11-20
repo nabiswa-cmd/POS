@@ -13,7 +13,7 @@ NOW = datetime(2026, 11, 6, 12, 0, tzinfo=timezone.utc)
 
 
 class ValidateApproverTests(unittest.TestCase):
-    base = dict(requester_id=1, approver_id=2, approver_active=True, approver_can_approve=True, reason="Customer changed mind")
+    base = dict(requester_id=1, approver_id=2, approver_active=True, approver_can_approve=True)
 
     def test_valid(self):
         rules.validate_approver(**self.base)
@@ -30,10 +30,8 @@ class ValidateApproverTests(unittest.TestCase):
         with self.assertRaises(rules.ApprovalError):
             rules.validate_approver(**{**self.base, "approver_active": False})
 
-    def test_reason_required(self):
-        for bad in ("", "   ", None):
-            with self.assertRaises(rules.ApprovalError):
-                rules.validate_approver(**{**self.base, "reason": bad})
+    def test_reason_is_not_part_of_approver_validation(self):
+        rules.validate_approver(**self.base)
 
     def test_nobody_logged_in_is_allowed_for_pos_open(self):
         rules.validate_approver(**{**self.base, "requester_id": None})

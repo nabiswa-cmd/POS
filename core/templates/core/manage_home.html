@@ -1,7 +1,7 @@
 {% extends "core/base.html" %}{% block title %}Home{% endblock %}
 {% block content %}
-<h1>{{ shop_name }}</h1><p class="sub">What matters now. Everything here is also reachable with the keyboard.</p>
-<div class="dash">
+<h1>{{ shop_name }}</h1><p class="sub">Your shop at a glance. Choose a section to get started.</p>
+<div class="dash{% if sales_today is None %} no-sales{% endif %}">
   {% if sales_today is not None %}
   <div class="hero">
     <div class="lbl">Today's sales (KES)</div>
@@ -22,6 +22,8 @@
   {% if "stock.receive" in perms or "stock.approve_receiving" in perms %}<a class="tile" href="/manage/receiving/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="{{ icons.truck }}"/></svg><b>Receive</b>{% if pending_receivings %}<span class="badge">{{ pending_receivings }}</span>{% endif %}</a>{% endif %}
   {% if "products.view" in perms %}<a class="tile" href="/manage/products/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="{{ icons.tag }}"/></svg><b>Products</b></a>{% endif %}
   {% if "reports.sales.view" in perms or "reports.financial.view" in perms %}<a class="tile main" href="/manage/sales-report/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="{{ icons.reports }}"/></svg><b>Reports</b></a>{% endif %}
+  {% if "reports.sales.view" in perms %}<a class="tile" href="/manage/charts/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="{{ icons.chart }}"/></svg><b>Sales trends</b></a>{% endif %}
+  {% if "staff.manage" in perms %}<a class="tile" href="/manage/staff/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="{{ icons.people }}"/></svg><b>Add cashier or till supervisor</b></a>{% endif %}
+  {% if is_manager %}<a class="tile" href="/admin/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="{{ icons.people }}"/></svg><b>Staff, roles &amp; settings</b></a>{% endif %}
 </div>
-{% if is_manager %}<p class="sub" style="margin-top:22px"><a href="/admin/">Staff, roles &amp; settings</a></p>{% endif %}
 {% endblock %}

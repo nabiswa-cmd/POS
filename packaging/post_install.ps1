@@ -116,13 +116,22 @@ try {
     Run $Admin $setupArgs
     Remove-Item Env:\WINESPOS_MANAGER_PASSWORD -ErrorAction SilentlyContinue
 
-    Step "Starting the shop server and the nightly backup"
+    Step "Starting the shop server, printer and nightly backup"
     $account = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
     $serverAction = New-ScheduledTaskAction -Execute $Admin -Argument "server" -WorkingDirectory $AppDir
     $serverSettings = New-ScheduledTaskSettingsSet -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 1) `
         -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask -TaskName "WinesPOS Server" -Action $serverAction -Trigger (New-ScheduledTaskTrigger -AtStartup) `
         -Principal $account -Settings $serverSettings -Force | Out-Null
+    $printerConfigured = [bool](Select-String -Path $EnvFile -Pattern '^WINESPOS_RECEIPT_PRINTER=.+$' -Quiet)
+    Stop-ScheduledTask -TaskName "WinesPOS Printer" -ErrorAction SilentlyContinue
+    if ($printerConfigured) {
+        $printerAction = New-ScheduledTaskAction -Execute $Admin -Argument "manage print_receipts --loop" -WorkingDirectory $AppDir
+        Register-ScheduledTask -TaskName "WinesPOS Printer" -Action $printerAction -Trigger (New-ScheduledTaskTrigger -AtStartup) `
+            -Principal $account -Settings $serverSettings -Force | Out-Null
+    } else {
+        Unregister-ScheduledTask -TaskName "WinesPOS Printer" -Confirm:$false -ErrorAction SilentlyContinue
+    }
     $backupAction = New-ScheduledTaskAction -Execute $Admin -Argument "manage backup_db" -WorkingDirectory $AppDir
     $backupSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask -TaskName "WinesPOS Backup" -Action $backupAction -Trigger (New-ScheduledTaskTrigger -Daily -At 23:00) `
@@ -174,6 +183,7 @@ while (`$true) {
     }
     if (-not $up) { throw "The server did not start. See $Logs and run: WinesPOSAdmin.exe manage selfcheck" }
     Write-Host "The server is running."
+    if ($printerConfigured) { Start-ScheduledTask -TaskName "WinesPOS Printer" }
     & $Admin manage selfcheck
     Stop-Transcript | Out-Null
     exit 0

@@ -1,13 +1,32 @@
 from django.contrib.auth import login, logout
 from django.http import JsonResponse
+from django.contrib import messages
+from django.shortcuts import redirect, render
 
 from core import audit
+from core.decorators import perm_required
 from core.http import bad, client_ip, login_required_json, post_json
 
 from . import services
+from .forms import StaffCreationForm
+from .models import User
 from .permissions import AREA_PERMS, RESTRICTED_ACTIONS
 
 BACKEND = "django.contrib.auth.backends.ModelBackend"
+
+
+@perm_required("staff.manage")
+def manage_staff(request):
+    form = StaffCreationForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        staff = form.save(actor=request.user)
+        messages.success(request, f"{staff.display_name} was added as {staff.role.name}.")
+        return redirect("manage-staff")
+    return render(request, "accounts/manage_staff.html", {
+        "form": form,
+        "roles_available": form.fields["role"].queryset.exists(),
+        "staff_members": User.objects.filter(is_manager=False).select_related("role").order_by("username"),
+    })
 
 
 def user_payload(user):

@@ -13,8 +13,6 @@ CENT = Decimal("0.01")
 DENOMINATIONS = (1000, 500, 200, 100, 50, 40, 20, 10, 5, 1)
 MAX_PIECES = 100000            # per denomination: anything above this is a typing slip, not a real count
 MAX_COUNTED = Decimal("50000000")
-MIN_REASON = 8                 # same minimum as the M-PESA reconciliation reasons
-
 BALANCED, OVER, SHORT = "BALANCED", "OVER", "SHORT"
 
 
@@ -75,12 +73,8 @@ def classify(var):
 
 
 def check_reason(var, reason):
-    """A drawer that does not balance can only be closed with a reason in words."""
-    text = (reason or "").strip()
-    if money(var) != 0 and len(text) < MIN_REASON:
-        raise CashupError(f"The count is off by KES {abs(money(var))}. Recount, or type a reason of at least "
-                          f"{MIN_REASON} characters.")
-    return text
+    """Return an optional explanation for a cash count variance."""
+    return (reason or "").strip()[:250]
 
 
 def check_can_close(*, open_carts, held_sales):

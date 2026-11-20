@@ -1,7 +1,7 @@
 {% extends "core/base.html" %}{% block title %}Expenses{% endblock %}
 {% block content %}
 <h1>Expenses</h1>
-<p class="sub">Money spent to run the shop. An entry is never edited or deleted: if it is wrong, void it with a reason and enter it again. Cash taken from a till drawer lowers that drawer's expected cash at cash-up.</p>
+<p class="sub">Money spent to run the shop. An entry is never edited or deleted: if it is wrong, void it and enter it again. An explanation is optional. Cash taken from a till drawer lowers that drawer's expected cash at cash-up.</p>
 
 <h2>Record an expense</h2>
 <form method="post" autocomplete="off">{% csrf_token %}<input type="hidden" name="action" value="add">
@@ -44,6 +44,6 @@
 <td class="num">{{ e.amount }}</td><td>{{ e.recorded_by.display_name }}</td>
 <td>{% if e.is_void %}<span class="pill bad">voided</span><br><span class="muted">{{ e.void_reason }}</span>{% else %}
 <form method="post" style="display:flex;gap:6px">{% csrf_token %}<input type="hidden" name="action" value="void"><input type="hidden" name="expense_id" value="{{ e.pk }}">
-<input name="reason" placeholder="Reason to void" aria-label="Reason to void" maxlength="250" required style="min-width:150px"><button class="ghost" type="submit">Void</button></form>{% endif %}</td>
+<input name="reason" placeholder="Reason to void (optional)" aria-label="Reason to void (optional)" maxlength="250" style="min-width:150px"><button class="ghost" type="submit">Void</button></form>{% endif %}</td>
 </tr>{% empty %}<tr><td colspan="7" class="muted">No expenses in this period.</td></tr>{% endfor %}</table>
 {% endblock %}

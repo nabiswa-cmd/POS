@@ -141,7 +141,7 @@ class PartialInventoryServiceTests(CatalogCase):
         self.assertEqual(self.product.stock_qty, 1)
         self.assertFalse(Bottle.objects.filter(product=self.product).exists())
 
-    def test_volume_adjustment_tracks_bottle_and_requires_reason(self):
+    def test_volume_adjustment_tracks_bottle_with_optional_reason(self):
         self.add_stock(1)
         bottle = services.open_bottle(product_id=self.product.pk, capacity_ml=Decimal("750"), user=self.cashier,
                                       operation_key="open-for-adjustment")
@@ -154,9 +154,9 @@ class PartialInventoryServiceTests(CatalogCase):
         self.assertEqual(bottle.remaining_ml, Decimal("745.00"))
         self.assertEqual(movement.movement_type, mr.VOLUME_ADJUST)
         self.assertEqual(movement.bottle_remaining_after_ml, Decimal("745.00"))
-        with self.assertRaises(services.StockError):
-            services.adjust_bottle_volume(bottle_id=bottle.pk, volume_ml=Decimal("1"), user=self.manager,
-                                          operation_key="no-reason", reason=" ")
+        movement = services.adjust_bottle_volume(bottle_id=bottle.pk, volume_ml=Decimal("1"), user=self.manager,
+                                                 operation_key="no-reason", reason=" ")
+        self.assertEqual(movement.reason, "")
 
     def test_manual_opening_requires_available_sealed_bottle(self):
         with self.assertRaises(services.StockError):

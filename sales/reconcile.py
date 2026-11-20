@@ -2,7 +2,7 @@
 
 Rules:
 * A confirmed M-PESA payment is never edited or deleted. Reconciliation only changes its STATUS:
-  waiting (UNMATCHED)  <->  set aside (IGNORED, with a reason, who and when).  A payment used on a sale (MATCHED) is final.
+  waiting (UNMATCHED)  <->  set aside (IGNORED, optionally with a reason, who and when).  A payment used on a sale (MATCHED) is final.
 * Only someone holding `payments.reconcile` (the owner always does) can set aside or restore. Viewing is wider.
 * Setting aside does NOT mean the money was handled. It only takes it off the cashier's list so nobody sells against it
   by mistake; the reason says why (customer paid twice and is being refunded, test payment, wrong till, ...).
@@ -25,7 +25,6 @@ from .services import NotAllowed, SaleError
 
 OLD_AFTER_HOURS = 24          # a payment nobody has used for this long is flagged
 STK_STUCK_MINUTES = 10        # a phone request still "waiting" after this long needs a look
-MIN_REASON = 8
 ZERO = Decimal("0.00")
 
 
@@ -35,15 +34,12 @@ def _need(user, action):
 
 
 def _reason(text):
-    reason = " ".join(str(text or "").split())[:250]
-    if len(reason) < MIN_REASON:
-        raise SaleError(f"Give a reason of at least {MIN_REASON} characters, so the next person understands.")
-    return reason
+    return " ".join(str(text or "").split())[:250]
 
 
 @transaction.atomic
 def set_aside(user, txn_id, reason, ip=None):
-    """Take a payment nobody used off the cashiers' list, with a reason."""
+    """Take a payment nobody used off the cashiers' list; the reason is optional."""
     _need(user, "set aside payments")
     reason = _reason(reason)
     txn = MpesaTransaction.objects.select_for_update().filter(pk=txn_id).first()
@@ -150,11 +146,6 @@ def day_report(day):
     for r in stuck.select_related("sale")[:25]:
         problems.append(f"Phone request for KES {r.amount:,.2f} sent {timezone.localtime(r.created_at):%d %b %H:%M} never got an answer. "
                         "If the customer says they paid, look for it under Waiting payments.")
-    # 7. Set-aside payments must say why.
-    checks += 1
-    for t in ignored.filter(resolution_reason="")[:25]:
-        problems.append(f"Payment {t.trans_id} is set aside without a reason.")
-
     return {
         "day": day, "received": {"count": received.count(), "total": _sum(received)}, "by_status": by_status,
         "used_today": used_today,

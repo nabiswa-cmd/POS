@@ -9,6 +9,15 @@
 .charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
 .charts .wide{grid-column:1/-1}
 @media (max-width:900px){.charts{grid-template-columns:minmax(0,1fr)}}
+.charts-filter{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;margin:0}
+.charts-filter>div{flex:1 1 190px;min-width:0}
+.charts-filter label{margin-top:0}
+.charts-filter-submit{flex:0 0 auto}
+.charts-filter-submit button{min-width:120px}
+.period-presets{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:12px 0 18px}
+.period-presets>span{margin-right:4px;color:var(--muted);font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.period-presets .btn{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:8px 12px;font-size:11px}
+.period-presets .selected{color:var(--text);border-color:var(--gold);background:var(--nav-on)}
 .chart-card{margin:0}
 .chart-card h3{margin:0 0 2px;font:600 16px var(--serif)}
 .chart-card .note{margin:0 0 10px;color:var(--muted);font-size:13px}
@@ -36,6 +45,17 @@
 .hb-bar i{display:block;height:100%;min-width:2px;background:var(--s1);border-radius:0 4px 4px 0}
 .hb-val{font-variant-numeric:tabular-nums;color:var(--muted);min-width:5ch;text-align:right}
 @media (max-width:560px){.hb-row{grid-template-columns:1fr auto}.hb-label{grid-column:1/-1}.hb-bar{grid-column:1}}
+@media (max-width:560px){
+  .charts-filter{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .charts-filter>div{min-width:0}
+  .charts-filter-submit{grid-column:1/-1}
+  .charts-filter-submit button{width:100%}
+  .period-presets{gap:7px;margin-top:10px}
+  .period-presets>span{flex:0 0 100%;margin-bottom:2px}
+  .period-presets .btn{flex:1 1 auto;padding-right:9px;padding-left:9px}
+  .chart-head{align-items:flex-start}
+  .seg button{min-height:40px;padding-right:9px;padding-left:9px}
+}
 details.tv{margin-top:10px}details.tv summary{cursor:pointer;color:var(--muted);font-size:12px;letter-spacing:.06em;text-transform:uppercase}
 details.tv table{margin-top:8px;font-size:13px}
 .empty-note{padding:26px 0;color:var(--muted);text-align:center}

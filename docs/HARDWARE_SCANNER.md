@@ -47,12 +47,16 @@ every online source. To skip a source or change the order, edit `EXTERNAL_LOOKUP
 reported as a local barcode miss; a source that is only rate-limited is skipped and the next one is tried.
 
 ## Lock and sleep
-`Ctrl+Alt+L` (or the Lock & sleep button) signs the cashier out and puts the computer to sleep. The sale
-in progress and shift stay open, but the shared till is not locked. On waking, the cashier signs in again.
-By default, a supervisor authorizes the till first. The manager can change this in Django admin >
+`Ctrl+Alt+L` (or the Lock & sleep button) locks the till, signs the cashier out and puts the computer to sleep.
+The sale in progress and shift stay open. On waking, the cashier returns to the cashier login screen and signs
+back into that same till without another supervisor authorization.
+
+For a new shift, a supervisor authorizes a specific cashier for a specific till before that cashier signs in.
+The manager can change the general POS opening policy in Django admin >
 **Shop settings** > **POS opening policy**:
 
-* **Supervisor authorizes every POS login** (default): each new POS session needs supervisor authorization.
+* **Supervisor authorizes every POS login** (default): each new cashier opening needs supervisor authorization;
+  resuming a locked shift after sleep does not.
 * **Supervisor authorizes; the same cashier may log back in while their shift is open**: supervisors authorize
   new shifts; the cashier can resume their own open shift.
 * **Cashier may log in and open a shift without a supervisor**: cashiers sign in with their own credentials.

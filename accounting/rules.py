@@ -1,14 +1,13 @@
 """Pure expense rules (no Django), so they can be tested anywhere.
 
 An expense is money the shop spent to run (rent, power, wages, licences ...). It is never edited or deleted:
-a mistake is voided with a reason and entered again, so the books keep the full story.
+a mistake is voided and entered again, so the books keep the full story. Any explanation is optional.
 """
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 CENT = Decimal("0.01")
 MAX_AMOUNT = Decimal("10000000")
-MIN_REASON = 8
 MAX_BACKDATE_DAYS = 400          # about a year and a bit: old enough for a late annual licence, not for nonsense
 
 # Where the money came from. Only CASH_TILL touches a till drawer (and so the cash-up).
@@ -71,7 +70,4 @@ def check_paid_from(code):
 
 
 def check_void_reason(text):
-    text = (text or "").strip()
-    if len(text) < MIN_REASON:
-        raise ExpenseError(f"Give a reason of at least {MIN_REASON} characters.")
-    return text[:250]
+    return (text or "").strip()[:250]

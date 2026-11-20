@@ -33,8 +33,8 @@
 {% if can_reopen %}
 <h2>Counted wrongly?</h2>
 <form method="post">{% csrf_token %}<input type="hidden" name="action" value="reopen">
-  <p class="muted">Reopening keeps the earlier count on record (marked superseded) and the shift has to be counted again. Say why.</p>
-  <label for="rr">Reason (at least {{ min_reason }} characters)</label><input id="rr" name="reason" maxlength="250" required>
+  <p class="muted">Reopening keeps the earlier count on record (marked superseded) and the shift has to be counted again.</p>
+  <label for="rr">Reason (optional)</label><input id="rr" name="reason" maxlength="250">
   <p><button type="submit" class="danger">Reopen shift</button></p>
 </form>
 {% endif %}
@@ -51,9 +51,9 @@
 {% if can_close_any %}
 <h2>Close this shift</h2>
 <form method="post" autocomplete="off">{% csrf_token %}<input type="hidden" name="action" value="close">
-  <p class="muted">Count the drawer, notes and coins only, including the float.{% if shift.cashier_id != request.user.pk %} You are counting for {{ shift.cashier.display_name }}: a reason is required.{% endif %}</p>
+  <p class="muted">Count the drawer, notes and coins only, including the float.{% if shift.cashier_id != request.user.pk %} You are counting for {{ shift.cashier.display_name }}.{% endif %}</p>
   {% include "tills/_count_fields.html" %}
-  <label for="rc">Reason (needed if the count does not match{% if shift.cashier_id != request.user.pk %}, and always when closing for someone else{% endif %}; at least {{ min_reason }} characters)</label>
+  <label for="rc">Reason (optional)</label>
   <input id="rc" name="reason" maxlength="250">
   <p><button type="submit">Close shift</button></p>
 </form>

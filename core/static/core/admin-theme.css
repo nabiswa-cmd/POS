@@ -17,3 +17,36 @@ thead th{background:var(--th)}
 input[type=text],input[type=password],input[type=number],input[type=email],input[type=search],select,textarea{background:var(--glass-field);color:var(--text);border:1px solid var(--line)}
 .button,input[type=submit],input[type=button],.submit-row input,a.button{border-radius:0}
 #footer{display:none}
+#nav-sidebar .admin-nav-mode{display:flex;align-items:center;justify-content:flex-start;gap:10px;width:100%;min-height:40px;margin:4px 0 8px;padding:8px 10px;
+  color:var(--text);background:var(--ghost);border:1px solid var(--line-strong);text-align:left;text-transform:none;letter-spacing:0}
+#nav-sidebar .admin-nav-mode-icon{flex:0 0 20px;text-align:center;font-size:20px;line-height:1}
+#nav-sidebar .admin-nav-entry{display:flex;align-items:center;gap:10px;min-height:40px;padding:7px 8px;text-decoration:none}
+#nav-sidebar .admin-nav-entry-icon{display:inline-flex;flex:0 0 20px;align-items:center;justify-content:center;width:20px;height:20px;color:var(--muted)}
+#nav-sidebar .admin-nav-entry-icon svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+#nav-sidebar .admin-nav-entry-label{min-width:0;overflow-wrap:anywhere}
+body.admin-nav-icons-only #nav-sidebar{flex:0 0 66px;width:66px;padding-right:6px;padding-left:6px}
+body.admin-nav-icons-only #nav-sidebar #nav-filter{display:none}
+body.admin-nav-icons-only #nav-sidebar .module caption,
+body.admin-nav-icons-only #nav-sidebar .module th{padding-right:0!important;padding-left:0!important}
+body.admin-nav-icons-only #nav-sidebar .admin-nav-mode{justify-content:center;padding-right:4px;padding-left:4px}
+body.admin-nav-icons-only #nav-sidebar .admin-nav-mode-label,
+body.admin-nav-icons-only #nav-sidebar .admin-nav-entry-label{display:none}
+body.admin-nav-icons-only #nav-sidebar .admin-nav-entry{justify-content:center;padding-right:4px;padding-left:4px}
+body.admin-nav-icons-only #nav-sidebar .module td{display:none}
+body.admin-nav-icons-only .main.shifted > #nav-sidebar + .content{max-width:calc(100% - 90px)}
+@media (max-width:767px){
+  #container{min-width:0}
+  #header{padding:10px 12px}
+  #user-tools{margin:8px 0 0;text-align:left;white-space:normal}
+  #user-tools a{display:inline-block;min-height:40px;padding:8px 10px}
+  .breadcrumbs{padding:10px 12px}
+  #content{padding:16px 12px}
+  #content-main,#content-related{float:none;width:auto;margin:0}
+  #content-related{margin-top:16px}
+  #changelist .results{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  #changelist .results table{width:max-content;min-width:100%}
+  #changelist .actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+  #changelist .actions select{max-width:100%}
+  .button,input[type=submit],input[type=button],a.button{min-height:44px}
+  input[type=date],input[type=datetime-local]{max-width:100%}
+}

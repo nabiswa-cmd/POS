@@ -114,7 +114,7 @@ The supervisor can:
 
 The supervisor must not automatically have unrestricted manager access.
 
-Every approval must be recorded with the supervisor's identity, date, time and reason.
+Every approval is recorded with the supervisor's identity and date/time; an explanation is optional.
 
 ## C. CASHIER LOGIN
 

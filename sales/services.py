@@ -69,6 +69,8 @@ def open_shift_for(user, till_number):
              .filter(till__number=till_number, cashier=user, closed_at__isnull=True).first()) if till_number else None
     if shift is None:
         raise SaleError("Open your shift on this till before selling.")
+    if shift.locked_at is not None:
+        raise SaleError("This till is locked. Sign in again to continue.")
     return shift
 
 
@@ -98,15 +100,10 @@ def _authority(user, approval):
 
 
 def _why(user, approval, reason, what):
-    """The reason to record for a restricted action. The owner may act without typing one."""
+    """Return the optional explanation for a restricted action."""
     if approval:
         return approval.reason
-    reason = (reason or "").strip()
-    if reason:
-        return reason
-    if auth_services.is_exempt(user):
-        return "Owner action (no approval needed)"
-    raise SaleError(f"A reason is required to {what}.")
+    return (reason or "").strip()[:250]
 
 
 def _locked_sale(user, shift, *, create=False):

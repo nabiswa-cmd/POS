@@ -140,6 +140,66 @@ class LoginTests(BaseCase):
             services.authenticate("sup", biometric=sign_assertion("sup", "shell-secret", now=1), context="t")
 
 
+class StaffManagementTests(BaseCase):
+    def test_manager_can_add_cashier_and_till_supervisor_without_admin(self):
+        self.client.force_login(self.manager)
+        page = self.client.get("/manage/staff/")
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Till supervisor")
+
+        from accounts.models import Role
+        for username, role_name in (("newcashier", "Cashier"), ("newsup", "Supervisor")):
+            role = Role.objects.get(name=role_name)
+            response = self.client.post("/manage/staff/", {
+                "username": username,
+                "first_name": username.title(),
+                "last_name": "",
+                "role": role.pk,
+                "password": "Long-safe-pass-9!",
+                "pin": "5678",
+            })
+            self.assertRedirects(response, "/manage/staff/")
+            created = User.objects.get(username=username)
+            self.assertEqual(created.role, role)
+            self.assertFalse(created.is_manager)
+            self.assertFalse(created.is_staff)
+            self.assertFalse(created.is_superuser)
+            self.assertTrue(created.check_password("Long-safe-pass-9!"))
+            self.assertTrue(created.check_pin("5678"))
+            self.assertTrue(AuditLog.objects.filter(
+                action="staff.created", object_ref=str(created.pk), actor=self.manager).exists())
+        self.assertContains(self.client.get("/manage/staff/"), "newcashier")
+        self.assertContains(self.client.get("/manage/staff/"), "newsup")
+
+    def test_only_staff_managers_can_open_staff_creation_page(self):
+        self.client.force_login(self.cashier)
+        self.assertEqual(self.client.get("/manage/staff/").status_code, 403)
+
+    def test_staff_form_rejects_manager_role_and_case_insensitive_duplicate_username(self):
+        from accounts.models import Role
+        self.client.force_login(self.manager)
+        response = self.client.post("/manage/staff/", {
+            "username": "CASH1",
+            "first_name": "Duplicate",
+            "role": Role.objects.get(name="Cashier").pk,
+            "password": "Long-safe-pass-9!",
+            "pin": "",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "already in use")
+
+        manager_role = Role.objects.create(name="Manager")
+        response = self.client.post("/manage/staff/", {
+            "username": "newboss",
+            "first_name": "New",
+            "role": manager_role.pk,
+            "password": "Long-safe-pass-9!",
+            "pin": "",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(User.objects.filter(username="newboss").exists())
+
+
 class ApprovalTests(BaseCase):
     def grant(self, approver="sup", secret="4321", requester=None, action="remove_item", ref="line-1", reason="Wrong item"):
         return services.grant_approval(
@@ -164,9 +224,9 @@ class ApprovalTests(BaseCase):
         with self.assertRaises(services.AuthError):
             self.grant(approver="sup", secret="4321", requester=self.supervisor)
 
-    def test_reason_required(self):
-        with self.assertRaises(services.AuthError):
-            self.grant(reason="  ")
+    def test_approval_reason_is_optional(self):
+        _, approval = self.grant(reason="  ")
+        self.assertEqual(approval.reason, "")
 
     def test_wrong_pin_refused(self):
         with self.assertRaises(services.AuthError):

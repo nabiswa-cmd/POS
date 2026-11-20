@@ -97,7 +97,7 @@ class CartTests(SalesCase):
 
 
 class PosLockTests(SalesCase):
-    def test_screen_lock_preserves_open_cart_without_locking_the_till(self):
+    def test_screen_lock_preserves_open_cart_and_resumes_without_supervisor(self):
         sale, line = self.scan()
         self.client.force_login(self.cashier)
         session = self.client.session
@@ -106,12 +106,11 @@ class PosLockTests(SalesCase):
 
         self.assertEqual(self.post("/api/pos/lock/", {}).status_code, 200)
         self.shift.refresh_from_db()
-        self.assertIsNone(self.shift.locked_at)
-        self.assertEqual(self.post("/api/pos/authorize/", {
-            "till": self.till1.number, "username": "sup", "secret": "4321"
-        }).status_code, 200)
-        resumed = self.post("/api/pos/cashier-login/", {
-            "till": self.till1.number, "username": "cash1", "secret": "1111"
+        self.assertIsNotNone(self.shift.locked_at)
+        with self.assertRaises(services.SaleError):
+            services.open_shift_for(self.cashier, self.till1.number)
+        resumed = self.post("/api/pos/unlock/", {
+            "till": self.till1.number, "username": "cash1", "secret": "1111",
         })
         self.assertEqual(resumed.status_code, 200)
         self.assertIsNotNone(resumed.json()["shift"])
@@ -181,9 +180,7 @@ class RemovalAndApprovalTests(SalesCase):
         from accounts.models import ApprovalPolicy
         ApprovalPolicy.objects.filter(action="remove_item").update(required=False)
         sale, line = self.scan()
-        with self.assertRaises(services.SaleError):               # still needs a written reason
-            services.remove_item(self.cashier, self.shift, line.pk)
-        services.remove_item(self.cashier, self.shift, line.pk, reason="Customer changed mind")
+        services.remove_item(self.cashier, self.shift, line.pk)
         self.assertEqual(SaleItem.objects.count(), 0)
 
 
@@ -480,7 +477,9 @@ class ApiTests(SalesCase):
         super().setUp()
         self.shift.closed_at = self.shift.opened_at          # use the real opening flow below
         self.shift.save()
-        self.assertEqual(self.post("/api/pos/authorize/", {"till": 1, "username": "sup", "secret": "4321"}).status_code, 200)
+        self.assertEqual(self.post("/api/pos/authorize/", {
+            "till": 1, "username": "sup", "secret": "4321",
+        }).status_code, 200)
         self.assertEqual(self.post("/api/pos/cashier-login/", {"username": "cash1", "secret": "1111", "till": 1}).status_code, 200)
         self.assertEqual(self.post("/api/pos/shift/open/", {"opening_float": "1000"}).status_code, 200)
 

@@ -28,8 +28,7 @@ class RefundRuleTests(SalesCase):
         for args in (("3500", 2, 0, "0", 3), ("3500", 2, 2, "7000", 1), ("3500", 2, 0, "0", 0), ("3500", 2, 0, "0", "x")):
             with self.assertRaises(rules.RuleError, msg=str(args)):
                 rr.line_refund(*args)
-        with self.assertRaises(rules.RuleError):
-            rr.check_reason("  ")
+        self.assertEqual(rr.check_reason("  "), "")
         with self.assertRaises(rules.RuleError):
             rr.check_method("CARD")
         with self.assertRaises(rules.RuleError):
@@ -86,9 +85,8 @@ class RefundFlowTests(SalesCase):
         refunds.cancel_refund(self.cashier, r2.pk)
         self.assertEqual(self.ask(qty=2).status, Refund.REQUESTED)
 
-    def test_reason_and_lines_are_required(self):
-        with self.assertRaises(services.SaleError):
-            self.ask(reason=" ")
+    def test_reason_is_optional_but_refund_lines_are_required(self):
+        self.assertEqual(self.ask(reason=" ").reason, "")
         with self.assertRaises(services.SaleError):
             self.ask(qty=0)
         with self.assertRaises(services.SaleError):
@@ -154,12 +152,13 @@ class RefundFlowTests(SalesCase):
             refunds.approve_refund(self.manager, r.pk)
         self.assertEqual(self.stock(), 9)
 
-    def test_reject_needs_authority_and_a_reason(self):
+    def test_reject_needs_authority_but_reason_is_optional(self):
         r = self.ask()
         with self.assertRaises(services.NotAllowed):
             refunds.reject_refund(self.cashier, r.pk, "no")
-        with self.assertRaises(services.SaleError):
-            refunds.reject_refund(self.supervisor, r.pk, " ")
+        rejected = refunds.reject_refund(self.supervisor, r.pk, " ")
+        self.assertEqual((rejected.status, rejected.reject_reason), (Refund.REJECTED, ""))
+        r = self.ask()
         self.assertEqual(refunds.reject_refund(self.supervisor, r.pk, "Bottle was opened").status, Refund.REJECTED)
         self.assertEqual(self.stock(), 8)
 

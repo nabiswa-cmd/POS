@@ -3,6 +3,7 @@ of Phase 3; these are the calls it makes. Every endpoint needs a signed-in cashi
 from functools import wraps
 
 from django.conf import settings
+from django.db import transaction
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -14,8 +15,10 @@ from core.http import bad, client_ip, login_required_json, post_json
 from core.models import ShopSettings
 from tills.models import CashierShift
 
-from . import cashup, daraja, etims, mpesa_rules, mpesa_services, receipt, refunds, relay, rules, services, shortcuts, tax
-from .models import Sale
+from . import (
+    cashup, daraja, etims, mpesa_rules, mpesa_services, printing, receipt, refunds, relay, rules, services, shortcuts, tax,
+)
+from .models import ReceiptPrintJob, Sale
 
 
 
@@ -208,28 +211,51 @@ def checkout_cash(request, data, shift):
                          "etims": sub.status if sub else None, "etims_note": sub.last_error if sub else ""})
 
 
-def _receipt_response(sale, duplicate):
+def _receipt_response(sale, duplicate, requested_by):
     data, lines = receipt.render(sale, duplicate=duplicate)
     qr = (data.get("etims") or {}).get("qr_text") or ""
-    return JsonResponse({"ok": True, "receipt": data, "lines": lines, "paper_mm": data["paper_mm"],
-                         "qr_svg": barcodes.qr_svg(qr) if qr else ""})
+    qr_svg = barcodes.qr_svg(qr) if qr else ""
+    response = {"ok": True, "receipt": data, "lines": lines, "paper_mm": data["paper_mm"], "qr_svg": qr_svg}
+    if printing.configured_printer():
+        job = ReceiptPrintJob.objects.create(
+            sale=sale,
+            requested_by=requested_by,
+            kind=ReceiptPrintJob.DUPLICATE if duplicate else ReceiptPrintJob.ORIGINAL,
+            payload={"lines": lines, "paper_mm": data["paper_mm"], "qr_svg": qr_svg},
+        )
+        response.update(print_job_id=job.pk, print_status=job.status)
+    return JsonResponse(response)
 
 
 @require_GET
 @login_required_json
 @_guard
+@transaction.atomic
 def receipt_original(request, sale_id, shift):
     """First print for the cashier who made the sale. After that, only a reprint (a marked duplicate)."""
     sale = services.mark_original_printed(request.user, sale_id)
-    return _receipt_response(receipt.get_completed(sale.pk), duplicate=False)
+    return _receipt_response(receipt.get_completed(sale.pk), duplicate=False, requested_by=request.user)
 
 
 @login_required_json
 @post_json
 @_guard
+@transaction.atomic
 def receipt_reprint(request, sale_id, data, shift):
     sale = services.mark_reprint(request.user, sale_id, ip=client_ip(request))
-    return _receipt_response(receipt.get_completed(sale.pk), duplicate=True)
+    return _receipt_response(receipt.get_completed(sale.pk), duplicate=True, requested_by=request.user)
+
+
+@require_GET
+@login_required_json
+@_guard
+def receipt_print_job_status(request, job_id, shift):
+    job = ReceiptPrintJob.objects.select_related("sale").filter(pk=job_id).first()
+    if job is None:
+        return bad("Print job not found.", 404)
+    if job.requested_by_id != request.user.pk and not request.user.can("receipts.reprint"):
+        return bad("You are not allowed to check this print job.", 403)
+    return JsonResponse({"ok": True, "status": job.status, "error": job.error})
 
 
 @require_GET

@@ -42,8 +42,7 @@ body.pos header .who{display:flex;align-items:center;gap:6px}
 .fkeys{display:flex;flex-wrap:wrap;gap:4px 16px;padding:7px 16px;background:var(--glass);border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
 .fkeys span b{color:var(--text);font-weight:600}
 #flash{position:fixed;left:50%;transform:translateX(-50%);bottom:54px;z-index:60;max-width:min(720px,92vw);padding:12px 20px;font-weight:600;
-  background:var(--opt-bg);border:1px solid var(--line-strong);border-bottom:3px solid var(--bad);box-shadow:var(--shadow)}
-#flash.ok{border-bottom-color:var(--ok)}
+  background:var(--opt-bg);border:1px solid var(--line-strong);border-bottom:0;box-shadow:var(--shadow)}
 #flash[hidden]{display:none}
 
 /* Dialogs */

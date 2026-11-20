@@ -35,7 +35,10 @@ def charts(request):
                ("Last 30 days", today - timedelta(days=29), today), ("This week", week, today),
                ("This month", month, today), ("Last month", last_month_end.replace(day=1), last_month_end),
                ("Last 90 days", today - timedelta(days=89), today)]
-    return render(request, "sales/charts.html", {"day_from": day_from, "day_to": day_to, "today": today, "presets": presets})
+    selected_preset = next((label for label, start, end in presets
+                            if day_from == start and day_to == end), None)
+    return render(request, "sales/charts.html", {"day_from": day_from, "day_to": day_to, "today": today,
+                                                  "presets": presets, "selected_preset": selected_preset})
 
 
 @perm_required("reports.sales.view")

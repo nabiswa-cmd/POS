@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Till {{ till.number }} | {{ shop_name }}</title>
-<link rel="stylesheet" href="{% static 'core/theme.css' %}">
-<link rel="stylesheet" href="{% static 'sales/pos.css' %}">
+<link rel="stylesheet" href="{% static 'core/theme.css' %}?v=6">
+<link rel="stylesheet" href="{% static 'sales/pos.css' %}?v=2">
 <script src="{% static 'core/theme.js' %}"></script>
 <link rel="stylesheet" href="{% static 'core/posloader.css' %}">
 <script src="{% static 'core/posloader.js' %}"></script>
@@ -148,7 +148,7 @@
 <dialog id="d-appr" aria-labelledby="h-appr"><form method="dialog" id="f-appr"><h3 id="h-appr">Supervisor approval</h3><p class="sub" id="s-appr"></p>
   <label for="a-user">Supervisor or manager username</label><input id="a-user" autocomplete="off">
   <label for="a-secret">Password or PIN</label><input id="a-secret" type="password" autocomplete="off">
-  <label for="a-reason">Reason</label><input id="a-reason" autocomplete="off" list="reasons">
+  <label for="a-reason">Reason (optional)</label><input id="a-reason" autocomplete="off" list="reasons">
   <datalist id="reasons"><option value="Customer changed their mind"><option value="Scanned by mistake"><option value="Wrong quantity"><option value="Damaged bottle"><option value="Regular customer discount"><option value="Price correction"></datalist>
   <div class="err" id="e-appr"></div>
   <div class="actions"><button type="submit">Approve</button><button type="button" class="ghost" data-close>Cancel</button></div></form></dialog>

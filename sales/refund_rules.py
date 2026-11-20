@@ -39,8 +39,6 @@ def line_refund(line_total, quantity, refunded_qty, refunded_amount, qty):
 
 def check_reason(reason):
     reason = re.sub(r"\s+", " ", str(reason or "")).strip()
-    if len(reason) < 3:
-        raise RuleError("Give a reason for the refund.")
     return reason[:250]
 
 

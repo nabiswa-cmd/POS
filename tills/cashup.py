@@ -63,8 +63,7 @@ def _check_who(user, shift):
 def close_shift(user, shift_id, counts, reason="", *, ip=None):
     """Count the drawer and close the shift. Returns (cashup, warnings).
 
-    Refused while a sale is in progress or on hold. A drawer that does not match needs a written reason.
-    If someone other than the cashier closes it, they must say why.
+    Refused while a sale is in progress or on hold. A drawer explanation is optional.
     """
     shift = (CashierShift.objects.select_for_update().select_related("till", "cashier")
              .filter(pk=shift_id or 0).first())
@@ -84,10 +83,6 @@ def close_shift(user, shift_id, counts, reason="", *, ip=None):
     snap = snapshot(shift)
     var = rules.variance(counted, snap["expected_cash"])
     why = rules.check_reason(var, reason)
-    if for_someone_else and len((reason or "").strip()) < rules.MIN_REASON:
-        raise CashupError(f"You are closing {shift.cashier.display_name}'s shift. Say why "
-                          f"(at least {rules.MIN_REASON} characters).")
-
     # An empty cart the POS opened by itself is not a sale: tidy it away so nothing is left dangling.
     carts.annotate(n=Count("items")).filter(n=0).delete()
 
@@ -116,9 +111,7 @@ def reopen_shift(user, shift_id, reason, *, ip=None):
     marked superseded; the shift is open again and must be counted again."""
     if not user.can("approve.reopen_shift"):
         raise PermissionError("Only a supervisor or the owner can reopen a closed shift.")
-    text = (reason or "").strip()
-    if len(text) < rules.MIN_REASON:
-        raise CashupError(f"Give a reason of at least {rules.MIN_REASON} characters.")
+    text = (reason or "").strip()[:250]
     shift = (CashierShift.objects.select_for_update().select_related("till", "cashier")
              .filter(pk=shift_id or 0).first())
     if shift is None or shift.closed_at is None:

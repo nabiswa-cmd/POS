@@ -69,6 +69,6 @@
 })();
 </script>
 <form method="post" class="actions">{% csrf_token %}<input type="hidden" name="action" value="submit"><button type="submit"{% if not items %} disabled{% endif %}>Finish and submit delivery</button></form>{% endif %}
-{% if can_decide %}<h2>Approval</h2><form method="post" class="card row">{% csrf_token %}<div style="flex:2"><label for="note">Reason (required to reject)</label><input id="note" name="note" type="text"></div>
+{% if can_decide %}<h2>Approval</h2><form method="post" class="card row">{% csrf_token %}<div style="flex:2"><label for="note">Reason (optional)</label><input id="note" name="note" type="text"></div>
 <div style="flex:0 0 auto"><button name="action" value="approve" type="submit">Approve and add to stock</button> <button class="danger" name="action" value="reject" type="submit">Reject</button></div></form>{% endif %}
 {% endblock %}

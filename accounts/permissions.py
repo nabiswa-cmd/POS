@@ -35,12 +35,12 @@ PERMISSIONS = {
     "discount.apply": "Apply ordinary discounts within policy",
     "receipts.reprint": "Reprint receipts (marked as duplicates)",
     "refunds.request": "Start a refund (needs approval to complete)",
-    "payments.reconcile": "Reconcile M-PESA: set aside or restore payments nobody used (with a reason)",
+    "payments.reconcile": "Reconcile M-PESA: set aside or restore payments nobody used",
     # Tills
     "shifts.view_own": "View own shift information",
     "shifts.view_all": "View all till shifts and cash-ups",
     "shifts.open": "Open a till shift",
-    "shifts.close_any": "Close another cashier's till shift (count the drawer for them, with a reason)",
+    "shifts.close_any": "Close another cashier's till shift (count the drawer for them)",
     # Money
     "expenses.manage": "Record and manage expenses",
     # Approval rights (see RESTRICTED_ACTIONS)

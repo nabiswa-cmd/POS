@@ -60,8 +60,7 @@ def pos_cashup(request):
             return render(request, "tills/cashup_slip.html", {"c": cu, "warnings": warnings, "done": True,
                                                               "lines": _slip_lines(cu)})
     return render(request, "tills/cashup_pos.html", {
-        "shift": shift, "grid": _grid(entered), "error": error, "reason": request.POST.get("reason", ""),
-        "min_reason": rules.MIN_REASON})
+        "shift": shift, "grid": _grid(entered), "error": error, "reason": request.POST.get("reason", "")})
 
 
 def _slip_lines(c):
@@ -115,7 +114,7 @@ def cashup_detail(request, shift_id):
         "shift": shift, "c": active, "history": history, "live": cashup.snapshot(shift) if active is None else None,
         "lines": _slip_lines(active) if active else [], "grid": _grid(),
         "can_close_any": user.can("shifts.close_any") or shift.cashier_id == user.pk,
-        "can_reopen": user.can("approve.reopen_shift"), "min_reason": rules.MIN_REASON,
+        "can_reopen": user.can("approve.reopen_shift"),
         "payouts": Expense.objects.select_related("category").filter(shift=shift, paid_from=Expense.CASH_TILL).order_by("id")})
 
 

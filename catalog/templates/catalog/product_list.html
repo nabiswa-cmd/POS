@@ -10,12 +10,14 @@
 </form>
 {% if perms and "products.manage" in perms %}<p class="noprint"><a class="btn" href="/manage/products/new/" accesskey="n">New product (Alt+N)</a></p>{% endif %}
 <table>
-<tr><th>Name</th><th>Brand</th><th>Category</th><th>Shelf</th><th class="num">Price</th>{% if show_cost %}<th class="num">Avg cost</th>{% endif %}<th class="num">Stock</th><th></th></tr>
+<tr><th>Name</th><th>Picture</th><th>Brand</th><th>Category</th><th>Shelf</th><th class="num">Price</th>{% if show_cost %}<th class="num">Avg cost</th>{% endif %}<th class="num">Stock</th><th></th></tr>
 {% for p in page %}
-<tr><td><a href="{% url 'product-detail' p.pk %}">{{ p.name }}</a><div class="muted">{{ p.sku }}</div></td><td>{{ p.brand|default:"" }}</td><td>{{ p.category|default:"" }}</td><td>{{ p.shelf.code|default:"" }}</td>
+<tr><td><a href="{% url 'product-detail' p.pk %}">{{ p.name }}</a><div class="muted">{{ p.sku }}</div></td>
+<td class="product-photo-cell">{% if p.image_url %}<img class="product-thumbnail" src="{{ p.image_url }}" alt="{{ p.name }} product photo" loading="lazy">{% else %}<span class="product-no-photo">No photo</span>{% endif %}</td>
+<td>{{ p.brand|default:"" }}</td><td>{{ p.category|default:"" }}</td><td>{{ p.shelf.code|default:"" }}</td>
 <td class="num">{{ p.selling_price }}</td>{% if show_cost %}<td class="num">{{ p.avg_cost }}</td>{% endif %}
 <td class="num">{{ p.stock_qty }} {% if p.is_low %}<span class="pill low">low</span>{% endif %}</td><td>{% if not p.active %}<span class="pill bad">inactive</span>{% endif %}</td></tr>
-{% empty %}<tr><td colspan="8" class="muted">No products found.</td></tr>{% endfor %}
+{% empty %}<tr><td colspan="{% if show_cost %}9{% else %}8{% endif %}" class="muted">No products found.</td></tr>{% endfor %}
 </table>
 <p class="noprint">{% if page.has_previous %}<a href="?page={{ page.previous_page_number }}&q={{ q|urlencode }}">Previous</a> {% endif %}Page {{ page.number }} of {{ page.paginator.num_pages }}{% if page.has_next %} <a href="?page={{ page.next_page_number }}&q={{ q|urlencode }}">Next</a>{% endif %}</p>
 {% endblock %}

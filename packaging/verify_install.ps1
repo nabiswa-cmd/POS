@@ -2,7 +2,7 @@
  After installing, run on each PC (as administrator) to check it really works:
      powershell -ExecutionPolicy Bypass -File "C:\Program Files\WinesPOS\scripts\verify_install.ps1"
  Prints PASS / FAIL per line and exits 1 if anything failed. Covers: shortcuts exist and point at the program,
- settings file is private, the server task and backup task exist, the server answers, the shop health check is clean.
+ settings file is private, the server, configured printer and backup tasks exist, the server answers, the shop health check is clean.
 #>
 param([string]$AppDir = (Split-Path $PSScriptRoot))
 $failed = 0
@@ -32,6 +32,9 @@ if ($serverPc) {
     $acl = (& icacls $envFile) -join " "
     Check "Settings file (holds secrets) is not readable by ordinary users" ($acl -notmatch "Users:|Everyone:|Authenticated Users:") $acl
     Check "Server task exists" ([bool](Get-ScheduledTask -TaskName "WinesPOS Server" -ErrorAction SilentlyContinue))
+    $printerConfigured = [bool](Select-String -Path $envFile -Pattern '^WINESPOS_RECEIPT_PRINTER=.+$' -Quiet)
+    $printerTask = [bool](Get-ScheduledTask -TaskName "WinesPOS Printer" -ErrorAction SilentlyContinue)
+    Check "Receipt printer task matches printer configuration" ($printerTask -eq $printerConfigured)
     Check "Nightly backup task exists" ([bool](Get-ScheduledTask -TaskName "WinesPOS Backup" -ErrorAction SilentlyContinue))
     $ok = $false
     try { $ok = (Invoke-WebRequest "http://127.0.0.1:8000/health/" -UseBasicParsing -TimeoutSec 5).StatusCode -eq 200 } catch {}

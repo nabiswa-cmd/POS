@@ -5,12 +5,15 @@
 <h1>Charts</h1>
 <p class="sub">How sales are going and which products sell most. Sales are completed sales including VAT, by the day they were completed.</p>
 
-<form method="get" class="row" style="margin-bottom:10px">
-  <div><label for="f-from">From</label><input id="f-from" type="date" name="from" value="{{ day_from|date:'Y-m-d' }}"></div>
-  <div><label for="f-to">To</label><input id="f-to" type="date" name="to" value="{{ day_to|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}"></div>
-  <div style="flex:0 0 auto"><button type="submit">Show</button></div>
+<form method="get" class="charts-filter" aria-label="Filter charts by date">
+  <div><label for="f-from">From</label><input id="f-from" type="date" name="from" value="{{ day_from|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}"></div>
+  <div><label for="f-to">To</label><input id="f-to" type="date" name="to" value="{{ day_to|date:'Y-m-d' }}" min="{{ day_from|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}"></div>
+  <div class="charts-filter-submit"><button type="submit">Apply dates</button></div>
 </form>
-<p>{% for label, a, b in presets %}<a class="btn ghost" href="?from={{ a|date:'Y-m-d' }}&amp;to={{ b|date:'Y-m-d' }}">{{ label }}</a> {% endfor %}</p>
+<nav class="period-presets" aria-label="Quick date ranges">
+  <span>Quick ranges</span>
+  {% for label, a, b in presets %}<a class="btn ghost{% if label == selected_preset %} selected{% endif %}" href="?from={{ a|date:'Y-m-d' }}&amp;to={{ b|date:'Y-m-d' }}"{% if label == selected_preset %} aria-current="date"{% endif %}>{{ label }}</a>{% endfor %}
+</nav>
 
 <div class="viz" id="viz">
   <p class="msg error" id="viz-err" hidden>The charts could not be loaded. Check the server and try again.</p>

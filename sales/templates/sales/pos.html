@@ -7,7 +7,7 @@
 <link rel="icon" href="{% static 'core/favicon.ico' %}" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="{% static 'core/icons/icon-32.png' %}">
 <link rel="apple-touch-icon" href="{% static 'core/apple-touch-icon.png' %}">
-<link rel="stylesheet" href="{% static 'core/theme.css' %}">
+<link rel="stylesheet" href="{% static 'core/theme.css' %}?v=6">
 <script src="{% static 'core/theme.js' %}"></script>
 <link rel="stylesheet" href="{% static 'core/posloader.css' %}">
 <script src="{% static 'core/posloader.js' %}"></script>
@@ -51,6 +51,9 @@
   .veil{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:60}
   .dlg{background:var(--opt-bg);border:1px solid var(--line-strong);box-shadow:var(--shadow);padding:22px 24px;width:min(560px,94vw);max-height:88vh;overflow:auto}
   .dlg h2{margin:0 0 12px;border:0;padding:0;font:600 20px var(--serif);text-transform:none;letter-spacing:0;color:var(--text)}
+  .dlg-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .dlg-head h2{margin:0}
+  .dlg-close{min-height:40px;padding:6px 12px;letter-spacing:0}
   .dlg .note{color:var(--muted);font-size:13px;margin:0 0 8px}
   .dlg .err{color:var(--bad);font-size:14px;min-height:20px;margin-top:8px}
   .dlg .btns{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
@@ -59,6 +62,18 @@
   .opts li{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:12px}
   .opts li:last-child{border-bottom:0} .opts li.on{background:var(--nav-on);box-shadow:inset 0 0 0 1px var(--line-strong)}
   .opts li.off{opacity:.45}
+  .opts li.pay-option{display:block;padding:0}
+  .pay-method{display:flex;width:100%;min-height:48px;align-items:center;justify-content:space-between;gap:12px;margin:0;padding:10px 12px;
+    color:var(--text);background:transparent;border:0;text-align:left;text-transform:none;letter-spacing:0}
+  .pay-method::after{display:none}
+  .pay-method:disabled{color:var(--muted);cursor:not-allowed}
+  .method-touch{display:none}
+  @media (max-width:900px){.pay-method{min-height:56px}.method-desktop{display:none}.method-touch{display:inline}}
+  .search-result{display:flex;width:100%;min-height:52px;align-items:center;justify-content:space-between;gap:12px;margin:0;padding:10px 12px;
+    color:var(--text);background:transparent;border:0;text-align:left;text-transform:none;letter-spacing:0}
+  .search-result::after{display:none}
+  .search-result small{color:var(--muted)}
+  .cartbox tbody tr{cursor:pointer}
   .keys{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px}
   /* Touch action bar: the same actions as the keyboard shortcuts, on screen. Shown on phones and small tablets only. */
   .actionbar{display:none}
@@ -67,6 +82,7 @@
     .actionbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) minmax(0,1.7fr);gap:8px;position:fixed;z-index:30;left:0;right:0;bottom:0;
       padding:8px 10px calc(8px + env(safe-area-inset-bottom));background-color:var(--surface-nav);border-top:1px solid var(--border)}
     .actionbar button{min-height:52px;padding:6px 4px;font-size:11px;letter-spacing:.04em;margin:0}
+    .actionbar button svg{display:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
     .actionbar button.pay{font-size:15px;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.15;letter-spacing:.06em}
     .actionbar button.pay small{font:600 12px var(--sans);letter-spacing:0;opacity:.9;text-transform:none}
     .scanrow button,.dlg .btns>*,button{min-height:48px}
@@ -77,6 +93,8 @@
     body.pos{height:auto;min-height:100vh;overflow:auto}
     .bar{position:sticky;top:0;z-index:20;flex-wrap:wrap;gap:6px 14px;padding:8px 12px}.bar .grow{display:none}
     .bar span:last-child{display:none}
+    .bar .theme-toggle{width:34px;height:34px;min-height:34px;flex-basis:34px;margin:0;padding:0}
+    .bar .theme-toggle svg{width:18px;height:18px}
     .work{display:flex;flex-direction:column;padding:10px 12px;gap:10px}
     .left{min-height:0}.cartbox{flex:none;max-height:46vh;min-height:140px}
     .prodrow{min-height:0;padding:6px 10px}.prodrow img{width:52px;height:52px}.prodrow .pn{font-size:16px}
@@ -106,6 +124,13 @@
     .right{grid-template-columns:1fr}
     .right>.panel:first-child,.right>.hints{grid-column:auto}
   }
+  @media (max-width:420px){
+    .actionbar{gap:6px;padding-right:8px;padding-left:8px}
+    .actionbar button{gap:3px}
+    .actionbar button svg{display:block}
+    .actionbar .action-label{display:none}
+    .actionbar button.pay svg{width:18px;height:18px}
+  }
   #printframe{position:fixed;width:0;height:0;border:0;left:-99px}
 </style>
 </head>
@@ -120,6 +145,7 @@
   <span class="grow"></span>
   <span id="conn" class="pill">Server OK</span>
   <span id="clock"></span>
+  <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch to light mode" title="Switch to light mode"><svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg><svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/></svg></button>
   <button id="lock-pos" class="ghost" type="button" title="Lock and put this computer to sleep (Ctrl+Alt+L)">Lock &amp; sleep</button>
   <span><kbd id="helpkey">F1</kbd> Help</span>
 </div>
@@ -149,11 +175,21 @@
   </div>
 </div>
 <div class="actionbar" id="actionbar" role="toolbar" aria-label="Sale actions">
-  <button type="button" class="ghost" data-act="search">Search</button>
-  <button type="button" class="ghost" data-act="quantity">Qty</button>
-  <button type="button" class="ghost" data-act="hold">Hold</button>
-  <button type="button" class="ghost" data-act="customer">Customer</button>
-  <button type="button" class="pay" data-act="complete">Pay<small id="ab-total">0.00</small></button>
+  <button type="button" class="ghost" data-act="search" aria-label="Search products" title="Search products">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg><span class="action-label">Search</span>
+  </button>
+  <button type="button" class="ghost" data-act="quantity" aria-label="Change quantity" title="Change quantity">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14"/><path d="M8 5v4m8 1v4m-5 1v4"/></svg><span class="action-label">Qty</span>
+  </button>
+  <button type="button" class="ghost" data-act="hold" aria-label="Hold sale" title="Hold sale">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5z"/><path d="M9 8v8m6-8v8"/></svg><span class="action-label">Hold</span>
+  </button>
+  <button type="button" class="ghost" data-act="customer" aria-label="Customer details" title="Customer details">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c.7-3.5 3.2-5.3 7.5-5.3s6.8 1.8 7.5 5.3"/></svg><span class="action-label">Customer</span>
+  </button>
+  <button type="button" class="pay" data-act="payment" aria-label="Choose payment method" title="Choose payment method">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="1"/><path d="M3 10h18m-13 5h4"/></svg><span>Pay</span><small id="ab-total">0.00</small>
+  </button>
 </div>
 <iframe id="printframe" title="Receipt printer"></iframe>
 <div id="dialogs"></div>
@@ -163,6 +199,7 @@
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
   var S = { cfg: null, cart: null, sel: -1, lastSale: null, stack: [], busy: false };
+  var printWatch = 0;
 
   /* ---------- helpers ---------- */
   function csrf() { var m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/); return m ? decodeURIComponent(m[1]) : ""; }
@@ -235,6 +272,12 @@
       if (/^F\d{1,2}$/.test(e.key)) e.preventDefault();       // no shortcut works behind an open dialog
       return;
     }
+    if (e.altKey && !e.ctrlKey && !e.shiftKey && String(e.key).toLowerCase() === "t") {
+      e.preventDefault();
+      var themeButton = document.querySelector("[data-theme-toggle]");
+      if (themeButton) themeButton.click();
+      return;
+    }
     var name = keyName(e);
     var act = name && S.keymap ? S.keymap[name] : null;
     if (act) { e.preventDefault(); run(act); return; }
@@ -288,7 +331,7 @@
         if (it.selling_unit) sub.push(esc(it.selling_unit));
         if (Number(it.discount) > 0) sub.push("Discount -" + fmt(it.discount));
         if (it.price_changed) sub.push("Price changed (list " + fmt(it.list_price) + ")");
-        h += '<tr class="' + (i === S.sel ? "sel" : "") + '"><td>' + pic(it, "thumb") + esc(it.name) + (sub.length ? "<small>" + sub.join(" &middot; ") + "</small>" : "") +
+        h += '<tr class="' + (i === S.sel ? "sel" : "") + '" data-item-index="' + i + '"><td>' + pic(it, "thumb") + esc(it.name) + (sub.length ? "<small>" + sub.join(" &middot; ") + "</small>" : "") +
           '</td><td class="num">' + it.quantity + '</td><td class="num">' + fmt(it.unit_price) + '</td><td class="num">' +
           (it.total_volume_ml == null ? "—" : fmt(it.total_volume_ml) + " ml") + '</td><td class="num"><b>' + fmt(it.line_total) + "</b></td></tr>";
       });
@@ -311,6 +354,12 @@
     renderCart();
   }
   function refresh() { return api("GET", "/api/sales/cart/").then(function (r) { if (r.ok) setCart(r.cart); return r; }); }
+  $("cartbox").addEventListener("click", function (e) {
+    var row = e.target.closest("tr[data-item-index]");
+    if (!row) return;
+    S.sel = Number(row.getAttribute("data-item-index"));
+    renderCart();
+  });
 
   /* ---------- approval window ----------
      When the server says a supervisor must approve (HTTP 409), ask for the approver's own login, get a
@@ -326,7 +375,7 @@
         '. A supervisor or manager types their own login. The cashier never sees it.</p>' +
         '<label>Supervisor / manager username</label><input id="ap-user" data-first autocomplete="off">' +
         '<label>Password or PIN</label><input id="ap-secret" type="password" autocomplete="off">' +
-        '<label>Reason</label><input id="ap-reason" autocomplete="off">' +
+        '<label>Reason (optional)</label><input id="ap-reason" autocomplete="off">' +
         '<div class="err" id="ap-err"></div><div class="btns"><button class="ghost" id="ap-cancel" type="button">Cancel (Esc)</button><button id="ap-ok" type="button">Approve (Enter)</button></div>',
         { onClose: function () { if (!done) resolve(null); } });
       var go = function () {
@@ -501,14 +550,24 @@
   /* ---------- search (F2) ---------- */
   function search() {
     var results = [], idx = 0, timer = null;
-    var d = openDialog('<h2>Search product</h2><p class="note">Search by name, brand or product code. Up / Down to choose, Enter to add. Start with 3* for a quantity.</p>' +
+    var d = openDialog('<div class="dlg-head"><h2>Search product</h2><button class="ghost dlg-close" id="sr-close" type="button" aria-label="Close product search">Close</button></div>' +
+      '<p class="note">Tap a product to add it. You can also use Up / Down and Enter. Start with 3* for a quantity.</p>' +
       '<input id="sr-q" data-first autocomplete="off" placeholder="e.g. johnnie, or 3*tusker"><ul class="opts" id="sr-list" style="margin-top:10px"></ul><div class="err" id="sr-err"></div>');
+    function selectResult(i) {
+      if (i < 0 || i >= results.length) return;
+      var raw = $("sr-q").value.trim(), m = raw.match(/^(\d{1,4})\s*[*x]/i), p = results[i];
+      closeDialog(d);
+      addProduct(p, m ? parseInt(m[1], 10) : 1);
+    }
     function paint() {
       $("sr-list").innerHTML = results.length ? results.map(function (p, i) {
-        return '<li class="' + (i === idx ? "on" : "") + '"><span>' + esc(p.name) + (p.brand ? " <small>" + esc(p.brand) + "</small>" : "") +
+        return '<li class="' + (i === idx ? "on" : "") + '"><button type="button" class="search-result" data-result="' + i + '"><span>' + esc(p.name) + (p.brand ? " <small>" + esc(p.brand) + "</small>" : "") +
           (p.code || p.sku ? ' <small>Code: ' + esc(p.code || p.sku) + "</small>" : "") +
-          '</span><span>' + fmt(p.unit_price) + ' &middot; stock ' + p.stock + "</span></li>";
+          '</span><span>' + fmt(p.unit_price) + ' &middot; stock ' + p.stock + "</span></button></li>";
       }).join("") : "";
+      Array.prototype.forEach.call($("sr-list").querySelectorAll("[data-result]"), function (button) {
+        button.addEventListener("click", function () { selectResult(Number(button.getAttribute("data-result"))); });
+      });
     }
     function query() {
       var raw = $("sr-q").value.trim(), m = raw.match(/^(\d{1,4})\s*[*x]\s*(.*)$/i), q = m ? m[2] : raw;
@@ -517,6 +576,7 @@
         if (r.ok) { results = r.items; idx = 0; paint(); $("sr-err").textContent = r.items.length ? "" : "No product found."; }
       });
     }
+    $("sr-close").addEventListener("click", function () { closeDialog(d); });
     $("sr-q").addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(query, 180); });
     d.onKey = function (e) {
       if (e.key === "ArrowDown") { e.preventDefault(); if (results.length) { idx = Math.min(results.length - 1, idx + 1); paint(); } return true; }
@@ -524,8 +584,7 @@
       if (e.key === "Enter") {
         e.preventDefault();
         if (!results.length) { query(); return true; }
-        var raw = $("sr-q").value.trim(), m = raw.match(/^(\d{1,4})\s*[*x]/i), p = results[idx];
-        closeDialog(d); addProduct(p, m ? parseInt(m[1], 10) : 1); return true;
+        selectResult(idx); return true;
       }
       return false;
     };
@@ -598,11 +657,17 @@
     }
     var d = openDialog('<h2>Payment method</h2><div class="grandlbl">Total payable (KES)</div><div class="grand" style="text-align:left">' + money(t.total) + "</div>" + info +
       '<ul class="opts">' + ms.map(function (m, i) {
-      return '<li class="' + (m.enabled ? "on" : "off") + '"><span>' + (i + 1) + ". " + esc(m.label) + "</span><span>" + (m.enabled ? "press " + (i + 1) : "not available yet") + "</span></li>";
+      return '<li class="pay-option ' + (m.enabled ? "on" : "off") + '"><button type="button" class="pay-method" data-payment-index="' + i +
+        '"' + (m.enabled ? "" : " disabled") + ' aria-label="Choose ' + esc(m.label) + ' payment"><span><b>' + (i + 1) + ". " + esc(m.label) +
+        '</b></span><span><span class="method-desktop">' + (m.enabled ? "Press " + (i + 1) : "Not available") +
+        '</span><span class="method-touch">' + (m.enabled ? "Tap to choose" : "Not available") + "</span></span></button></li>";
     }).join("") + '</ul><div class="btns">' + (staged ? '<button class="ghost" id="py-clr" type="button">Start over (C)</button>' : "") +
       '<button class="ghost" id="py-no" type="button">Back (Esc)</button><button id="py-ok" data-first type="button">Cash (Enter)</button></div>');
     function pick(i) { var m = ms[i]; if (!m || !m.enabled) return; closeDialog(d); if (m.code === "MPESA") mpesa(); else complete(); }
     function clear() { S.tender = null; closeDialog(d); payment(); }
+    Array.prototype.forEach.call(d.root.querySelectorAll("[data-payment-index]"), function (button) {
+      button.addEventListener("click", function () { pick(Number(button.getAttribute("data-payment-index"))); });
+    });
     $("py-ok").onclick = function () { pick(0); }; $("py-no").onclick = function () { closeDialog(d); };
     if ($("py-clr")) $("py-clr").onclick = clear;
     d.onKey = function (e) {
@@ -820,11 +885,27 @@
 
   /* ---------- receipts ---------- */
   function printLines(r, done) {
+    if (r.print_job_id) {
+      var token = ++printWatch, checks = 0;
+      function checkJob() {
+        if (token !== printWatch) return;
+        api("GET", "/api/sales/receipt/jobs/" + r.print_job_id + "/").then(function (job) {
+          if (!job.ok) { say(job.error || "Could not check the server printer.", "err"); return; }
+          if (job.status === "PRINTED") { say(done, "ok"); return; }
+          if (job.status === "FAILED") { say("Server printer failed: " + (job.error || "Ask the manager to check the printer."), "err"); return; }
+          if (++checks >= 20) { say("Receipt is queued for the server printer. It is still processing.", "ok"); return; }
+          setTimeout(checkJob, 1000);
+        });
+      }
+      say("Receipt queued for the server printer...", "ok");
+      checkJob();
+      return;
+    }
     var mm = r.paper_mm === 58 ? 58 : 80, font = mm === 58 ? 11 : 10;
-    var html = "<!doctype html><html><head><meta charset=utf-8><style>@page{size:" + mm + "mm auto;margin:0}html,body{margin:0;background:#fff;color:#000}" +
+    var html = "<!doctype html><html><head><meta charset=utf-8><style>@page{size:" + mm + "mm auto;margin:0}html,body{width:" + mm + "mm;margin:0 auto;background:#fff;color:#000}" +
       "pre{margin:0;padding:2mm;width:" + (mm - 4) + "mm;font:" + font + "px/1.25 'Courier New',monospace;white-space:pre-wrap}" +
       "svg{display:block;width:32mm;height:32mm;margin:2mm auto}" +
-      "img.logo{display:block;width:" + (mm === 58 ? 24 : 30) + "mm;height:auto;margin:2mm auto 0}</style></head><body>" +
+      "img.logo{display:block;width:auto;height:18mm;max-width:calc(" + mm + "mm - 4mm);object-fit:contain;margin:0 auto 1mm}</style></head><body>" +
       '<img class="logo" alt="" src="' + location.origin + LOGO_PRINT + '"><pre>' + esc(r.lines.join("\n")) + "</pre>" + (r.qr_svg || "") + "</body></html>";
     var f = $("printframe"); f.onload = function () { f.onload = null; try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { say("The printer did not start.", "err"); } focusScan(); };
     f.srcdoc = html;
@@ -834,7 +915,8 @@
     var call = dup ? api("POST", "/api/sales/receipt/" + id + "/reprint/", {}) : api("GET", "/api/sales/receipt/" + id + "/");
     call.then(function (r) {
       if (!r.ok) { say(r.error || "Could not print.", "err"); return; }
-      printLines(r, dup ? "Duplicate receipt sent to the printer." : "Receipt sent to the printer.");
+      var destination = r.print_job_id ? "the server printer" : "the printer";
+      printLines(r, dup ? "Duplicate receipt sent to " + destination + "." : "Receipt sent to " + destination + ".");
     });
   }
   function printRefund(id) {
@@ -874,7 +956,8 @@
     var rows = Object.keys(S.cfg.actions).map(function (a) { return "<kbd>" + esc(S.cfg.shortcuts[a]) + "</kbd><span>" + esc(S.cfg.actions[a]) + "</span>"; }).join("");
     var d = openDialog('<h2>Keyboard guide</h2><div class="keys">' + rows +
       "<kbd>Up / Down</kbd><span>Choose a line in the cart</span><kbd>Delete</kbd><span>Remove the chosen line (needs a supervisor)</span><kbd>Enter</kbd><span>Confirm</span>" +
-      '<kbd>Esc</kbd><span>Close a window (never approves or skips anything)</span><kbd>3*code</kbd><span>Scan 3 of a product: type 3*, then the code</span></div>' +
+      '<kbd>Esc</kbd><span>Close a window (never approves or skips anything)</span><kbd>3*code</kbd><span>Scan 3 of a product: type 3*, then the code</span>' +
+      '<kbd>Ctrl+Alt+L</kbd><span>Lock this till and put the computer to sleep</span><kbd>Alt+T</kbd><span>Switch between light and dark themes</span></div>' +
       '<div class="btns"><button id="hp-ok" data-first type="button">Close (Enter)</button></div>');
     $("hp-ok").onclick = function () { closeDialog(d); };
     d.onKey = function (e) { if (e.key === "Enter") { e.preventDefault(); closeDialog(d); return true; } return false; };
@@ -918,7 +1001,7 @@
     var d = openDialog("<h2>Refund for " + esc(sale.number) + "</h2><p class=\"note\">Sale total " + fmt(sale.total) + (sale.customer ? " | " + esc(sale.customer) : "") +
       '. Type how many of each item come back.</p><table class="rl"><tr><th>Item</th><th>Sold</th><th>Left</th><th>Refund</th></tr>' + rows + "</table>" +
       '<label>Pay the customer back by</label><select id="rl-method"><option value="CASH">Cash</option><option value="MPESA">M-PESA</option></select>' +
-      '<label>Reason</label><input id="rl-reason" autocomplete="off" placeholder="e.g. bottle was faulty">' +
+      '<label>Reason (optional)</label><input id="rl-reason" autocomplete="off" placeholder="e.g. bottle was faulty">' +
       '<label><input type="checkbox" id="rl-back" checked style="width:auto"> Goods are fine to sell again (put back in stock)</label>' +
       '<div class="err" id="rl-err"></div><div class="btns"><button class="ghost" id="rl-no" type="button">Cancel (Esc)</button><button id="rl-ok" type="button">Ask for approval (Enter)</button></div>');
     var first = d.root.querySelector(".rl-q"); if (first) { first.focus(); first.select(); }
@@ -1028,7 +1111,7 @@
     Object.keys(r.shortcuts).forEach(function (a) { S.keymap[r.shortcuts[a]] = a; });
     $("till").textContent = r.till; $("cashier").textContent = r.cashier; $("authby").textContent = r.owner ? "(owner)" : r.authorized_by;
     $("ownerpill").hidden = !r.owner; $("helpkey").textContent = r.shortcuts.help;
-    $("hints").innerHTML = ["search", "quantity", "discount", "hold", "retrieve", "complete", "print", "shift", "approval", "customer", "help"].map(function (a) {
+    $("hints").innerHTML = ["search", "quantity", "discount", "hold", "retrieve", "payment", "complete", "print", "shift", "approval", "customer", "help"].map(function (a) {
       return "<div><kbd>" + esc(r.shortcuts[a]) + "</kbd> " + esc(r.actions[a]) + "</div>";
     }).join("");
     refresh().then(function () { focusScan(); });

@@ -446,10 +446,15 @@ def label_print(request):
         items.append({"product": product, "code": code, "bars": bars, "qr": qr,
                       "shelf": product.shelf.code if product.shelf_id else ""})
     sheet = [item for item in items for _ in range(copies)]
+    if size["page"]:
+        page_capacity = size["cols"] * size["rows"]
+        pages = [sheet[start:start + page_capacity] for start in range(0, len(sheet), page_capacity)]
+    else:
+        pages = [sheet]
     audit.record("labels.printed", actor=request.user, object_type="labels",
                  new={"products": len(items), "copies": copies, "size": size["key"], "shelf": shelf_id or None},
                  ip=client_ip(request))
-    return render(request, "catalog/label_sheet.html", {"sheet": sheet, "size": size, "opts": opts,
+    return render(request, "catalog/label_sheet.html", {"sheet": sheet, "pages": pages, "size": size, "opts": opts,
                                                         "shop": ShopSettings.load().shop_name})
 
 

@@ -3,6 +3,7 @@ import json
 import re
 from decimal import Decimal as D
 from pathlib import Path
+from unittest.mock import patch
 
 from django.test import Client
 from django.urls import resolve
@@ -10,8 +11,8 @@ from django.urls import resolve
 from core.models import ShopSettings
 from tills.models import CashierShift
 
-from . import rules
-from .models import Sale
+from . import printing, rules
+from .models import ReceiptPrintJob, Sale
 from .tests import SalesCase
 
 STATIC = Path(__file__).parent / "static" / "sales"
@@ -53,6 +54,32 @@ class SellPageTests(ScreenCase):
         for text in ("Authorized by", self.supervisor.display_name, self.cashier.display_name, 'id="scan"',
                      "F9", "Complete the sale", "Supervisor authorization", "Shift summary"):
             self.assertIn(text, html)
+
+    def test_mobile_pay_uses_payment_method_selection_and_f8_explains_mpesa(self):
+        html = self.c.get("/pos/sell/").content.decode()
+        self.assertIn('data-act="payment"', html)
+        self.assertIn("Choose cash or M-PESA payment", self.c.get("/api/sales/config/").json()["actions"]["payment"])
+        self.assertEqual(self.c.get("/api/sales/config/").json()["shortcuts"]["payment"], "F8")
+
+    def test_mobile_search_and_cart_support_touch_without_keyboard(self):
+        html = self.c.get("/pos/sell/").content.decode()
+        self.assertIn('id="sr-close"', html)
+        self.assertIn("Tap a product to add it.", html)
+        self.assertIn('data-result="', html)
+        self.assertIn('data-item-index="', html)
+        self.assertIn('data-theme-toggle', html)
+        self.assertNotIn('class="t-label"', html)
+
+    def test_payment_methods_are_tappable_and_keep_desktop_number_shortcuts(self):
+        html = self.c.get("/pos/sell/").content.decode()
+        self.assertIn('data-payment-index=', html)
+        self.assertIn("Tap to choose", html)
+        self.assertIn("Press ", html)
+
+    def test_help_includes_lock_and_theme_shortcuts(self):
+        html = self.c.get("/pos/sell/").content.decode()
+        self.assertIn("Ctrl+Alt+L", html)
+        self.assertIn("Alt+T", html)
 
     def test_manager_can_change_a_shortcut_and_a_clash_falls_back_to_defaults(self):
         ShopSettings.objects.filter(pk=1).update(pos_shortcuts={"hold": "Alt+H"})
@@ -143,6 +170,25 @@ class ReceiptAsTheScreenUsesItTests(ScreenCase):
         post(self.c, "/api/sales/cart/add/", {"code": "6001111111111", "quantity": 2})
         return post(self.c, "/api/sales/checkout/cash/", {"tendered": tendered}).json()
 
+    def test_receipt_printing_keeps_local_dialog_when_server_printer_is_not_configured(self):
+        done = self.sell()
+        with patch.dict("os.environ", {"WINESPOS_RECEIPT_PRINTER": ""}):
+            response = self.c.get(f"/api/sales/receipt/{done['sale_id']}/").json()
+        self.assertTrue(response["ok"])
+        self.assertNotIn("print_job_id", response)
+        self.assertFalse(ReceiptPrintJob.objects.exists())
+
+    def test_receipt_job_worker_states_are_persisted(self):
+        done = self.sell()
+        job = ReceiptPrintJob.objects.create(
+            sale_id=done["sale_id"], requested_by=self.cashier, kind=ReceiptPrintJob.ORIGINAL, payload={"lines": []})
+        self.assertEqual(printing.claim_receipt_print_job(), job.pk)
+        job.refresh_from_db()
+        self.assertEqual((job.status, job.attempts), (ReceiptPrintJob.PRINTING, 1))
+        printing.finish_receipt_print_job(job.pk, error="Printer is offline.")
+        job.refresh_from_db()
+        self.assertEqual((job.status, job.error), (ReceiptPrintJob.FAILED, "Printer is offline."))
+
     def test_checkout_answer_has_what_the_done_box_shows(self):
         done = self.sell()
         self.assertTrue(done["ok"])
@@ -152,8 +198,14 @@ class ReceiptAsTheScreenUsesItTests(ScreenCase):
 
     def test_original_prints_once_then_only_a_supervisor_can_reprint_and_it_is_marked(self):
         done = self.sell()
-        first = self.c.get(f"/api/sales/receipt/{done['sale_id']}/").json()
+        with patch.dict("os.environ", {"WINESPOS_RECEIPT_PRINTER": "test-printer"}):
+            first = self.c.get(f"/api/sales/receipt/{done['sale_id']}/").json()
         self.assertTrue(first["ok"])
+        job = ReceiptPrintJob.objects.get(pk=first["print_job_id"])
+        self.assertEqual((job.kind, job.status, job.payload["paper_mm"]),
+                         (ReceiptPrintJob.ORIGINAL, ReceiptPrintJob.QUEUED, first["paper_mm"]))
+        status = self.c.get(f"/api/sales/receipt/jobs/{job.pk}/").json()
+        self.assertEqual(status["status"], ReceiptPrintJob.QUEUED)
         text = "\n".join(first["lines"])
         for expected in (done["number"], self.cashier.display_name, "Authorized by: " + self.supervisor.display_name,
                          "7,000.00", "Change", "1,000.00"):
@@ -166,8 +218,10 @@ class ReceiptAsTheScreenUsesItTests(ScreenCase):
         self.assertEqual(post(self.c, f"/api/sales/receipt/{done['sale_id']}/reprint/").status_code, 403)
         CashierShift.objects.create(till=self.till2, cashier=self.supervisor, authorized_by=self.manager)
         sup = self.other_client(self.supervisor, till=2)
-        dup = post(sup, f"/api/sales/receipt/{done['sale_id']}/reprint/").json()
+        with patch.dict("os.environ", {"WINESPOS_RECEIPT_PRINTER": "test-printer"}):
+            dup = post(sup, f"/api/sales/receipt/{done['sale_id']}/reprint/").json()
         self.assertTrue(dup["ok"])
+        self.assertEqual(ReceiptPrintJob.objects.get(pk=dup["print_job_id"]).kind, ReceiptPrintJob.DUPLICATE)
         self.assertIn("*** DUPLICATE RECEIPT ***", "\n".join(dup["lines"]))
         self.assertEqual(Sale.objects.get(pk=done["sale_id"]).reprint_count, 1)
 

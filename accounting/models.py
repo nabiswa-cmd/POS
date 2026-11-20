@@ -18,7 +18,7 @@ class ExpenseCategory(models.Model):
 
 
 class Expense(models.Model):
-    """Money the shop spent. Never edited and never deleted: a wrong entry is voided (with a reason) and re-entered.
+    """Money the shop spent. Never edited and never deleted: a wrong entry is voided and re-entered.
 
     Only the void fields can change, and only once. Amounts here are what the business paid; profit reports
     (Phase 5B) subtract the non-voided ones from gross profit to give net profit.
@@ -52,8 +52,6 @@ class Expense(models.Model):
             models.CheckConstraint(condition=Q(amount__gt=0), name="expense_amount_positive"),
             models.CheckConstraint(condition=~Q(paid_from="CASH_TILL") | Q(shift__isnull=False),
                                    name="till_cash_expense_has_shift"),
-            models.CheckConstraint(condition=Q(voided_at__isnull=True) | ~Q(void_reason=""),
-                                   name="voided_expense_has_reason"),
         ]
 
     def __str__(self):

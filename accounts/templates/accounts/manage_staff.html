@@ -1,0 +1,37 @@
+{% extends "core/base.html" %}
+{% block title %}Staff{% endblock %}
+{% block content %}
+<h1>Staff</h1>
+<p class="sub">Create cashier and till-supervisor accounts for POS sign-in.</p>
+
+<section class="card">
+  <h2>Add staff member</h2>
+  {% if not roles_available %}
+    <p class="msg error">Cashier and Supervisor roles are not set up. Run the shop setup command before adding staff.</p>
+  {% endif %}
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <div class="actions"><button type="submit">Add staff member</button></div>
+  </form>
+</section>
+
+<h2>Staff accounts</h2>
+{% if staff_members %}
+<table>
+  <thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Status</th></tr></thead>
+  <tbody>
+    {% for member in staff_members %}
+    <tr>
+      <td>{{ member.username }}</td>
+      <td>{{ member.display_name }}</td>
+      <td>{% if member.role.name == "Supervisor" %}Till supervisor{% else %}{{ member.role.name|default:"No role" }}{% endif %}</td>
+      <td>{% if member.is_active %}Active{% else %}Inactive{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No staff accounts yet.</p>
+{% endif %}
+{% endblock %}

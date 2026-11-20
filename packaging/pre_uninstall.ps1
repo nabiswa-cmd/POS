@@ -1,7 +1,9 @@
 # Run by the uninstaller. Stops and removes the tasks and firewall rule. NEVER touches the shop's data in ProgramData.
 $ErrorActionPreference = "SilentlyContinue"
 Stop-ScheduledTask -TaskName "WinesPOS Server"
+Stop-ScheduledTask -TaskName "WinesPOS Printer"
 Unregister-ScheduledTask -TaskName "WinesPOS Server" -Confirm:$false
+Unregister-ScheduledTask -TaskName "WinesPOS Printer" -Confirm:$false
 Unregister-ScheduledTask -TaskName "WinesPOS Backup" -Confirm:$false
 Unregister-ScheduledTask -TaskName "WinesPOS Tunnel" -Confirm:$false -ErrorAction SilentlyContinue
 Get-NetFirewallRule -DisplayName "WinesPOS second till" | Remove-NetFirewallRule

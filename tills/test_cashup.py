@@ -81,23 +81,15 @@ class CloseTests(CashupBase):
         cu, _ = self.close(count_of(8500))
         self.assertEqual((cu.cash_refunds, cu.variance), (D("3500.00"), D("0.00")))
 
-    def test_short_count_needs_a_reason_and_is_stored_negative(self):
+    def test_short_count_can_close_without_a_reason(self):
         self.cash_sale()
-        with self.assertRaises(rules.CashupError) as ctx:
-            self.close(count_of(8300))
-        self.assertIn("200.00", str(ctx.exception))
-        self.shift.refresh_from_db()
-        self.assertIsNone(self.shift.closed_at)                  # nothing changed
-        self.assertFalse(CashUp.objects.exists())
-        cu, _ = self.close(count_of(8300), "Gave change on a 1000 note twice")
-        self.assertEqual((cu.variance, cu.reason), (D("-200.00"), "Gave change on a 1000 note twice"))
+        cu, _ = self.close(count_of(8300))
+        self.assertEqual((cu.variance, cu.reason), (D("-200.00"), ""))
 
-    def test_over_count_also_needs_a_reason(self):
+    def test_over_count_can_close_without_a_reason(self):
         self.cash_sale()
-        with self.assertRaises(rules.CashupError):
-            self.close(count_of(8700))
-        cu, _ = self.close(count_of(8700), "Customer left a tip in the drawer")
-        self.assertEqual(cu.variance, D("200.00"))
+        cu, _ = self.close(count_of(8700))
+        self.assertEqual((cu.variance, cu.reason), (D("200.00"), ""))
 
     def test_cannot_close_twice(self):
         self.close(count_of(5000))
@@ -139,10 +131,8 @@ class WhoMayCloseTests(CashupBase):
         with self.assertRaises(PermissionError):
             self.close(count_of(5000), "trying it", user=self.cashier2)
 
-    def test_a_supervisor_may_close_it_but_must_say_why(self):
-        with self.assertRaises(rules.CashupError):
-            self.close(count_of(5000), "", user=self.supervisor)
-        cu, _ = self.close(count_of(5000), "Cashier went home ill", user=self.supervisor)
+    def test_a_supervisor_may_close_it_without_a_reason(self):
+        cu, _ = self.close(count_of(5000), "", user=self.supervisor)
         self.assertEqual((cu.closed_by, cu.shift.cashier), (self.supervisor, self.cashier))
         self.assertTrue(AuditLog.objects.get(action="shift.closed").new_value["closed_for_cashier"])
 
@@ -186,12 +176,12 @@ class DrawerExpenseTests(CashupBase):
 
 
 class ReopenTests(CashupBase):
-    def test_reopen_needs_the_permission_and_a_reason(self):
+    def test_reopen_needs_permission_but_not_a_reason(self):
         self.close(count_of(5000))
         with self.assertRaises(PermissionError):
             cashup.reopen_shift(self.cashier, self.shift.pk, "I miscounted the notes")
-        with self.assertRaises(rules.CashupError):
-            cashup.reopen_shift(self.manager, self.shift.pk, "oops")
+        cashup.reopen_shift(self.manager, self.shift.pk, "")
+        self.assertEqual(AuditLog.objects.get(action="shift.reopened").reason, "")
 
     def test_reopen_keeps_the_old_count_and_allows_a_new_one(self):
         self.cash_sale()

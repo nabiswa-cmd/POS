@@ -110,12 +110,16 @@ class OwnerOpensThePosTests(SalesCase):
         self.assertEqual(res.status_code, 403)
 
     def test_owner_may_authorize_and_then_be_the_cashier(self):
-        self.assertEqual(self.post("/api/pos/authorize/", {"till": 1, "username": "boss", "secret": "Str0ng-pass!"}).status_code, 200)
+        self.assertEqual(self.post("/api/pos/authorize/", {
+            "till": 1, "username": "boss", "secret": "Str0ng-pass!",
+        }).status_code, 200)
         self.assertEqual(self.post("/api/pos/cashier-login/", {"username": "boss", "secret": "Str0ng-pass!", "till": 1}).status_code, 200)
 
     def test_a_supervisor_still_cannot_authorize_and_be_the_cashier(self):
         self.supervisor.role.grants.create(code="sales.make") if not self.supervisor.can("sales.make") else None
-        self.assertEqual(self.post("/api/pos/authorize/", {"till": 1, "username": "sup", "secret": "4321"}).status_code, 200)
+        self.assertEqual(self.post("/api/pos/authorize/", {
+            "till": 1, "username": "sup", "secret": "4321",
+        }).status_code, 200)
         self.assertEqual(self.post("/api/pos/cashier-login/", {"username": "sup", "secret": "4321", "till": 1}).status_code, 403)
 
     def test_owner_cannot_take_over_a_till_someone_else_has_open(self):
@@ -342,7 +346,9 @@ class SalesScreenTests(SalesCase):
         super().setUp()
         self.shift.closed_at = self.shift.opened_at
         self.shift.save()
-        self.post("/api/pos/authorize/", {"till": 1, "username": "sup", "secret": "4321"})
+        self.post("/api/pos/authorize/", {
+            "till": 1, "username": "sup", "secret": "4321",
+        })
         self.post("/api/pos/cashier-login/", {"username": "cash1", "secret": "1111", "till": 1})
         self.post("/api/pos/shift/open/", {"opening_float": "500"})
 

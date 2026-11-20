@@ -135,10 +135,11 @@ class WastageTests(BottleAdminCase):
                                                                            "Dropped a glass"))
         self.assertEqual(AuditLog.objects.filter(action="stock.volume_wasted", actor=self.manager).count(), 1)
 
-    def test_a_reason_is_required(self):
+    def test_wastage_reason_is_optional(self):
         self.client.force_login(self.manager)
-        self.assertEqual(self.post(reason="").status_code, 200)
-        self.assertEqual(self.bottle().remaining_ml, D("690.00"))
+        self.assertEqual(self.post(reason="").status_code, 302)
+        self.assertEqual(self.bottle().remaining_ml, D("650.00"))
+        self.assertEqual(StockMovement.objects.get(operation_key="waste-1").reason, "")
 
     def test_more_than_the_opened_liquid_is_refused_and_sealed_bottles_are_untouched(self):
         self.client.force_login(self.manager)
@@ -239,10 +240,11 @@ class AdjustmentTests(BottleAdminCase):
         bottle = self.bottle()
         self.assertEqual((bottle.status, bottle.remaining_ml), (Bottle.EMPTY, D("0.00")))
 
-    def test_a_reason_is_required(self):
+    def test_adjustment_reason_is_optional(self):
         self.client.force_login(self.manager)
-        self.assertEqual(self.post(reason="").status_code, 200)
-        self.assertEqual(self.bottle().remaining_ml, D("690.00"))
+        self.assertEqual(self.post(reason="").status_code, 302)
+        self.assertEqual(self.bottle().remaining_ml, D("665.00"))
+        self.assertEqual(StockMovement.objects.get(operation_key="adj-1").reason, "")
 
     def test_non_manager_needs_approval_and_is_recorded_with_the_approver(self):
         user = self.controller("stock.adjust")

@@ -113,6 +113,19 @@ class ProductPermissionTests(CatalogCase):
         self.assertFalse(services.can_see_cost(self.clerk))
         self.assertTrue(services.can_see_cost(self.manager))
 
+    def test_product_list_shows_picture_column_and_missing_photo_state(self):
+        self.product.image = "products/example.png"
+        self.product.save(update_fields=["image"])
+        make_product("Product without a photo", "NO-PHOTO")
+        self.client.force_login(self.manager)
+
+        response = self.client.get("/manage/products/")
+
+        self.assertContains(response, "<th>Picture</th>")
+        self.assertContains(response, 'class="product-thumbnail"')
+        self.assertContains(response, 'alt="Johnnie Walker Black 750ml product photo"')
+        self.assertContains(response, 'class="product-no-photo">No photo</span>')
+
     def test_manager_price_change_is_audited_with_old_and_new_value(self):
         from catalog.forms import ProductForm
         form = ProductForm({"name": self.product.name, "sku": self.product.sku, "base_unit": "bottle",
@@ -229,6 +242,24 @@ class LabelTests(CatalogCase):
         self.assertContains(r, "<svg", count=2)
         self.assertEqual(r.content.decode().count('class="label"'), 2)
         self.assertTrue(AuditLog.objects.filter(action="labels.printed").exists())
+
+    def test_a4_labels_preview_on_single_sheets_and_paginate_by_sheet_capacity(self):
+        self.client.force_login(self.manager)
+        one_page = self.client.get("/manage/labels/print/", {
+            "product": self.product.pk, "size": "a4-3x8", "copies": "24", "code": "1",
+        })
+        self.assertEqual(one_page.status_code, 200)
+        self.assertEqual(one_page.content.decode().count('class="sheet a4'), 1)
+        self.assertContains(one_page, "A4 print preview")
+        self.assertContains(one_page, "@page { size: A4; margin:0; }")
+        self.assertContains(one_page, 'onclick="window.print()"')
+        self.assertNotContains(one_page, 'window.addEventListener("load"')
+
+        two_pages = self.client.get("/manage/labels/print/", {
+            "product": self.product.pk, "size": "a4-3x8", "copies": "25", "code": "1",
+        })
+        self.assertEqual(two_pages.content.decode().count('class="sheet a4'), 2)
+        self.assertContains(two_pages, "2 A4 pages")
 
     def test_whole_shelf_labels_and_logged_in_cashier_denied(self):
         shelf = Shelf.objects.create(code="E5", name="x")

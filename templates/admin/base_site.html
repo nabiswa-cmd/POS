@@ -9,6 +9,7 @@
 <link rel="apple-touch-icon" href="{% static 'core/apple-touch-icon.png' %}">
 <link rel="stylesheet" href="{% static 'core/posloader.css' %}">
 <script src="{% static 'core/posloader.js' %}"></script>
+<script src="{% static 'core/admin-nav.js' %}" defer></script>
 <script>try{document.documentElement.setAttribute("data-theme",localStorage.getItem("pos-theme")==="light"?"light":"dark")}catch(e){}</script>
 {% endblock %}
 {% block branding %}<img src="{% static 'core/logo-mark.png' %}" alt="" style="height:34px;width:auto;margin-right:12px">{{ block.super }}{% endblock %}

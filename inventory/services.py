@@ -516,9 +516,7 @@ def _record_wastage(*, product_id, volume_ml, user, operation_key, reason, refer
                     ip=None):
     requested = _volume(volume_ml, positive=True)
     key = _operation_key(operation_key)
-    note = (reason or "").strip()
-    if not note:
-        raise StockError("A reason is required.")
+    note = (reason or "").strip()[:250]
     if not user.can("stock.adjust"):
         raise StockError("You are not allowed to record volume wastage.")
     with transaction.atomic():
@@ -564,9 +562,7 @@ def adjust_bottle_volume(*, bottle_id, volume_ml, user, operation_key, reason, r
     """Reconcile a tracked opened/empty bottle; positive adjustments cannot exceed its capacity."""
     adjustment = _volume(volume_ml, allow_zero=False)
     key = _operation_key(operation_key)
-    note = (reason or "").strip()
-    if not note:
-        raise StockError("A reason is required.")
+    note = (reason or "").strip()[:250]
     if not user.can("stock.adjust"):
         raise StockError("You are not allowed to adjust stock.")
     with transaction.atomic():
@@ -659,8 +655,7 @@ def adjust_stock(*, product_id, movement_type, quantity, user, reason, approval_
         raise StockError("That movement type cannot be posted by hand.")
     if not user.can("stock.adjust"):
         raise StockError("You are not allowed to adjust stock.")
-    if not (reason or "").strip():
-        raise StockError("A reason is required.")
+    note = (reason or "").strip()[:250]
     with transaction.atomic():
         product = _lock_product(product_id)
         if movement_type == mr.OPENING and StockMovement.objects.filter(product=product).exists():
@@ -670,10 +665,10 @@ def adjust_stock(*, product_id, movement_type, quantity, user, reason, approval_
         unit_cost = product.buying_cost if movement_type == mr.OPENING else None
         movement = post_movement(
             product_id=product.pk, movement_type=movement_type, quantity=quantity, user=user,
-            reference=reference, reason=reason.strip(), unit_cost=unit_cost, approved_by=approver)
+            reference=reference, reason=note, unit_cost=unit_cost, approved_by=approver)
         audit.record("stock.adjusted", actor=user, approver=approver, object_type="product", object_ref=product.pk,
                      previous={"stock": previous}, new={"stock": movement.balance_after, "type": movement_type},
-                     reason=reason.strip(), ip=ip)
+                     reason=note, ip=ip)
     return movement
 
 
@@ -754,6 +749,7 @@ def submit_receiving(receiving_id, user, ip=None):
 
 def decide_receiving(receiving_id, approver, *, approve, note="", ip=None):
     """Approve (posts to stock) or reject a delivery that is waiting."""
+    note = (note or "").strip()[:250]
     with transaction.atomic():
         receiving = Receiving.objects.select_for_update().get(pk=receiving_id)
         if not approver.can("stock.approve_receiving"):
@@ -767,11 +763,9 @@ def decide_receiving(receiving_id, approver, *, approve, note="", ip=None):
             audit.record("receiving.approved", actor=receiving.created_by, approver=approver, object_type="receiving",
                          object_ref=receiving.number, ip=ip)
         else:
-            if not note.strip():
-                raise StockError("Say why the delivery is rejected.")
             receiving.status = Receiving.REJECTED
-            receiving.decided_by, receiving.decided_at, receiving.decision_note = approver, timezone.now(), note.strip()[:250]
+            receiving.decided_by, receiving.decided_at, receiving.decision_note = approver, timezone.now(), note
             receiving.save(update_fields=["status", "decided_by", "decided_at", "decision_note"])
             audit.record("receiving.rejected", actor=receiving.created_by, approver=approver, object_type="receiving",
-                         object_ref=receiving.number, reason=note.strip(), ip=ip)
+                         object_ref=receiving.number, reason=note, ip=ip)
         return receiving

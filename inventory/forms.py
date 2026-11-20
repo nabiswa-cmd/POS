@@ -17,7 +17,7 @@ class AdjustForm(forms.Form):
         label="Quantity (in single units)",
         help_text="Damaged, expired and supplier returns remove stock. Opening stock adds. "
                   "For a correction use a plus or minus number (-3 removes three).")
-    reason = forms.CharField(max_length=250, label="Reason")
+    reason = forms.CharField(max_length=250, required=False, label="Reason (optional)")
     reference = forms.CharField(max_length=60, required=False, label="Reference (optional)")
     approver_username = forms.CharField(max_length=150, required=False, label="Approver username")
     approver_secret = forms.CharField(required=False, widget=forms.PasswordInput(render_value=False),
@@ -43,7 +43,7 @@ class _VolumeOperationForm(forms.Form):
     browser refresh) therefore reaches the service with the same key and is recorded only once.
     """
 
-    reason = forms.CharField(max_length=250, label="Reason")
+    reason = forms.CharField(max_length=250, required=False, label="Reason (optional)")
     reference = forms.CharField(max_length=60, required=False, label="Reference (optional)")
     operation_key = forms.CharField(max_length=80, widget=forms.HiddenInput, initial=lambda: uuid.uuid4().hex)
     approver_username = forms.CharField(max_length=150, required=False, label="Approver username")

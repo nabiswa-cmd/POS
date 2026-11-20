@@ -124,7 +124,7 @@ class Approval(models.Model):
     approver = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
                                  related_name="approvals_given")
     method = models.CharField(max_length=10)
-    reason = models.TextField()
+    reason = models.TextField(blank=True)
     object_ref = models.CharField(max_length=100, blank=True)
     till_number = models.PositiveSmallIntegerField(null=True, blank=True)
     detail = models.JSONField(default=dict, blank=True)

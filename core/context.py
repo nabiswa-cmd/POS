@@ -47,6 +47,7 @@ NAV = [
     ("Setup", "Categories & brands", "/manage/lists/", "list", ("products.manage",), ()),
     ("Setup", "Backups", "/manage/backups/", "backup", ("settings.manage",), ()),
     ("Setup", "Server sync", "/manage/sync/", "sync", ("settings.manage",), ()),
+    ("Setup", "Staff", "/manage/staff/", "people", ("staff.manage",), ()),
 ]
 
 REPORT_TABS = [
@@ -71,4 +72,6 @@ def workspace(request):
     report_tabs = [{"label": label, "url": url, "on": path.startswith(url)}
                    for label, url, needed in REPORT_TABS if any(p in perms for p in needed)]
     return {"nav": nav, "perms": perms, "staff_name": user.display_name,
-            "report_tabs": report_tabs, "icons": ICONS, "home_on": path.rstrip("/") == "/manage"}
+            "report_tabs": report_tabs, "icons": ICONS, "home_on": path.rstrip("/") == "/manage",
+            "quick_search_on": path.startswith("/manage/products/"),
+            "quick_alerts_on": path.startswith("/manage/stock/")}

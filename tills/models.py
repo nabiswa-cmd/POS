@@ -18,10 +18,10 @@ class Till(models.Model):
 
 
 class PosAuthorization(models.Model):
-    """A supervisor/manager authorized a POS session on a till; a cashier then logs in under it.
+    """A supervisor/manager authorizes a till; the cashier is recorded when they log in.
 
-    Records both people: `approval.approver` authorized, `cashier` sold. The supervisor is
-    never logged in as the cashier.
+    `cashier_logged_in_at` records the first cashier login under the single-use approval.
+    The supervisor in `approval.approver` is never logged in as the cashier.
     """
 
     till = models.ForeignKey(Till, on_delete=models.PROTECT, related_name="authorizations")

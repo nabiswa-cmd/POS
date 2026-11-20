@@ -4,6 +4,7 @@ from django.contrib.auth.decorators import login_required
 from django.urls import include, path, re_path
 from django.views.static import serve
 
+from accounts import views as accounts_views
 from sales import recon_views, refund_views
 from sales import report_views as sales_report_views
 from sales import views as sales_views
@@ -19,6 +20,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("pos/sell/", sales_views.pos_page, name="pos-sell"),
     path("manage/tills/", tills_views.overview, name="tills-overview"),
+    path("manage/staff/", accounts_views.manage_staff, name="manage-staff"),
     path("manage/reconciliation/", recon_views.reconciliation, name="reconciliation"),
     path("manage/refunds/", refund_views.refunds, name="refunds-overview"),
     path("manage/sales-report/", sales_report_views.sales_report, name="sales-report"),

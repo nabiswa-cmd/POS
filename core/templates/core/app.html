@@ -7,7 +7,7 @@
 <link rel="icon" href="{% static 'core/favicon.ico' %}" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="{% static 'core/icons/icon-32.png' %}">
 <link rel="apple-touch-icon" href="{% static 'core/apple-touch-icon.png' %}">
-<link rel="stylesheet" href="{% static 'core/theme.css' %}">
+<link rel="stylesheet" href="{% static 'core/theme.css' %}?v=6">
 <script src="{% static 'core/theme.js' %}"></script>
 <link rel="stylesheet" href="{% static 'core/posloader.css' %}">
 <script src="{% static 'core/posloader.js' %}"></script>
@@ -20,8 +20,8 @@
 </style>
 </head>
 <body class="auth">
-<button type="button" class="theme-toggle floating" data-theme-toggle title="Switch light / dark mode"><svg class="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg><svg class="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/></svg><span class="t-label">Dark</span></button>
 <main class="auth">
+  <button type="button" class="theme-toggle floating" data-theme-toggle aria-label="Switch to light mode" title="Switch to light mode"><svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg><svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/></svg></button>
   <div class="auth-logo"><img src="{% static 'core/logo-mark.png' %}" alt=""><span class="brand-text"><b>WINE</b> <i>POS</i></span></div>
   <h1>{{ area_title }}</h1>
   <p class="shop">{{ shop_name }}</p>
@@ -64,7 +64,7 @@
     <label for="s-float">Opening cash float (KES)</label>
     <input id="s-float" inputmode="decimal" autocomplete="off">
     <button type="submit">Open shift</button>
-    <button type="button" class="ghost" id="b-back-cashier">Back / choose a different cashier</button>
+    <button type="button" class="ghost" id="b-back-cashier">Choose a different cashier</button>
     <button type="button" class="ghost" id="b-change-authorizer">Change supervisor or till</button>
     <div class="msg" id="m-shift" role="alert"></div>
   </form>
@@ -101,11 +101,11 @@
 (function () {
   var MODE = "{{ mode }}";
   var $ = function (id) { return document.getElementById(id); };
-  var current = null, tills = [], authBy = "", cashierLoginWithoutSupervisor = false;
+  var current = null, tills = [], authBy = "", cashierLoginWithoutSupervisor = false, lockedTillNo = null;
   var show = function (id) {
     current = id;
     ["f-authorize","f-cashier","f-shift","s-ready","f-login","s-home"].forEach(function (x) { $(x).hidden = (x !== id); });
-    $("b-back-authorize").hidden = id === "f-cashier" && cashierLoginWithoutSupervisor;
+    $("b-back-authorize").hidden = id === "f-cashier" && (cashierLoginWithoutSupervisor || lockedTillNo !== null);
     $("b-change-authorizer").hidden = cashierLoginWithoutSupervisor;
     if (typeof renderPicks === "function") renderPicks();
     var first = $(id).querySelector("input:not([type=hidden]), select");
@@ -139,7 +139,14 @@
     api("GET", stateUrl).then(function (s) {
       tills = s.tills || [];
       cashierLoginWithoutSupervisor = s.cashier_login_without_supervisor === true;
-      if (cashierLoginWithoutSupervisor) {
+      if (s.till) tillNo = Number(s.till);
+      if (s.locked_shift) {
+        lockedTillNo = Number(s.locked_shift.till);
+        tillNo = lockedTillNo;
+        $("authorized-note").textContent = "Sign in as " + s.locked_shift.cashier +
+          " to resume this locked till. Supervisor authorization is not required.";
+      }
+      if (cashierLoginWithoutSupervisor && lockedTillNo === null) {
         $("cashier-step-label").textContent = "Step 1 of 2: Cashier login";
         $("shift-step-label").textContent = "Step 2 of 2: Open your shift";
         $("authorized-note").textContent = "Sign in with your cashier account. Supervisor authorization is disabled by the manager.";
@@ -149,6 +156,7 @@
         var o = document.createElement("option"); o.value = t.number; o.textContent = t.name; sel.appendChild(o);
       });
       if (requestedTill) { sel.value = requestedTill; tillNo = Number(requestedTill); }
+      else if (tillNo) { sel.value = tillNo; }
       else if (tills.length) { tillNo = tills[0].number; }
       return api("GET", "/api/auth/me/");
     }).then(function (me) {
@@ -158,7 +166,9 @@
         if (s.ok && s.till_busy_with) {
           tillNo = s.till; $("a-till").value = s.till;
           return api("POST", "/api/auth/logout/", {}).then(function () {
-            if (cashierLoginWithoutSupervisor) {
+            if (lockedTillNo !== null) {
+              show("f-cashier");
+            } else if (cashierLoginWithoutSupervisor) {
               show("f-cashier");
               say("m-cashier", "There is an open shift for " + s.till_busy_with + ". Choose another till.");
             } else {
@@ -171,18 +181,27 @@
           show(cashierLoginWithoutSupervisor ? "f-cashier" : "f-authorize");
         });
       }); }
-      if (cashierLoginWithoutSupervisor) {
+      if (lockedTillNo !== null) {
+        show("f-cashier");
+      } else if (cashierLoginWithoutSupervisor) {
         show("f-cashier");
       } else {
         show("f-authorize");
       }
     }).then(function () { PosLoader.hide(); }, function () { PosLoader.hide(); });
     submit("f-authorize", "m-authorize", function () {
-      var typed = $("a-user").value;
-      return api("POST", "/api/pos/authorize/", { till: $("a-till").value, username: $("a-user").value, secret: $("a-secret").value })
+      return api("POST", "/api/pos/authorize/", {
+        till: $("a-till").value,
+        username: $("a-user").value, secret: $("a-secret").value
+      })
         .then(function (r) {
           $("a-secret").value = ""; $("a-user").value = "";
-          if (r.ok) { tillNo = r.till; authBy = r.authorized_by; $("authorized-note").textContent = "Authorized by " + r.authorized_by + " for " + tillName(r.till) + "."; show("f-cashier"); if (r.owner) { $("c-user").value = typed; $("c-secret").focus(); } }
+          if (r.ok) {
+            tillNo = r.till; authBy = r.authorized_by; $("c-user").value = "";
+            $("authorized-note").textContent = tillName(r.till) + " authorized by " + r.authorized_by +
+              ". Any active cashier may sign in.";
+            show("f-cashier");
+          }
           return r;
         });
     });
@@ -194,6 +213,15 @@
       });
     });
     submit("f-cashier", "m-cashier", function () {
+      if (lockedTillNo !== null) {
+        return api("POST", "/api/pos/unlock/", {
+          till: lockedTillNo, username: $("c-user").value, secret: $("c-secret").value
+        }).then(function (r) {
+          $("c-secret").value = "";
+          if (r.ok) { lockedTillNo = null; tillNo = r.till; ready(r.user, r.till, r.shift); }
+          return r;
+        });
+      }
       return api("POST", "/api/pos/cashier-login/", { username: $("c-user").value, secret: $("c-secret").value, till: tillNo })
         .then(function (r) {
           $("c-secret").value = "";
@@ -207,8 +235,10 @@
     $("b-back-cashier").addEventListener("click", function () {
       api("POST", "/api/pos/cashier/change/", {}).then(function (r) {
         if (!r.ok) { say("m-shift", r.error || "Could not change cashier."); return; }
-        $("c-user").value = ""; $("c-secret").value = ""; say("m-cashier", "");
-        show("f-cashier");
+        $("c-user").value = ""; $("c-secret").value = "";
+        $("a-till").value = r.till; say("m-cashier", "");
+        show("f-authorize");
+        say("m-authorize", "A supervisor must authorize this till before the next cashier can sign in.", true);
       });
     });
     $("b-change-authorizer").addEventListener("click", function () {
@@ -233,7 +263,8 @@
     function renderPicks() {
       Array.prototype.forEach.call(document.querySelectorAll("[data-tillpick]"), function (box) {
         box.innerHTML = "";
-        tills.forEach(function (t) {
+        var choices = lockedTillNo === null ? tills : tills.filter(function (t) { return t.number === lockedTillNo; });
+        choices.forEach(function (t) {
           var b = document.createElement("button"), cur = String(t.number) === String(tillNo);
           b.type = "button"; b.textContent = t.name; b.setAttribute("aria-pressed", cur ? "true" : "false");
           if (!cur) { b.className = "ghost"; b.addEventListener("click", function () {

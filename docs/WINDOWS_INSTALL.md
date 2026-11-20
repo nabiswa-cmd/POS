@@ -24,7 +24,7 @@ Run the installer as administrator and answer:
 3. A manager password (10+ characters). **PostgreSQL password:** leave empty if the installer should install PostgreSQL itself (a bundled installer is needed); otherwise type your existing `postgres` password.
 
 It then: writes the settings file `C:\ProgramData\WinesPOS\config\winespos.env` (private: administrators only), creates the database,
-creates the tables, creates the manager, starts the **WinesPOS Server** task (starts at boot, restarts if it stops),
+creates the tables, creates the manager, starts the **WinesPOS Server** task (starts at boot, restarts if it stops), and, if a printer is configured, the **WinesPOS Printer** task,
 schedules **WinesPOS Backup** every night at 23:00, and, if you gave an address, opens port 8000 to the shop network only.
 Shortcuts on the desktop: **POS (Cashier)**, **Manager**, **Stock Receiving**.
 
@@ -43,14 +43,15 @@ On each PC, as administrator:
 ```
 powershell -ExecutionPolicy Bypass -File "C:\Program Files\WinesPOS\scripts\verify_install.ps1"
 ```
-It prints PASS/FAIL for: shortcuts exist and start the right window, settings file is private, the server and backup tasks exist, the server answers, and the shop health check (`selfcheck`) is clean. Then do `UAT_CHECKLIST.md`.
+It prints PASS/FAIL for: shortcuts exist and start the right window, settings file is private, the server, configured printer and backup tasks exist, the server answers, and the shop health check (`selfcheck`) is clean. Then do `UAT_CHECKLIST.md`.
 
 ## 5. Printers
-Default: the normal Windows print dialog; any printer works. For a thermal receipt printer:
-1. Install its Windows driver. Set the paper size to its roll width (80 mm or 58 mm) and margins to 0 in Printing preferences.
+By default receipts use the current device's print dialog. To send receipts from a till or phone to the server computer, install the printer driver on that server PC, then:
+1. Install its Windows driver for all users (the printer task runs as SYSTEM). Set the paper size to its roll width (80 mm or 58 mm) and margins to 0 in Printing preferences.
 2. List the exact names: `"C:\Program Files\WinesPOS\WinesPOS.exe" printers`. Test one: `... printers --test "EPSON TM-T20III Receipt"`.
-3. For no dialog at all, add one line to `winespos.env` on **each till PC** and restart the POS window: `WINESPOS_RECEIPT_PRINTER=EPSON TM-T20III Receipt`.
-*Silent printing is new and untested on real hardware.* If a receipt does not come out or the page is cut wrongly, remove that line to go back to the dialog.
+3. Add `WINESPOS_RECEIPT_PRINTER=EPSON TM-T20III Receipt` to the server's `C:\ProgramData\WinesPOS\config\winespos.env`, then rerun the installer or create/start the **WinesPOS Printer** task. When enabled, the phone does not need a printer or a print dialog.
+4. Check the printer status in Windows Task Scheduler. If it is offline, receipt jobs remain visible as failed in the POS screen; restore the printer and ask a manager to reprint.
+*Server printing is new and untested on real hardware. Without the server printer setting, receipts continue to use the current device's print dialog.*
 
 ## 6. Update
 Build a new installer with a higher `-Version` and run it on the server first, then the tills. Settings, data and backups stay; the tables are updated automatically. **Make a backup first** (Manager > Backups).

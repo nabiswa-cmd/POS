@@ -60,7 +60,7 @@ def expenses(request):
         "by_category": services.by_category(day_from, day_to), "by_paid_from": services.by_paid_from(day_from, day_to),
         "categories": ExpenseCategory.objects.filter(active=True), "paid_from": rules.PAID_FROM,
         "open_shifts": CashierShift.objects.select_related("till", "cashier").filter(closed_at__isnull=True).order_by("till__number"),
-        "min_reason": rules.MIN_REASON})
+    })
 
 
 @perm_required("reports.financial.view")

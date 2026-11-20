@@ -1,4 +1,4 @@
-"""Reconciliation part 1: waiting payments, set aside / put back with a reason, daily checks, screen, CSV."""
+"""Reconciliation part 1: waiting payments, set aside / put back, daily checks, screen, CSV."""
 from datetime import timedelta
 from decimal import Decimal as D
 
@@ -38,14 +38,12 @@ class SetAsideTests(SalesCase):
         self.assertEqual((entry.actor, entry.object_ref, entry.reason), (self.manager, "RECON00001", REASON))
         self.assertEqual(entry.new_value["amount"], "3500.00")
 
-    def test_a_reason_is_required_and_must_be_real(self):
+    def test_reason_is_optional_and_stored_when_supplied(self):
         t = pay("RECON00002")
-        for bad in ("", "   ", "ok", "short"):
-            with self.assertRaises(SaleError):
-                reconcile.set_aside(self.manager, t.pk, bad)
+        reconcile.set_aside(self.manager, t.pk, "")
         t.refresh_from_db()
-        self.assertEqual(t.status, MpesaTransaction.UNMATCHED)
-        self.assertFalse(AuditLog.objects.filter(action="mpesa.set_aside").exists())
+        self.assertEqual((t.status, t.resolution_reason), (MpesaTransaction.IGNORED, ""))
+        self.assertEqual(AuditLog.objects.get(action="mpesa.set_aside").reason, "")
 
     def test_supervisor_and_cashier_cannot_set_aside(self):
         t = pay("RECON00003")
@@ -148,12 +146,12 @@ class DayReportTests(SalesCase):
         Payment.objects.filter(sale=sale).update(mpesa_transaction=None)
         self.assertTrue(any("no Safaricom confirmation" in p for p in reconcile.day_report(timezone.localdate())["problems"]))
 
-    def test_used_payment_with_no_sale_and_set_aside_without_reason_are_caught(self):
+    def test_used_payment_with_no_sale_is_caught_and_empty_optional_reason_is_not(self):
         MpesaTransaction.objects.filter(pk=pay("RECON10008").pk).update(status=MpesaTransaction.MATCHED)
         MpesaTransaction.objects.filter(pk=pay("RECON10009").pk).update(status=MpesaTransaction.IGNORED)
         text = " ".join(reconcile.day_report(timezone.localdate())["problems"])
         self.assertIn("RECON10008", text)
-        self.assertIn("without a reason", text)
+        self.assertNotIn("RECON10009", text)
 
     def test_phone_request_stuck_for_a_long_time_is_flagged(self):
         self.scan()
@@ -218,11 +216,11 @@ class ScreenTests(SalesCase):
         t.refresh_from_db()
         self.assertEqual(t.status, MpesaTransaction.UNMATCHED)
 
-    def test_a_short_reason_from_the_screen_is_refused_and_nothing_changes(self):
+    def test_short_reason_from_the_screen_is_optional(self):
         t = pay("RECON20003")
         self.login(self.manager).post(self.URL, {"action": "set_aside", "txn_id": t.pk, "reason": "meh"})
         t.refresh_from_db()
-        self.assertEqual(t.status, MpesaTransaction.UNMATCHED)
+        self.assertEqual((t.status, t.resolution_reason), (MpesaTransaction.IGNORED, "meh"))
 
     def test_csv_download_and_date_parameter(self):
         pay("RECON20004", "400.00")

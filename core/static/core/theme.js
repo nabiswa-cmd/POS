@@ -8,7 +8,12 @@
     var buttons = document.querySelectorAll("[data-theme-toggle]");
     function paint() {
       var light = root.getAttribute("data-theme") === "light";
-      buttons.forEach(function (b) { var l = b.querySelector(".t-label"); if (l) l.textContent = light ? "Light" : "Dark"; b.setAttribute("aria-pressed", light ? "true" : "false"); });
+      buttons.forEach(function (b) {
+        var label = light ? "Switch to dark mode" : "Switch to light mode";
+        b.setAttribute("aria-label", label);
+        b.setAttribute("title", label);
+        b.setAttribute("aria-pressed", light ? "true" : "false");
+      });
     }
     buttons.forEach(function (b) {
       b.addEventListener("click", function () {

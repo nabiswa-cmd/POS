@@ -46,6 +46,8 @@ class ProductPictureTests(SalesCase):
         self.assertIn("/static/core/logo-mark.png", html)      # shown when a product has no picture
         self.assertIn("/static/core/receipt-logo.png", html)   # printed at the top of receipts and slips
         self.assertIn("img.logo", html)
+        self.assertIn("height:18mm", html)
+        self.assertIn('html,body{width:" + mm + "mm;margin:0 auto', html)
 
 
 class ReceiptLogoTests(SalesCase):
@@ -68,7 +70,11 @@ class ReceiptLogoTests(SalesCase):
         self.assertIn('class="logo"', html)
         self.assertIn("/static/core/receipt-logo.png", html)
         self.assertLess(html.index('class="logo"'), html.index("<pre>"))
-        self.assertIn("width:30mm", html)
+        self.assertIn("height:18mm", html)
+        self.assertIn("html,body{width:80mm;margin:0 auto", html)
 
-    def test_logo_is_smaller_on_58mm_paper(self):
-        self.assertIn("width:24mm", self.reprint(58).content.decode())
+    def test_logo_fits_the_58mm_receipt_width(self):
+        html = self.reprint(58).content.decode()
+        self.assertIn("height:18mm", html)
+        self.assertIn("max-width:calc(58mm - 4mm)", html)
+        self.assertIn("html,body{width:58mm;margin:0 auto", html)

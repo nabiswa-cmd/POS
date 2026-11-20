@@ -13,7 +13,9 @@ class ChangeTillTests(BaseCase):
             Till.objects.get_or_create(number=n, defaults={"name": f"Till {n}", "active": True})
 
     def authorize(self, till=1):
-        return self.post("/api/pos/authorize/", {"till": till, "username": "sup", "secret": "4321"})
+        return self.post("/api/pos/authorize/", {
+            "till": till, "username": "sup", "secret": "4321",
+        })
 
     def cashier_login(self, till=1, username="cash1", secret="1111"):
         return self.post("/api/pos/cashier-login/", {"username": username, "secret": secret, "till": till})

@@ -12,17 +12,24 @@ from tills.models import CashierShift, PosAuthorization
 
 class PosOpeningFlowTests(BaseCase):
     def authorize(self, username="sup", secret="4321", till=1):
-        return self.post("/api/pos/authorize/", {"till": till, "username": username, "secret": secret})
+        return self.post("/api/pos/authorize/", {
+            "till": till, "username": username, "secret": secret,
+        })
 
     def cashier_login(self, username="cash1", secret="1111", till=1):
         return self.post("/api/pos/cashier-login/", {"username": username, "secret": secret, "till": till})
 
     def test_full_flow_records_both_people(self):
         self.assertEqual(self.authorize().status_code, 200)
+        pending = PosAuthorization.objects.get()
+        self.assertIsNone(pending.cashier)
+        self.assertIsNone(pending.cashier_logged_in_at)
         res = self.cashier_login()
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["authorized_by"], "sup")
         self.assertIsNone(res.json()["shift"])
+        pending.refresh_from_db()
+        self.assertEqual(pending.cashier, self.cashier)
         res = self.post("/api/pos/shift/open/", {"opening_float": "5000"})
         self.assertEqual(res.status_code, 200)
         shift = CashierShift.objects.get()
@@ -33,6 +40,17 @@ class PosOpeningFlowTests(BaseCase):
         self.assertEqual(pa.cashier, self.cashier)
         self.assertEqual(pa.approval.approver, self.supervisor)
         self.assertTrue(AuditLog.objects.filter(action="pos.session_opened").exists())
+
+    def test_supervisor_authorizes_the_till_for_any_cashier_until_first_login(self):
+        self.assertEqual(self.authorize().status_code, 200)
+        authorization = PosAuthorization.objects.get()
+        self.assertIsNone(authorization.cashier)
+        self.assertIsNone(authorization.cashier_logged_in_at)
+
+        self.assertEqual(self.cashier_login(username="cash2", secret="Str0ng-pass!").status_code, 200)
+        authorization.refresh_from_db()
+        self.assertEqual(authorization.cashier, self.cashier2)
+        self.assertIsNotNone(authorization.cashier_logged_in_at)
 
     def test_cashier_cannot_open_pos_without_supervisor(self):
         res = self.cashier_login()
@@ -71,7 +89,7 @@ class PosOpeningFlowTests(BaseCase):
         self.assertEqual(self.cashier_login().status_code, 403)
         self.assertTrue(AuditLog.objects.filter(action="pos.authorization_cancelled").exists())
 
-    def test_cashier_can_be_changed_before_float_without_losing_authorization(self):
+    def test_changing_cashier_requires_a_new_supervisor_authorization(self):
         self.authorize()
         self.assertEqual(self.cashier_login().status_code, 200)
         authorization = PosAuthorization.objects.get()
@@ -80,9 +98,11 @@ class PosOpeningFlowTests(BaseCase):
 
         self.assertEqual(response.status_code, 200)
         authorization.refresh_from_db()
-        self.assertIsNone(authorization.cashier)
-        self.assertIsNone(authorization.cashier_logged_in_at)
+        self.assertEqual(authorization.cashier, self.cashier)
+        self.assertIsNotNone(authorization.cancelled_at)
         self.assertNotIn("_auth_user_id", self.client.session)
+        self.assertNotIn("pos_auth_id", self.client.session)
+        self.assertEqual(self.authorize().status_code, 200)
         second = self.cashier_login(username="cash2", secret="Str0ng-pass!")
         self.assertEqual(second.status_code, 200)
         self.assertEqual(self.post("/api/pos/shift/open/", {"opening_float": "500"}).status_code, 200)
@@ -119,6 +139,9 @@ class PosOpeningFlowTests(BaseCase):
     def test_non_sales_staff_cannot_log_in_to_pos(self):
         self.authorize()
         self.assertEqual(self.cashier_login(username="clerk", secret="Str0ng-pass!").status_code, 403)
+        authorization = PosAuthorization.objects.get()
+        self.assertIsNone(authorization.cashier)
+        self.assertIsNone(authorization.approval.consumed_at)
 
     def test_invalid_till_rejected(self):
         self.assertEqual(self.authorize(till=99).status_code, 400)
@@ -219,7 +242,7 @@ class PosOpeningFlowTests(BaseCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(PosAuthorization.objects.count(), 1)
 
-    def test_cashier_screen_lock_does_not_lock_the_till(self):
+    def test_cashier_screen_lock_resumes_same_cashier_without_supervisor(self):
         self.authorize()
         self.cashier_login()
         self.assertEqual(self.post("/api/pos/shift/open/", {"opening_float": "1000"}).status_code, 200)
@@ -227,19 +250,19 @@ class PosOpeningFlowTests(BaseCase):
         locked = self.post("/api/pos/lock/", {})
         self.assertEqual(locked.status_code, 200)
         shift = CashierShift.objects.get()
-        self.assertIsNone(shift.locked_at)
+        self.assertIsNotNone(shift.locked_at)
         self.assertNotIn("_auth_user_id", self.client.session)
-        self.assertIsNone(self.client.get("/api/pos/state/?till=1").json()["locked_shift"])
+        state = self.client.get("/api/pos/state/?till=1").json()
+        self.assertEqual(state["locked_shift"], {"till": 1, "cashier": "cash1"})
 
-        self.assertEqual(self.authorize().status_code, 200)
-        resumed = self.cashier_login()
+        resumed = self.post("/api/pos/unlock/", {"till": 1, "username": "cash1", "secret": "1111"})
         self.assertEqual(resumed.status_code, 200)
         self.assertIsNotNone(resumed.json()["shift"])
         shift.refresh_from_db()
         self.assertIsNone(shift.locked_at)
-        self.assertEqual(PosAuthorization.objects.count(), 2)
+        self.assertEqual(PosAuthorization.objects.count(), 1)
         self.assertTrue(AuditLog.objects.filter(action="pos.session_locked").exists())
-        self.assertFalse(AuditLog.objects.filter(action="pos.session_unlocked").exists())
+        self.assertTrue(AuditLog.objects.filter(action="pos.session_unlocked").exists())
 
     def test_supervisor_can_authorize_a_legacy_locked_shift_for_its_cashier(self):
         self.authorize()
@@ -296,6 +319,9 @@ class PagesTests(TestCase):
         pos_page = self.client.get("/app/pos/")
         for element_id in ("b-back-authorize", "b-back-cashier", "b-change-authorizer", "f-authorize"):
             self.assertContains(pos_page, f'id="{element_id}"')
+        self.assertNotContains(pos_page, 'id="a-cashier"')
+        self.assertContains(pos_page, 'id="c-user"')
+        self.assertContains(pos_page, "/api/pos/unlock/")
         self.assertEqual(self.client.get("/app/nope/").status_code, 404)
         self.assertEqual(self.client.get("/health/").status_code, 200)
 

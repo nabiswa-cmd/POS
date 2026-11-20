@@ -135,7 +135,6 @@
     e.preventDefault();
     var reason = $("a-reason").value.trim();
     if (!$("a-user").value.trim() || !$("a-secret").value) { say("e-appr", "Enter the supervisor's username and PIN or password."); return; }
-    if (!reason) { say("e-appr", "A reason is required."); return; }
     api("POST", "/api/approvals/request/", {
       action: apprReq.action, approver_username: $("a-user").value, secret: $("a-secret").value,
       reason: reason, object_ref: apprReq.object_ref

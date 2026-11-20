@@ -22,6 +22,7 @@ urlpatterns = [
     path("mpesa/find/", views.mpesa_find, name="sales-mpesa-find"),
     path("mpesa/stk/", views.mpesa_stk_start, name="sales-mpesa-stk"),
     path("mpesa/stk/<int:stk_id>/", views.mpesa_stk_status, name="sales-mpesa-stk-status"),
+    path("receipt/jobs/<int:job_id>/", views.receipt_print_job_status, name="sales-receipt-print-job-status"),
     path("receipt/<int:sale_id>/", views.receipt_original, name="sales-receipt"),
     path("receipt/<int:sale_id>/reprint/", views.receipt_reprint, name="sales-receipt-reprint"),
     path("refund/find/", views.refund_find, name="sales-refund-find"),

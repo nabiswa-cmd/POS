@@ -23,10 +23,8 @@ def new_token():
     return raw, hash_token(raw)
 
 
-def validate_approver(*, requester_id, approver_id, approver_active, approver_can_approve, reason):
+def validate_approver(*, requester_id, approver_id, approver_active, approver_can_approve):
     """Check who is approving. requester_id may be None (nobody logged in yet)."""
-    if not reason or not str(reason).strip():
-        raise ApprovalError("A reason is required.")
     if not approver_active:
         raise ApprovalError("Approver account is not active.")
     if requester_id is not None and requester_id == approver_id:

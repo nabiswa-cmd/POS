@@ -88,8 +88,7 @@ def main(argv=None):
                 self._lock_shortcut = QShortcut(QKeySequence("Ctrl+Alt+L"), self)
                 self._lock_shortcut.activated.connect(self._request_lock)
             self._printer = None
-            if os.environ.get("WINESPOS_RECEIPT_PRINTER", "").strip():
-                self.view.printRequested.connect(self.print_receipt)   # silent printing, opt-in (see desktop/printers.py)
+            self.view.printRequested.connect(self.print_requested)
             self.view.load(QUrl(args.server.rstrip("/") + MODES[args.mode]))
 
         def _request_lock(self):
@@ -133,6 +132,24 @@ def main(argv=None):
             self._printer = QPrinter(QPrinter.PrinterMode.HighResolution)
             self._printer.setPrinterName(name)
             self.view.print(self._printer)
+
+        def print_requested(self):
+            """Keep label sheets previewable; only receipt pages use the configured silent printer."""
+            path = self.view.url().path()
+            label_preview = path.startswith("/manage/labels/print/")
+            receipt_page = path == "/pos/sell/" or (
+                path.startswith("/manage/sales/") and path.endswith("/reprint/"))
+            if receipt_page and os.environ.get("WINESPOS_RECEIPT_PRINTER", "").strip():
+                self.print_receipt()
+                return
+
+            from PySide6.QtPrintSupport import QPrintPreviewDialog, QPrinter
+
+            printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+            preview = QPrintPreviewDialog(printer, self)
+            preview.setWindowTitle("Label print preview" if label_preview else "Print preview")
+            preview.paintRequested.connect(self.view.print)
+            preview.exec()
 
         def closeEvent(self, event):
             if args.mode == "pos" and not args.allow_quit:

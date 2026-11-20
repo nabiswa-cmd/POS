@@ -94,10 +94,14 @@ class NeverEditedTests(ExpenseCase):
         with self.assertRaises(PermissionError):
             e.delete()
 
-    def test_void_needs_a_reason_works_once_and_freezes_the_row(self):
+    def test_void_reason_is_optional_and_voiding_works_once(self):
         e = self.add()
+        services.void_expense(self.manager, e.pk, "")
+        e.refresh_from_db()
+        self.assertEqual(e.void_reason, "")
         with self.assertRaises(ExpenseError):
-            services.void_expense(self.manager, e.pk, "oops")
+            services.void_expense(self.manager, e.pk, "Entered twice by mistake")
+        e = self.add(description="Second expense")
         services.void_expense(self.manager, e.pk, "Entered twice by mistake")
         e.refresh_from_db()
         self.assertEqual((e.is_void, e.voided_by, e.void_reason), (True, self.manager, "Entered twice by mistake"))
@@ -106,7 +110,7 @@ class NeverEditedTests(ExpenseCase):
         e.void_reason = "different"
         with self.assertRaises(PermissionError):
             e.save(update_fields=["void_reason"])
-        self.assertEqual(AuditLog.objects.filter(action="expense.voided").count(), 1)
+        self.assertEqual(AuditLog.objects.filter(action="expense.voided").count(), 2)
 
 
 class TotalsTests(ExpenseCase):

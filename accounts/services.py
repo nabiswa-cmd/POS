@@ -137,13 +137,13 @@ def grant_approval(*, action, approver_username, secret=None, biometric=None, re
     if action not in RESTRICTED_ACTIONS:
         raise AuthError("Unknown action.")
     approver, method = authenticate(approver_username, secret, biometric, context="approval", ip=ip)
+    reason = str(reason or "").strip()[:250]
     try:
         rules.validate_approver(
             requester_id=getattr(requester, "pk", None),
             approver_id=approver.pk,
             approver_active=approver.is_active,
             approver_can_approve=approver.can(RESTRICTED_ACTIONS[action]["permission"]),
-            reason=reason,
         )
     except rules.ApprovalError as exc:
         audit.record("approval.denied", actor=requester, approver=approver, object_type=action,
@@ -155,12 +155,12 @@ def grant_approval(*, action, approver_username, secret=None, biometric=None, re
     with transaction.atomic():
         approval = Approval.objects.create(
             action=action, requester=requester, approver=approver, method=method,
-            reason=reason.strip(), object_ref=object_ref or "", till_number=till_number,
+            reason=reason, object_ref=object_ref or "", till_number=till_number,
             detail=detail or {}, token_hash=token_hash,
             expires_at=timezone.now() + timedelta(minutes=minutes),
         )
         audit.record("approval.granted", actor=requester, approver=approver, object_type=action,
-                     object_ref=object_ref, reason=reason.strip(), ip=ip, till_number=till_number,
+                     object_ref=object_ref, reason=reason, ip=ip, till_number=till_number,
                      new={"method": method, "approval_id": approval.pk})
     return raw, approval
 

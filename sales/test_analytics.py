@@ -46,3 +46,17 @@ class AnalyticsTests(SalesCase):
         data = Client()
         data.force_login(self.manager)
         self.assertEqual(data.get("/manage/charts/data/").json()["kpi"]["count"], 1)
+
+    def test_chart_date_controls_render_a_safe_range_and_mark_the_active_preset(self):
+        today = timezone.localdate()
+        response = Client()
+        response.force_login(self.manager)
+
+        page = response.get(f"/manage/charts/?from={today:%Y-%m-%d}&to={today:%Y-%m-%d}")
+
+        self.assertContains(page, 'aria-label="Filter charts by date"')
+        self.assertContains(page, f'max="{today:%Y-%m-%d}"')
+        self.assertContains(page, f'min="{today:%Y-%m-%d}"')
+        self.assertContains(page, 'aria-label="Quick date ranges"')
+        self.assertContains(page, 'aria-current="date"')
+        self.assertEqual(page.content.decode().count('aria-current="date"'), 1)

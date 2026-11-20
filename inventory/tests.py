@@ -109,17 +109,16 @@ class ReceivingTests(CatalogCase):
         m = StockMovement.objects.get()
         self.assertEqual((m.user, m.approved_by), (self.clerk, self.supervisor))
 
-    def test_rejection_needs_reason_and_adds_nothing(self):
+    def test_rejection_reason_is_optional_and_adds_nothing(self):
         shop = ShopSettings.load()
         shop.receiving_requires_approval = True
         shop.save()
         r = receive(self.clerk, self.product, 6, "100")
         services.submit_receiving(r.pk, self.clerk)
-        with self.assertRaises(services.StockError):
-            services.decide_receiving(r.pk, self.supervisor, approve=False, note="")
-        services.decide_receiving(r.pk, self.supervisor, approve=False, note="Wrong brand delivered")
+        services.decide_receiving(r.pk, self.supervisor, approve=False, note="")
+        r.refresh_from_db()
+        self.assertEqual((r.status, r.decision_note), (Receiving.REJECTED, ""))
         self.assertEqual(stock(self.product), 0)
-        self.assertEqual(Receiving.objects.get().status, Receiving.REJECTED)
 
     def test_scan_screen_adds_line_from_barcode(self):
         from catalog import services as cat
@@ -289,10 +288,11 @@ class AdjustmentTests(CatalogCase):
             services.adjust_stock(product_id=self.product.pk, movement_type=mr.DAMAGED, quantity=-11, user=self.manager,
                                   reason="oops")
 
-    def test_reason_required(self):
-        with self.assertRaises(services.StockError):
-            services.adjust_stock(product_id=self.product.pk, movement_type=mr.ADJUST, quantity=1, user=self.manager,
-                                  reason="  ")
+    def test_adjustment_reason_is_optional(self):
+        movement = services.adjust_stock(product_id=self.product.pk, movement_type=mr.ADJUST, quantity=1,
+                                         user=self.manager, reason="  ")
+        self.assertEqual(movement.reason, "")
+        self.assertEqual(stock(self.product), 11)
 
     def test_opening_stock_only_before_other_movements(self):
         fresh = make_product("Fresh", "FRESH-1", cost="50")

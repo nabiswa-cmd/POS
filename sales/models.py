@@ -329,7 +329,7 @@ class MpesaTransaction(models.Model):
     SOURCES = [(C2B, "Paid to the Till / Paybill"), (STK, "STK push")]
     UNMATCHED, MATCHED, IGNORED = "UNMATCHED", "MATCHED", "IGNORED"
     STATUSES = [(UNMATCHED, "Received, not yet used on a sale"), (MATCHED, "Used on a sale"),
-                (IGNORED, "Set aside by the manager (with a reason)")]
+                (IGNORED, "Set aside by the manager (optional reason)")]
 
     trans_id = models.CharField("M-PESA receipt code", max_length=14, unique=True)
     source = models.CharField(max_length=3, choices=SOURCES)
@@ -474,7 +474,7 @@ class Refund(models.Model):
     status = models.CharField(max_length=10, choices=STATUSES, default=REQUESTED, db_index=True)
     method = models.CharField(max_length=6, choices=METHODS)
     request_key = models.CharField(max_length=80, unique=True, null=True, blank=True)
-    reason = models.CharField(max_length=250)
+    reason = models.CharField(max_length=250, blank=True)
     total = models.DecimalField(max_digits=12, decimal_places=2)
     tax_total = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
 
@@ -577,3 +577,28 @@ class RefundItem(models.Model):
 
     def delete(self, *args, **kwargs):
         raise PermissionError("Refund lines cannot be deleted.")
+
+
+class ReceiptPrintJob(models.Model):
+    QUEUED, PRINTING, PRINTED, FAILED = "QUEUED", "PRINTING", "PRINTED", "FAILED"
+    STATUS = [(QUEUED, "Queued"), (PRINTING, "Printing"), (PRINTED, "Printed"), (FAILED, "Failed")]
+    ORIGINAL, DUPLICATE = "ORIGINAL", "DUPLICATE"
+    KIND = [(ORIGINAL, "Original"), (DUPLICATE, "Duplicate")]
+
+    sale = models.ForeignKey(Sale, on_delete=models.PROTECT, related_name="receipt_print_jobs")
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+                                      related_name="receipt_print_jobs")
+    kind = models.CharField(max_length=9, choices=KIND)
+    payload = models.JSONField()
+    status = models.CharField(max_length=8, choices=STATUS, default=QUEUED, db_index=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    printed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+    def __str__(self):
+        return f"{self.kind.title()} receipt for {self.sale}"
