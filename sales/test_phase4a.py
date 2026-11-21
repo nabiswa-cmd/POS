@@ -7,7 +7,7 @@ from unittest.mock import patch
 from django.test import Client, override_settings
 from django.utils import timezone
 
-from . import daraja, mpesa_services as ms
+from . import daraja, mpesa_services as ms, receipt, receipt_text
 from .models import MpesaStkRequest, MpesaTransaction, Payment, Sale
 from .tests import SalesCase
 
@@ -194,6 +194,34 @@ class MpesaCheckoutTests(SalesCase):
         txn.refresh_from_db()
         self.assertEqual((txn.status, txn.sale_id), (MpesaTransaction.MATCHED, sale.pk))
         self.assertEqual(self.stock(), 9)
+
+    def test_receipt_shows_mpesa_payer_name_and_number(self):
+        self.scan()
+        txn = self.paid()
+        txn.payer_ref = "254712345678"
+        txn.save(update_fields=["payer_ref", "updated_at"])
+        sale = ms.checkout_mpesa(self.cashier, self.shift, txn.pk)
+        data, _lines = receipt.render(receipt.get_completed(sale.pk))
+        lines = receipt_text.format_receipt(data)
+        self.assertEqual((data["customer"], data["customer_number"]), ("JOHN KAMAU", "254712345678"))
+        self.assertIn("Customer: JOHN KAMAU", lines)
+        self.assertIn("M-PESA number: 254712345678", lines)
+
+    def test_manager_sales_search_and_detail_show_payer_items_and_payment(self):
+        self.scan()
+        txn = self.paid()
+        txn.payer_ref = "254712345678"
+        txn.save(update_fields=["payer_ref", "updated_at"])
+        sale = ms.checkout_mpesa(self.cashier, self.shift, txn.pk)
+        client = Client()
+        client.force_login(self.manager)
+
+        listing = client.get("/manage/sales/?q=254712345678")
+        self.assertContains(listing, "JOHN KAMAU (254712345678)")
+        detail = client.get(f"/manage/sales/{sale.pk}/")
+        self.assertContains(detail, "Johnnie Walker Black 750ml")
+        self.assertContains(detail, "254712345678")
+        self.assertContains(detail, "3500.00")
 
     def test_typed_name_is_not_overwritten(self):
         sale, _ = self.scan()

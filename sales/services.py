@@ -79,10 +79,12 @@ def _shift_still_open(shift):
         raise SaleError("Your shift is closed.")
 
 
-def _approve(user, action, object_ref, token, *, detail=None):
+def _approve(user, action, object_ref, token, *, detail=None, shift=None):
     """Consume a supervisor/manager approval for a restricted action. Returns the Approval, or None when
     nobody else needs to approve (the manager's policy waives it, or the owner is acting)."""
     if not auth_services.needs_approval(user, action):
+        return None
+    if shift and shift.unrestricted_selling and action != "negative_stock_sale":
         return None
     if not token:
         raise ApprovalNeeded(action, object_ref, detail=detail)
@@ -92,17 +94,21 @@ def _approve(user, action, object_ref, token, *, detail=None):
         raise SaleError(str(exc)) from exc
 
 
-def _authority(user, approval):
+def _authority(user, approval, shift=None):
     """Who is on record as authorizing: the approver, or the owner when the owner acts alone."""
     if approval:
         return approval.approver
+    if shift and shift.unrestricted_selling:
+        return shift.unrestricted_authorized_by
     return user if auth_services.is_exempt(user) else None
 
 
-def _why(user, approval, reason, what):
+def _why(user, approval, reason, what, shift=None):
     """Return the optional explanation for a restricted action."""
     if approval:
         return approval.reason
+    if shift and shift.unrestricted_selling and shift.unrestricted_authorized_by_id:
+        return f"Temporary unrestricted selling authorized by {shift.unrestricted_authorized_by.display_name}"
     return (reason or "").strip()[:250]
 
 
@@ -232,7 +238,7 @@ def set_quantity(user, shift, item_id, quantity, *, approval_token=None):
         return sale, item
     approval = None
     if new_qty < old_qty:
-        approval = _approve(user, "remove_item", rules.item_ref(sale.pk, item.pk), approval_token)
+        approval = _approve(user, "remove_item", rules.item_ref(sale.pk, item.pk), approval_token, shift=shift)
     elif item.is_partial:
         _check_stock(item.product)
     else:
@@ -248,9 +254,9 @@ def set_quantity(user, shift, item_id, quantity, *, approval_token=None):
     item.save(update_fields=fields)
     _recalc(sale)
     if new_qty < old_qty:
-        audit.record("sale.item_quantity_reduced", actor=user, approver=_authority(user, approval),
+        audit.record("sale.item_quantity_reduced", actor=user, approver=_authority(user, approval, shift),
                      object_type="sale_item", object_ref=item.pk, previous={"quantity": old_qty},
-                     new={"quantity": new_qty}, reason=_why(user, approval, "", "reduce a quantity"),
+                     new={"quantity": new_qty}, reason=_why(user, approval, "", "reduce a quantity", shift),
                      till_number=shift.till.number)
     return sale, item
 
@@ -262,13 +268,13 @@ def remove_item(user, shift, item_id, *, approval_token=None, reason=""):
     _shift_still_open(shift)
     sale = _locked_sale(user, shift)
     item = _item(sale, item_id)
-    approval = _approve(user, "remove_item", rules.item_ref(sale.pk, item.pk), approval_token)
-    why = _why(user, approval, reason, "remove an item")
+    approval = _approve(user, "remove_item", rules.item_ref(sale.pk, item.pk), approval_token, shift=shift)
+    why = _why(user, approval, reason, "remove an item", shift)
     snapshot = {"product": item.product_name, "product_id": item.product_id, "quantity": item.quantity,
                 "unit_price": str(item.unit_price), "line_total": str(item.line_total)}
     item.delete()
     _recalc(sale)
-    audit.record("sale.item_removed", actor=user, approver=_authority(user, approval),
+    audit.record("sale.item_removed", actor=user, approver=_authority(user, approval, shift),
                  object_type="sale", object_ref=sale.pk, previous=snapshot, reason=why, till_number=shift.till.number)
     return sale
 
@@ -301,8 +307,10 @@ def apply_discount(user, shift, item_id, *, amount=None, percent=None, approval_
     elif discount > 0 and (needs or not user.can("discount.apply")):
         if not user.can("discount.apply") and not auth_services.is_required("exceptional_discount"):
             raise NotAllowed("You are not allowed to give discounts.")
-        approval = _approve(user, "exceptional_discount", rules.item_ref(sale.pk, item.pk), approval_token)
-        approver = approval.approver if approval else None
+        approval = _approve(user, "exceptional_discount", rules.item_ref(sale.pk, item.pk), approval_token,
+                            shift=shift)
+        approver = approval.approver if approval else (
+            shift.unrestricted_authorized_by if shift.unrestricted_selling else None)
     previous = {"discount": str(item.discount)}
     item.discount, item.line_total = discount, new_total
     item.discount_approved_by = approver
@@ -312,7 +320,10 @@ def apply_discount(user, shift, item_id, *, amount=None, percent=None, approval_
         audit.record("sale.discount_applied", actor=user, approver=approver,
                      object_type="sale_item", object_ref=item.pk, previous=previous,
                      new={"discount": str(discount), "percent": str(rules.discount_percent(discount, gross))},
-                     reason=(approval.reason if approval else "Owner discount" if approver else "Within ordinary discount limit"),
+                     reason=(approval.reason if approval else
+                             f"Temporary unrestricted selling authorized by {approver.display_name}"
+                             if shift.unrestricted_selling and approver else
+                             "Owner discount" if approver else "Within ordinary discount limit"),
                      till_number=shift.till.number)
     return sale, item
 
@@ -329,8 +340,10 @@ def change_price(user, shift, item_id, new_price, *, approval_token=None):
         raise NotAllowed("You are not allowed to change prices.")
     approval = None
     if not user.can("products.change_price"):
-        approval = _approve(user, "price_change", rules.item_ref(sale.pk, item.pk), approval_token)
-    approver = approval.approver if approval else (user if auth_services.is_exempt(user) and price != item.unit_price else None)
+        approval = _approve(user, "price_change", rules.item_ref(sale.pk, item.pk), approval_token, shift=shift)
+    approver = (approval.approver if approval else
+                shift.unrestricted_authorized_by if shift.unrestricted_selling else
+                user if auth_services.is_exempt(user) and price != item.unit_price else None)
     previous = {"unit_price": str(item.unit_price), "discount": str(item.discount)}
     item.unit_price, item.discount = price, Decimal("0.00")
     item.discount_approved_by = None
@@ -340,7 +353,10 @@ def change_price(user, shift, item_id, new_price, *, approval_token=None):
     _recalc(sale)
     audit.record("sale.price_changed", actor=user, approver=approver,
                  object_type="sale_item", object_ref=item.pk, previous=previous, new={"unit_price": str(price)},
-                 reason=approval.reason if approval else "Changed by a user with price permission (owner)" if approver else "Changed by a user with price permission",
+                 reason=approval.reason if approval else
+                 f"Temporary unrestricted selling authorized by {approver.display_name}"
+                 if shift.unrestricted_selling and approver else
+                 "Changed by a user with price permission (owner)" if approver else "Changed by a user with price permission",
                  till_number=shift.till.number)
     return sale, item
 
@@ -358,6 +374,34 @@ def set_customer(user, shift, name, pin=None):
         fields.append("customer_pin")
     sale.save(update_fields=fields)
     return sale
+
+
+@transaction.atomic
+def set_unrestricted_selling(user, shift, enabled, *, approval_token=None):
+    """Toggle the shift's temporary approval override; negative-stock sales still need approval."""
+    _need(user, "sales.make")
+    _shift_still_open(shift)
+    enabled = bool(enabled)
+    if enabled == shift.unrestricted_selling:
+        return shift
+    approver = None
+    if enabled:
+        approval = _approve(user, "unrestricted_selling", f"shift-{shift.pk}", approval_token)
+        if approval is None and not auth_services.is_exempt(user):
+            raise SaleError("A supervisor or manager must approve unrestricted selling.")
+        approver = approval.approver if approval else user
+    shift.unrestricted_selling = enabled
+    if enabled:
+        shift.unrestricted_authorized_by = approver
+        shift.unrestricted_since = timezone.now()
+    else:
+        shift.unrestricted_since = None
+    shift.save(update_fields=["unrestricted_selling", "unrestricted_authorized_by", "unrestricted_since"])
+    audit.record(
+        "sale.unrestricted_selling_enabled" if enabled else "sale.unrestricted_selling_disabled",
+        actor=user, approver=approver, object_type="cashier_shift", object_ref=shift.pk,
+        reason="Temporary till-session selling override", till_number=shift.till.number)
+    return shift
 
 
 # --- hold, resume, void --------------------------------------------------------------------------
@@ -411,15 +455,15 @@ def void_sale(user, shift, *, approval_token=None, reason=""):
     sale = _locked_sale(user, shift)
     if not sale.items.exists():
         return None                               # nothing to void
-    approval = _approve(user, "void_sale", rules.sale_ref(sale.pk), approval_token)
-    why = _why(user, approval, reason, "void a sale")
+    approval = _approve(user, "void_sale", rules.sale_ref(sale.pk), approval_token, shift=shift)
+    why = _why(user, approval, reason, "void a sale", shift)
     summary = [{"product": i.product_name, "quantity": i.quantity, "line_total": str(i.line_total)}
                for i in sale.items.all()]
     sale.status, sale.voided_at, sale.voided_by = Sale.VOIDED, timezone.now(), user
-    sale.void_approved_by = _authority(user, approval)
+    sale.void_approved_by = _authority(user, approval, shift)
     sale.void_reason = why[:250]
     sale.save(update_fields=["status", "voided_at", "voided_by", "void_approved_by", "void_reason"])
-    audit.record("sale.voided", actor=user, approver=_authority(user, approval), object_type="sale",
+    audit.record("sale.voided", actor=user, approver=_authority(user, approval, shift), object_type="sale",
                  object_ref=sale.pk, previous={"items": summary, "total": str(sale.total)}, reason=why,
                  till_number=shift.till.number)
     return sale

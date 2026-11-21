@@ -24,6 +24,10 @@ This **replaces all of today's data** with the backup, so it is not on a screen 
 Before replacing anything the tool: verifies the file, refuses a backup from a **newer** program version, refuses one from a different kind of database, and writes **`...-prerestore.zip`** (the state just before). Old product images are moved aside, not deleted. If you restored the wrong file, restore the `-prerestore.zip` to undo it.
 Sales made after the backup was taken are **not** in it: check the day's paper slips and the M-PESA statement for the gap, and the Cash-ups screen will show the difference when the drawers are counted.
 
+On the Windows shop server, **Manager > Server sync > Replace local data with online server copy** automates the restore: it downloads and validates the newest online backup, refuses while any cashier shift is open, saves a pre-restore safety backup, stops the WinesPOS Printer and Server tasks, replaces the database and product images, and restarts the tasks. The manager page reconnects when the server is back. All tills must be closed first, and sales/data not contained in the selected server backup will be replaced.
+
+**Download server database backup** remains available when you only want the archive. On non-Windows systems, use the manual restore steps above; the automatic task restart is specific to the installed Windows shop server.
+
 ## Moving to a new PC
 Install on the new PC (empty database), copy the newest backup and the old `winespos.env` over, then restore as above. Keep the old `DJANGO_SECRET_KEY` and `DESKTOP_SHELL_SECRET`, otherwise saved logins stop working.
 

@@ -8,11 +8,14 @@ from unittest import mock
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.test import Client, TransactionTestCase, override_settings
+from django.core.management.base import CommandError
 
 from accounting.models import ExpenseCategory
 from accounts.models import User
-from core import backup, runtime, sync
+from core import backup, runtime, sync, windows_restore
+from core.management.commands.restore_server_backup import Command as RestoreServerBackupCommand
 from core.models import RuntimeSetting, SyncReceipt, SyncState
+from tills.models import CashierShift
 
 KEY = "test-only-external-encryption-key"
 
@@ -195,3 +198,119 @@ class ShopCycleTests(SyncCase):
         page = c1.get("/manage/sync/")
         self.assertContains(page, "last success")
         self.assertNotContains(page, "last success: <b>never")
+
+    def test_manager_can_download_a_verified_server_backup_but_not_restore_live_data(self):
+        boss = User.objects.create(username="boss", is_manager=True)
+        client = Client()
+        client.force_login(boss)
+        path = backup.create_backup(note="server copy")["path"]
+        with mock.patch.object(sync, "download_latest", return_value=path):
+            response = client.post("/manage/sync/", {"action": "download_server"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Disposition"], f'attachment; filename="{path.name}"')
+        self.assertEqual(b"".join(response.streaming_content), path.read_bytes())
+        self.assertContains(client.get("/manage/sync/"), "Download server database backup")
+
+    def test_manager_can_queue_verified_server_restore(self):
+        boss = User.objects.create(username="boss", is_manager=True)
+        client = Client()
+        client.force_login(boss)
+        path = backup.create_backup(note="server copy")["path"]
+        folder = self.tmp / "backups" / "server-downloads"
+        folder.mkdir()
+        staged = folder / path.name
+        shutil.copyfile(path, staged)
+        with mock.patch.object(sync, "download_latest", return_value=staged), \
+                mock.patch.object(windows_restore, "check_ready"), \
+                mock.patch.object(windows_restore, "launch_restore") as launch:
+            response = client.post("/manage/sync/", {"action": "restore_server"})
+        self.assertEqual(response.status_code, 302)
+        launch.assert_called_once_with(path.name)
+        self.assertTrue(staged.is_file())
+
+    def test_manager_cannot_queue_restore_with_open_cashier_shift(self):
+        boss = User.objects.create(username="boss", is_manager=True)
+        client = Client()
+        client.force_login(boss)
+        with mock.patch.object(CashierShift.objects, "filter") as active_shifts, \
+                mock.patch.object(sync, "download_latest") as download:
+            active_shifts.return_value.exists.return_value = True
+            response = client.post("/manage/sync/", {"action": "restore_server"})
+        self.assertEqual(response.status_code, 302)
+        download.assert_not_called()
+        self.assertContains(client.get("/manage/sync/"), "Close every cashier shift")
+
+    def test_restore_helper_marks_queue_and_starts_detached_worker(self):
+        name = "winespos-20260101-010101.zip"
+        with mock.patch.object(windows_restore, "check_ready", return_value={
+                windows_restore.SERVER_TASK: "Running", windows_restore.PRINTER_TASK: "Running"}), \
+                mock.patch.object(windows_restore.subprocess, "Popen") as start:
+            status = windows_restore.launch_restore(name)
+        self.assertEqual(status["state"], "scheduled")
+        self.assertTrue(status["printer_was_running"])
+        self.assertTrue((self.tmp / "backups" / windows_restore.LOCK_NAME).is_file())
+        self.assertEqual(start.call_args.args[0][-2:], ["restore_server_backup", name])
+
+    def test_restore_helper_releases_lock_if_worker_cannot_start(self):
+        name = "winespos-20260101-010101.zip"
+        with mock.patch.object(windows_restore, "check_ready", return_value={
+                windows_restore.SERVER_TASK: "Running"}), \
+                mock.patch.object(windows_restore.subprocess, "Popen", side_effect=OSError("blocked")):
+            with self.assertRaises(windows_restore.RestoreOperationError):
+                windows_restore.launch_restore(name)
+        self.assertFalse((self.tmp / "backups" / windows_restore.LOCK_NAME).exists())
+        self.assertEqual(windows_restore.read_status()["state"], "failed")
+
+    def run_restore_worker(self, restore_side_effect=None):
+        name = "winespos-20260101-010101.zip"
+        folder = self.tmp / "backups" / "server-downloads"
+        folder.mkdir(parents=True)
+        (folder / name).write_bytes(b"staged")
+        (self.tmp / "backups" / windows_restore.LOCK_NAME).write_text("queued", encoding="utf-8")
+        windows_restore.set_state("scheduled", backup=name)
+        tasks = {
+            windows_restore.SERVER_TASK: "Running",
+            windows_restore.PRINTER_TASK: "Running",
+            windows_restore.BACKUP_TASK: "Ready",
+        }
+
+        def stop(task):
+            tasks[task] = "Ready"
+
+        def start(task):
+            tasks[task] = "Running"
+
+        with mock.patch("core.management.commands.restore_server_backup.os.name", "nt"), \
+                mock.patch("core.management.commands.restore_server_backup.time.sleep"), \
+                mock.patch("core.management.commands.restore_server_backup.backup.verify_backup",
+                           return_value={"manifest": {}}), \
+                mock.patch("core.management.commands.restore_server_backup.backup_rules.check_manifest"), \
+                mock.patch("core.management.commands.restore_server_backup.backup.restore_backup",
+                           return_value={"safety_copy": self.tmp / "safety.zip"},
+                           side_effect=restore_side_effect if isinstance(restore_side_effect, Exception) else None), \
+                mock.patch.object(windows_restore, "task_states", side_effect=lambda: dict(tasks)), \
+                mock.patch.object(windows_restore, "stop_task", side_effect=stop), \
+                mock.patch.object(windows_restore, "start_task", side_effect=start) as start_tasks, \
+                mock.patch.object(windows_restore, "wait_for_server"):
+            command = RestoreServerBackupCommand()
+            command.stdout = io.StringIO()
+            self.restore_start_tasks = start_tasks
+            command.handle(backup_name=name)
+            return command.stdout.getvalue(), start_tasks
+
+    def test_restore_worker_restarts_tasks_and_records_success(self):
+        result, start_tasks = self.run_restore_worker()
+        self.assertIn("Restored winespos-", result)
+        self.assertEqual(start_tasks.call_args_list, [
+            mock.call(windows_restore.SERVER_TASK), mock.call(windows_restore.PRINTER_TASK)])
+        self.assertEqual(windows_restore.read_status()["state"], "succeeded")
+        self.assertFalse((self.tmp / "backups" / windows_restore.LOCK_NAME).exists())
+
+    def test_restore_worker_restarts_tasks_and_records_restore_failure(self):
+        with self.assertRaises(CommandError):
+            self.run_restore_worker(backup.BackupError("restore failed"))
+        self.assertEqual(self.restore_start_tasks.call_args_list, [
+            mock.call(windows_restore.SERVER_TASK), mock.call(windows_restore.PRINTER_TASK)])
+        self.assertEqual(windows_restore.read_status()["state"], "failed")
+        self.assertIn("restore failed", windows_restore.read_status()["error"])
+        self.assertFalse((self.tmp / "backups" / windows_restore.LOCK_NAME).exists())

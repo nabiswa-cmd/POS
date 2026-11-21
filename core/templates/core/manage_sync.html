@@ -11,14 +11,30 @@
   <p>Last attempt: <b>{% if state.last_attempt_at %}{{ state.last_attempt_at|date:"d M H:i" }}{% else %}never{% endif %}</b>
      &middot; last success: <b>{% if state.last_success_at %}{{ state.last_success_at|date:"d M H:i" }}{% else %}never{% endif %}</b></p>
   {% if state.last_error %}<p class="msg error">{{ state.last_error }}</p>{% endif %}
+  {% if restore_status %}
+    <p id="restore-progress" class="{% if restore_status.state == 'failed' or restore_status.state == 'error' %}msg error{% else %}muted{% endif %}">
+      Server data restore: <b>{{ restore_status.state }}</b>. {{ restore_status.message|default:restore_status.error }}
+      {% if restore_status.safety_copy %} Local safety backup: {{ restore_status.safety_copy }}.{% endif %}
+    </p>
+  {% endif %}
   {% if state.last_uploaded_name %}<p class="muted">Newest backup on the online server: {{ state.last_uploaded_name }} ({{ state.last_uploaded_bytes|filesizeformat }}).</p>{% endif %}
   {% if state.last_mpesa_text %}<p class="muted">Last M-PESA fetch: {{ state.last_mpesa_text }}.</p>{% endif %}
   <div class="actions">
     <form method="post">{% csrf_token %}<input type="hidden" name="action" value="test"><button class="ghost" type="submit">Test connection</button></form>
     <form method="post">{% csrf_token %}<input type="hidden" name="action" value="now"><button type="submit">Sync now</button></form>
     <form method="post">{% csrf_token %}<input type="hidden" name="action" value="now"><input type="hidden" name="force" value="1"><button class="ghost" type="submit">Back up and send a new copy</button></form>
+    <form method="post" onsubmit="return confirm('This downloads a full server backup. Restoring it replaces local shop data. Stop all tills and the WinesPOS Server task before restoring. Continue?');">{% csrf_token %}<input type="hidden" name="action" value="download_server"><button class="ghost" type="submit">Download server database backup</button></form>
+    {% if automatic_restore_available %}
+    <form method="post" onsubmit="return confirm('REPLACE ALL LOCAL DATA with the newest online server backup? All local sales, products, staff and settings not in that backup will be replaced. Close every cashier shift first. The app will save a safety backup, stop the POS and printer tasks, restore the server copy, then restart them. Continue?');">{% csrf_token %}<input type="hidden" name="action" value="restore_server"><button type="submit" {% if open_shifts or restore_status.state == 'scheduled' or restore_status.state == 'stopping' or restore_status.state == 'restoring' or restore_status.state == 'starting' %}disabled{% endif %}>Replace local data with online server copy</button></form>
+    {% endif %}
     <a class="btn ghost" href="/admin/core/runtimesetting/">Change server settings</a>
   </div>
+  {% if automatic_restore_available %}
+    {% if open_shifts %}<p class="msg error">Close all {{ open_shifts }} open cashier shift{{ open_shifts|pluralize }} before replacing local data.</p>{% endif %}
+    <p class="muted"><b>Important:</b> Automatic restore is only enabled on the Windows shop server. It first downloads and verifies the newest backup from the online server. The local database and product images will be replaced; an automatic pre-restore safety backup is saved. The server and printer tasks restart automatically.</p>
+  {% else %}
+    <p class="muted"><b>Important:</b> Downloading does not replace the live database. To copy all server data, stop selling, stop the WinesPOS Server scheduled task, restore this downloaded backup using the documented restore steps, then restart the task.</p>
+  {% endif %}
 </div>
 
 {% if callbacks %}
@@ -28,6 +44,30 @@
   {% for label, link in callbacks %}<p><b>{{ label }}</b><br><code>{{ link }}</code></p>{% endfor %}
 </div>
 {% endif %}
+
+  {% if restore_status.state == "scheduled" or restore_status.state == "stopping" or restore_status.state == "restoring" or restore_status.state == "starting" %}
+  <script>
+  (function () {
+    var stopped = false, deadline = Date.now() + 300000;
+    function check() {
+      if (Date.now() > deadline) return;
+      Promise.all([
+        fetch("/health/", { cache: "no-store" }).then(function (r) { return r.ok; }).catch(function () { return false; }),
+        fetch("/manage/sync/?restore_status=1", { cache: "no-store" }).then(function (r) { return r.json(); }).catch(function () { return null; })
+      ]).then(function (result) {
+        var healthy = result[0], state = result[1] && result[1].restore && result[1].restore.state;
+        if (!healthy) stopped = true;
+        if ((state === "succeeded" || state === "failed") && healthy || stopped && healthy) {
+          window.location.reload();
+          return;
+        }
+        window.setTimeout(check, 1200);
+      });
+    }
+    window.setTimeout(check, 1200);
+  })();
+  </script>
+  {% endif %}
 
 <h2>Backups received here (online server)</h2>
 <table><tr><th>Received</th><th>File</th><th class="num">Size</th><th>From</th><th>Check</th></tr>

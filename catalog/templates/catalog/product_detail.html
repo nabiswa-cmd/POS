@@ -8,7 +8,8 @@
  {% if "stock.view" in perms %}<a class="btn ghost" href="/manage/stock/{{ product.pk }}/">Stock history</a>{% endif %}
  {% if "stock.adjust" in perms %}<a class="btn ghost" href="/manage/stock/{{ product.pk }}/adjust/">Adjust stock</a>{% endif %}
  <a class="btn ghost" href="{% url 'selling-units' product.pk %}">Selling units</a>
- {% if "stock.view" in perms %}<a class="btn ghost" href="{% url 'bottle-stock' product.pk %}">Bottles</a>{% endif %}</p>
+ {% if "stock.view" in perms %}<a class="btn ghost" href="{% url 'bottle-stock' product.pk %}">Bottles</a>{% endif %}
+ {% if form and product.active %}<form method="post" action="{% url 'product-delete' product.pk %}" style="display:inline">{% csrf_token %}<button class="ghost" type="submit" onclick="return confirm('Delete {{ product.name|escapejs }}? It will become inactive.');">Delete</button></form>{% endif %}</p>
 
 <h2>Codes the scanner can read</h2>
 <table><tr><th>Code</th><th>Type</th><th>Applies to</th></tr>

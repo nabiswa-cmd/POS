@@ -8,8 +8,17 @@ from django.utils import timezone
 
 from core.models import ReceiptSettings, ShopSettings
 
-from . import etims, receipt_text, tax
+from . import etims, mpesa_rules, receipt_text, tax
 from .models import Sale
+
+
+def customer_identity(sale):
+    """Prefer the confirmed M-PESA payer identity; fall back to the name typed by the cashier."""
+    payment = next((p for p in sale.payments.all() if p.mpesa_transaction_id), None)
+    transaction = payment.mpesa_transaction if payment else None
+    name = (transaction.customer_name if transaction else "") or sale.customer_name
+    number = transaction.payer_ref if transaction and mpesa_rules.phone_hint(transaction.payer_ref) else ""
+    return name, number
 
 
 def build_receipt(sale, *, duplicate=False):
@@ -35,12 +44,14 @@ def build_receipt(sale, *, duplicate=False):
                        "scu_id": sub.scu_id if sub else "", "scu_receipt_no": sub.scu_receipt_no if sub else "",
                        "scu_datetime": sub.scu_datetime if sub else "", "internal_data": sub.internal_data if sub else "",
                        "signature": sub.signature if sub else "", "qr_text": sub.qr_text if sub else ""}
+    customer_name, customer_number = customer_identity(sale)
     return {
         "sale_id": sale.pk,
         "number": sale.number,
         "date": timezone.localtime(sale.completed_at).strftime("%Y-%m-%d %H:%M"),
         "till": sale.till.name,
-        "customer": sale.customer_name,
+        "customer": customer_name,
+        "customer_number": customer_number,
         "cashier": sale.cashier.display_name if cfg.show_cashier else "",
         # An owner who opened their own till is not printed as "authorized by" themselves.
         "authorized_by": (sale.authorized_by.display_name
@@ -74,5 +85,6 @@ def render(sale, *, duplicate=False):
 
 def get_completed(sale_id):
     return (Sale.objects.select_related("till", "cashier", "authorized_by", "etims")
-            .prefetch_related("items__discount_approved_by", "items__price_approved_by", "payments")
+            .prefetch_related("items__discount_approved_by", "items__price_approved_by",
+                              "payments__mpesa_transaction")
             .filter(pk=sale_id, status=Sale.COMPLETED).first())

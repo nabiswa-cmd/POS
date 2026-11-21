@@ -1,6 +1,7 @@
 {% extends "core/base.html" %}{% block title %}Tills &amp; sales{% endblock %}
 {% block content %}
 <h1>Tills &amp; sales</h1>
+{% if can_manage_till_connections %}<p><a class="btn" href="/manage/till-connections/">Configure local tablet connections</a></p>{% endif %}
 <div class="grid">
 {% for t in tills %}<div class="tile"><b>{{ t.till.name }}</b>
   {% if t.shift %}<span class="muted">Open: {{ t.shift.cashier.display_name }} since {{ t.shift.opened_at|time:"H:i" }}<br>Authorized by {% if t.shift.authorized_by_id == t.shift.cashier_id %}the owner{% else %}{{ t.shift.authorized_by.display_name }}{% endif %}<br>Float {{ t.shift.opening_float }}</span>

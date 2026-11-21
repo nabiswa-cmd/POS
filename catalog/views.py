@@ -44,6 +44,8 @@ def manage_home(request):
                if user.can("stock.approve_receiving") else 0)
     low = (Product.objects.filter(active=True, reorder_level__gt=0, stock_qty__lte=F("reorder_level")).count()
            if user.can("stock.view") else 0)
+    imported_inactive = (Product.objects.filter(active=False, description__startswith="Imported from ").count()
+                         if user.can("products.manage") else 0)
     refunds = Refund.objects.filter(status=Refund.REQUESTED).count() if user.can("approve.refund") else 0
 
     sales_today = sales_last_week = delta = None
@@ -61,6 +63,7 @@ def manage_home(request):
     return render(request, "core/manage_home.html", {
         "shop_name": ShopSettings.load().shop_name, "is_manager": user.is_manager,
         "pending_receivings": pending, "low_count": low, "refund_count": refunds,
+        "imported_inactive_count": imported_inactive,
         "sales_today": sales_today, "sales_last_week": sales_last_week, "sales_delta": delta})
 
 
@@ -70,6 +73,7 @@ def manage_home(request):
 def product_list(request):
     qs = Product.objects.select_related("brand", "category", "shelf")
     q = request.GET.get("q", "").strip()
+    imported = request.GET.get("imported") == "1"
     if q:
         qs = qs.filter(Q(name__icontains=q) | Q(sku__icontains=q.upper()) | Q(brand__name__icontains=q)
                        | Q(codes__code=q.upper())).distinct()
@@ -77,13 +81,18 @@ def product_list(request):
         qs = qs.filter(category_id=request.GET["category"]) if request.GET["category"].isdigit() else qs
     if request.GET.get("shelf"):
         qs = qs.filter(shelf_id=request.GET["shelf"]) if request.GET["shelf"].isdigit() else qs
-    if request.GET.get("inactive") != "1":
+    if request.GET.get("inactive") != "1" and not imported:
         qs = qs.filter(active=True)
+    if imported:
+        qs = qs.filter(active=False, description__startswith="Imported from ")
     page = Paginator(qs, PAGE_SIZE).get_page(request.GET.get("page"))
+    page_query = request.GET.copy()
+    page_query.pop("page", None)
     return render(request, "catalog/product_list.html", {
         "page": page, "q": q, "categories": Category.objects.filter(active=True), "shelves": Shelf.objects.filter(active=True),
         "show_cost": services.can_see_cost(request.user), "selected_category": request.GET.get("category", ""),
-        "selected_shelf": request.GET.get("shelf", ""), "inactive": request.GET.get("inactive") == "1"})
+        "selected_shelf": request.GET.get("shelf", ""), "inactive": request.GET.get("inactive") == "1" or imported,
+        "imported": imported, "page_query": page_query.urlencode()})
 
 
 @perm_required("products.manage")
@@ -156,6 +165,18 @@ def product_detail(request, pk):
         "packagings": product.packagings.all(), "code_form": CodeForm(product=product) if can_manage else None,
         "pack_form": PackagingForm(product=product) if can_manage else None, "movements": movements,
         "show_cost": services.can_see_cost(request.user), "stock_text": product.stock_text()})
+
+
+@require_POST
+@perm_required("products.manage")
+def product_delete(request, pk):
+    product = get_object_or_404(Product, pk=pk)
+    try:
+        services.deactivate_product(product, request.user, ip=client_ip(request))
+        messages.success(request, f"Deleted {product.name}. It is now inactive.")
+    except services.CatalogError as exc:
+        _flash_errors(request, exc)
+    return redirect("product-list")
 
 
 @require_POST

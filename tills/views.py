@@ -2,20 +2,24 @@
 from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth import login, logout
 from django.db import IntegrityError, transaction
 from django.http import JsonResponse
 from django.utils import timezone
-from django.shortcuts import render
-from django.views.decorators.http import require_GET
+from django.shortcuts import redirect, render
+from django.views.decorators.http import require_GET, require_http_methods
 
 from accounts import approval_rules, services
 from accounts.models import Approval
 from accounts.views import BACKEND, user_payload
-from core import audit
+from core import audit, runtime
+from core.decorators import perm_required
 from core.http import bad, client_ip, login_required_json, post_json
 from core.models import ShopSettings
 
+from .forms import TillLocalServersForm
+from .local_servers import normalize_local_server_urls
 from .models import CashierShift, PosAuthorization, Till
 
 MAX_FLOAT = Decimal("10000000")
@@ -66,6 +70,54 @@ def state(request):
                          "biometric": settings.BIOMETRIC_ENABLED, "till": till.number if till else None,
                          "locked_shift": locked_shift,
                          "cashier_login_without_supervisor": shop.pos_open_policy == ShopSettings.POLICY_CASHIER_LOGIN})
+
+
+@require_GET
+@login_required_json
+def local_fallback(request):
+    if not request.user.can("sales.make"):
+        return bad("POS access is required to view local server addresses.", 403)
+    till_number = request.session.get("pos_till")
+    shift = (CashierShift.objects.select_related("till")
+             .filter(till__number=till_number, cashier=request.user, closed_at__isnull=True).first())
+    if shift is None:
+        return bad("Open your cashier shift before saving its local server addresses.", 403)
+    return JsonResponse({"ok": True, "till": shift.till.number, "name": shift.till.name,
+                         "urls": normalize_local_server_urls(shift.till.local_server_urls)})
+
+
+@perm_required("settings.manage")
+@require_http_methods(["GET", "POST"])
+def local_connections(request):
+    if request.method == "POST":
+        try:
+            till = Till.objects.get(number=int(request.POST.get("till_number", "")))
+        except (Till.DoesNotExist, TypeError, ValueError):
+            messages.error(request, "Choose a valid till.")
+            return redirect("till-local-connections")
+        form = TillLocalServersForm(request.POST)
+        if form.is_valid():
+            previous = till.local_server_urls
+            till.local_server_urls = form.cleaned_data["local_server_urls"]
+            till.save(update_fields=["local_server_urls"])
+            audit.record("till.local_servers_changed", actor=request.user, object_type="till",
+                         object_ref=till.pk, previous={"local_server_urls": previous},
+                         new={"local_server_urls": till.local_server_urls}, ip=client_ip(request),
+                         till_number=till.number)
+            runtime.apply(force=True)
+            messages.success(request, f"Local server URLs saved for {till.name}.")
+        else:
+            messages.error(request, " ".join(
+                error for errors in form.errors.values() for error in errors))
+        return redirect("till-local-connections")
+
+    rows = []
+    for till in Till.objects.order_by("number"):
+        form = TillLocalServersForm(initial={
+            "local_server_urls": "\n".join(normalize_local_server_urls(till.local_server_urls)),
+        })
+        rows.append({"till": till, "form": form})
+    return render(request, "tills/local_connections.html", {"rows": rows})
 
 
 @post_json
@@ -490,6 +542,7 @@ def _overview_view(request):
               .order_by("-completed_at")[:30])
     return render(request, "core/tills_overview.html", {
         "tills": tills, "recent": recent, "can_reprint": request.user.can("receipts.reprint"),
+        "can_manage_till_connections": request.user.can("settings.manage"),
         "etims_on": etims.enabled(), "etims_problems": etims.config_problems() if etims.enabled() else [],
         "etims_counts": etims.counts(), "REJECTED": EtimsSubmission.REJECTED,
     })

@@ -7,11 +7,14 @@
 <link rel="icon" href="{% static 'core/favicon.ico' %}" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="{% static 'core/icons/icon-32.png' %}">
 <link rel="apple-touch-icon" href="{% static 'core/apple-touch-icon.png' %}">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#321516">
 <link rel="stylesheet" href="{% static 'core/theme.css' %}?v=6">
 <script src="{% static 'core/theme.js' %}"></script>
 <link rel="stylesheet" href="{% static 'core/posloader.css' %}">
 <script src="{% static 'core/posloader.js' %}"></script>
 <script src="{% static 'core/camscan.js' %}"></script>
+<script src="{% static 'core/pwa.js' %}" defer></script>
 <script>PosLoader.watch({ overlayDelay: 900 });   /* little cap in clicked buttons; big cap if a keyboard action is slow */</script>
 <style>
   .bar-mark{display:block;height:30px;width:auto;flex:0 0 auto}
@@ -83,7 +86,7 @@
   .actionbar{display:none}
   @media (max-width:1200px), (hover:none) and (pointer:coarse){
     body.pos{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
-    .actionbar{display:grid;grid-template-columns:repeat(5,minmax(0,1fr)) minmax(0,1.7fr);gap:8px;position:fixed;z-index:30;left:0;right:0;bottom:0;
+    .actionbar{display:grid;grid-template-columns:repeat(6,minmax(0,1fr)) minmax(0,1.7fr);gap:8px;position:fixed;z-index:30;left:0;right:0;bottom:0;
       padding:8px 10px calc(8px + env(safe-area-inset-bottom));background-color:var(--surface-nav);border-top:1px solid var(--border)}
     .actionbar button{min-height:52px;padding:6px 4px;font-size:11px;letter-spacing:.04em;margin:0}
     .actionbar button svg{display:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
@@ -138,6 +141,9 @@
   #printframe{position:fixed;width:0;height:0;border:0;left:-99px}
   .browse-mode #sr-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px;max-height:58vh;overflow:auto}
   .browse-mode #sr-list li{border:1px solid var(--line);border-radius:4px}
+  .pos-more-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .pos-more-grid button{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:52px;text-align:left;text-transform:none;letter-spacing:0}
+  @media (max-width:600px){.pos-more-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body class="pos" data-till="{{ till_number }}">
@@ -150,7 +156,9 @@
   <span id="ownerpill" class="pill owner" hidden>Owner: no approvals needed</span>
   <span class="grow"></span>
   <span id="conn" class="pill">Server OK</span>
+  <a id="local-fallback-link" class="pill bad" href="/offline/" hidden>Local connection options</a>
   <span id="clock"></span>
+  <button type="button" id="pwa-install" class="ghost" data-pwa-install hidden>Install</button>
   <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch to light mode" title="Switch to light mode"><svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg><svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/></svg></button>
   <button id="lock-pos" class="ghost" type="button" title="Lock and put this computer to sleep (Ctrl+Alt+L)">Lock &amp; sleep</button>
   <span><kbd id="helpkey">F1</kbd> Help</span>
@@ -195,6 +203,9 @@
   </button>
   <button type="button" class="ghost" data-act="customer" aria-label="Customer details" title="Customer details">
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c.7-3.5 3.2-5.3 7.5-5.3s6.8 1.8 7.5 5.3"/></svg><span class="action-label">Customer</span>
+  </button>
+  <button type="button" class="ghost" data-act="more" aria-label="More POS actions" title="More POS actions">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg><span class="action-label">More</span>
   </button>
   <button type="button" class="pay" data-act="payment" aria-label="Choose payment method" title="Choose payment method">
     <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="1"/><path d="M3 10h18m-13 5h4"/></svg><span>Pay</span><small id="ab-total">0.00</small>
@@ -1130,8 +1141,57 @@
     };
   }
 
+  function moreMenu() {
+    var items = [];
+    Object.keys(S.cfg.actions).forEach(function (action) {
+      if (action !== "more") {
+        items.push('<button type="button" class="ghost" data-more-action="' + esc(action) + '">' +
+          '<span>' + esc(S.cfg.actions[action]) + '</span><kbd>' + esc(S.cfg.shortcuts[action]) + '</kbd></button>');
+      }
+    });
+    items.push('<button type="button" class="ghost" data-more-action="unrestricted">' +
+      '<span>' + (S.cfg.unrestricted_selling ? "Turn unrestricted selling OFF" : "Enable unrestricted selling") +
+      '</span><kbd>' + (S.cfg.unrestricted_selling ? "ON" : "OFF") + '</kbd></button>');
+    items.push('<button type="button" class="ghost" data-more-action="lock"><span>Lock POS and sleep</span><kbd>Ctrl+Alt+L</kbd></button>');
+    items.push('<button type="button" class="ghost" data-more-action="theme"><span>Switch theme</span><kbd>Alt+T</kbd></button>');
+    var d = openDialog('<div class="dlg-head"><h2>More POS actions</h2><button class="ghost dlg-close" id="more-close" type="button" data-first>Close</button></div>' +
+      '<div class="pos-more-grid">' + items.join("") + '</div>');
+    $("more-close").onclick = function () { closeDialog(d); };
+    d.root.querySelectorAll("[data-more-action]").forEach(function (button) {
+      button.onclick = function () {
+        var action = button.getAttribute("data-more-action");
+        closeDialog(d);
+        if (action === "lock") lockPos();
+        else if (action === "unrestricted") unrestrictedSelling();
+        else if (action === "theme") {
+          var themeButton = document.querySelector("[data-theme-toggle]");
+          if (themeButton) themeButton.click();
+        } else run(action);
+      };
+    });
+  }
+
+  function unrestrictedSelling() {
+    var enabled = !S.cfg.unrestricted_selling;
+    var change = function () {
+      act("/api/sales/shift/unrestricted/", { enabled: enabled }).then(function (r) {
+        if (!r.ok) return;
+        S.cfg.unrestricted_selling = enabled;
+        say(enabled
+          ? "Unrestricted selling is ON for this shift. Negative-stock sales still need approval."
+          : "Unrestricted selling is OFF.", "ok");
+      });
+    };
+    if (enabled) {
+      confirmBox("A supervisor or manager must approve unrestricted selling for this shift. Stock-shortage sales will still need approval. Continue?", change);
+    } else {
+      change();
+    }
+  }
+
   var ACTIONS = { help: help, search: search, scan: function () { $("scan").focus(); $("scan").select(); }, quantity: changeQty, hold: hold, retrieve: retrieve,
-                  discount: discount, payment: payment, complete: complete, print: printMenu, shift: shiftSummary, approval: approvalMenu, customer: customer, refund: refundMenu };
+                  discount: discount, payment: payment, complete: complete, print: printMenu, shift: shiftSummary, approval: approvalMenu, customer: customer,
+                  refund: refundMenu, more: moreMenu };
   function run(a) { if (ACTIONS[a]) ACTIONS[a](); }
 
   /* ---------- start-up ---------- */
@@ -1143,6 +1203,7 @@
   setInterval(function () {
     fetch("/health/", { credentials: "same-origin" }).then(function (r) { return r.ok; }).catch(function () { return false; }).then(function (ok) {
       var c = $("conn"); c.textContent = ok ? "Server OK" : "No connection to shop server"; c.className = "pill" + (ok ? "" : " bad");
+      $("local-fallback-link").hidden = ok;
     });
   }, 8000);
   window.addEventListener("focus", focusScan);

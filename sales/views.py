@@ -164,6 +164,18 @@ def cart_customer(request, data, shift):
 @login_required_json
 @post_json
 @_guard
+def shift_unrestricted(request, data, shift):
+    enabled = data.get("enabled")
+    if not isinstance(enabled, bool):
+        return bad("Choose whether unrestricted selling should be enabled.")
+    services.set_unrestricted_selling(request.user, shift, enabled,
+                                      approval_token=data.get("approval_token"))
+    return JsonResponse({"ok": True, "enabled": shift.unrestricted_selling})
+
+
+@login_required_json
+@post_json
+@_guard
 def cart_void(request, data, shift):
     services.void_sale(request.user, shift, approval_token=data.get("approval_token"),
                        reason=str(data.get("reason") or ""))
@@ -298,6 +310,7 @@ def pos_config(request, shift):
         "ok": True, "shop": shop.shop_name, "till": shift.till.name, "till_number": shift.till.number,
         "cashier": user.display_name, "authorized_by": shift.authorized_by.display_name,
         "owner": auth_services.is_exempt(user),
+        "unrestricted_selling": shift.unrestricted_selling,
         "shortcuts": keys, "actions": shortcuts.ACTIONS,
         "can": {"hold": user.can("sales.hold"), "reprint": user.can("receipts.reprint"),
                 "refund": user.can("refunds.request"), "approve_refund": refunds.can_approve(user),

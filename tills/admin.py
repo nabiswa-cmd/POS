@@ -6,6 +6,7 @@ from .models import CashierShift, PosAuthorization, Till
 @admin.register(Till)
 class TillAdmin(admin.ModelAdmin):
     list_display = ("number", "name", "active")
+    exclude = ("local_server_urls",)
 
     def has_delete_permission(self, request, obj=None):
         return False

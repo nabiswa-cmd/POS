@@ -37,3 +37,21 @@ def health(request):
     with connection.cursor() as cursor:
         cursor.execute("SELECT 1")
     return JsonResponse({"ok": True})
+
+
+@require_GET
+def offline(request):
+    return render(request, "core/offline.html")
+
+
+@require_GET
+def manifest(request):
+    return render(request, "core/manifest.webmanifest", content_type="application/manifest+json")
+
+
+@require_GET
+def service_worker(request):
+    response = render(request, "core/service-worker.js", content_type="application/javascript")
+    response["Service-Worker-Allowed"] = "/"
+    response["Cache-Control"] = "no-cache"
+    return response

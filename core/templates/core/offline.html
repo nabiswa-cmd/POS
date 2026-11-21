@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#321516">
+  <title>Shop connection unavailable</title>
+  <style>
+    body{font:16px system-ui,sans-serif;max-width:680px;margin:0 auto;padding:24px;color:#24211f;background:#f7f4ef}
+    h1{font-size:1.6rem} .card{padding:16px;margin:14px 0;border:1px solid #d5cec4;border-radius:10px;background:#fff}
+    a{display:block;padding:14px;margin:8px 0;border-radius:8px;background:#621d22;color:#fff;text-decoration:none}
+    .muted{color:#605b55} button{padding:12px 18px;font:inherit}
+  </style>
+</head>
+<body>
+  <h1>Local connection options</h1>
+  <section class="card">
+    <p>Use a saved local shop-server address only if the public shop address is unavailable and this device is on the shop Wi-Fi.</p>
+    <p><b>Local switching is manual.</b> Android browsers do not let this public HTTPS page silently test private LAN addresses. Choose the correct till and address below. The local sign-in is a separate browser session; sign in again before selling.</p>
+    <div id="connections" aria-live="polite"></div>
+    <p id="empty" class="muted" hidden>No local addresses are saved on this device. While online, sign in and open a shift on each till once to save its configured addresses.</p>
+  </section>
+  <section class="card">
+    <p>If you have an unfinished sale, return to its original server when it is available; an open cart does not transfer between browser sessions.</p>
+    <button type="button" onclick="location.reload()">Retry public shop</button>
+  </section>
+  <script>
+  (function () {
+    var entries = [], prefix = "winespos-local-fallback-";
+    var storageAvailable = true;
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var key = localStorage.key(i);
+        if (key && key.indexOf(prefix) === 0) {
+          try { entries.push(JSON.parse(localStorage.getItem(key))); }
+          catch (error) { console.error("Ignoring unreadable saved till addresses.", error); }
+        }
+      }
+    } catch (error) {
+      storageAvailable = false;
+      console.error("Could not read saved local till addresses.", error);
+    }
+    var root = document.getElementById("connections");
+    var count = 0;
+    entries.forEach(function (entry) {
+      if (!entry || !Array.isArray(entry.urls)) return;
+      entry.urls.forEach(function (address) {
+        var target;
+        try {
+          target = new URL(address);
+          var octets = target.hostname.split(".").map(Number);
+          var privateAddress = octets.length === 4 && octets.every(function (octet) {
+            return Number.isInteger(octet) && octet >= 0 && octet <= 255;
+          }) && (octets[0] === 10 || octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31 ||
+            octets[0] === 192 && octets[1] === 168);
+          if (!["http:", "https:"].includes(target.protocol) || target.username || target.password ||
+              target.pathname !== "/" || target.search || target.hash ||
+              !privateAddress) return;
+        } catch (error) { return; }
+        var link = document.createElement("a");
+        link.href = target.origin + "/app/pos/?till=" + encodeURIComponent(entry.till);
+        link.textContent = (entry.name || "Till " + entry.till) + " · " + target.origin;
+        root.appendChild(link);
+        count++;
+      });
+    });
+    var empty = document.getElementById("empty");
+    empty.hidden = count > 0;
+    if (!storageAvailable) empty.textContent = "This browser could not read saved local addresses. Check browser storage settings.";
+  })();
+  </script>
+</body>
+</html>

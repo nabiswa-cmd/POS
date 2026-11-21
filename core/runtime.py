@@ -10,11 +10,13 @@ DJANGO_DEBUG, DB_* (database address and password), INTEGRATION_SETTINGS_KEY, WI
 WINESPOS_MEDIA_ROOT. M-PESA, eTIMS, and Barcode Lookup values have their own integration settings screen.
 """
 import time
+import logging
 from collections import namedtuple
 from pathlib import Path
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.db.utils import OperationalError, ProgrammingError
 
 Def = namedtuple("Def", "name kind group label help secret", defaults=(False,))
 
@@ -67,6 +69,7 @@ ENC = "enc:"
 _cache = {"at": 0.0}
 _defaults = {}
 _applied = set()
+logger = logging.getLogger(__name__)
 
 
 # --- value handling (pure) -----------------------------------------------------------------------------------------
@@ -195,6 +198,24 @@ def apply(force=False):
         elif d.name in _applied:
             _restore(d.name)
             _applied.discard(d.name)
+    _apply_local_till_hosts(rows)
+
+
+def _apply_local_till_hosts(rows):
+    hosts = list(_defaults["EXTRA_ALLOWED_HOSTS"])
+    stored = rows.get("EXTRA_ALLOWED_HOSTS", "")
+    if stored:
+        try:
+            hosts.extend(host.strip() for host in parse(BY_NAME["EXTRA_ALLOWED_HOSTS"], stored).split(",")
+                         if host.strip())
+        except ValidationError:
+            logger.warning("Ignoring invalid saved extra host names while applying local till hosts.")
+    try:
+        from tills.local_servers import local_server_hosts
+        hosts.extend(local_server_hosts())
+    except (OperationalError, ProgrammingError):
+        logger.warning("Till local host names are unavailable until the database migration is applied.")
+    settings.ALLOWED_HOSTS = list(dict.fromkeys(hosts))
 
 
 class RuntimeSettingsMiddleware:

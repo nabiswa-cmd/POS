@@ -1,0 +1,21 @@
+{% extends "core/base.html" %}{% block title %}Till local connections{% endblock %}
+{% block content %}
+<h1>Till local connections</h1>
+<p class="sub">Add one private shop-server URL per line for each till. The Android PWA offers these addresses if the public connection is unavailable. It does not silently probe or switch servers; the cashier chooses an address and signs in again.</p>
+<p class="card">Use the same shop database server the tills normally use, for example <code>http://192.168.1.10:8000</code>. These addresses work only on the shop Wi-Fi. Save a fixed/reserved LAN address in your router. The public HTTPS website cannot test private LAN addresses from the browser.</p>
+{% for row in rows %}
+<section class="card">
+  <h2>{{ row.till.name }} <small>(Till {{ row.till.number }})</small></h2>
+  <form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="till_number" value="{{ row.till.number }}">
+    {{ row.form.local_server_urls.label_tag }}
+    {{ row.form.local_server_urls }}
+    {% if row.form.local_server_urls.help_text %}<p class="muted">{{ row.form.local_server_urls.help_text }}</p>{% endif %}
+    <button type="submit">Save local addresses</button>
+  </form>
+</section>
+{% empty %}
+<p class="card muted">No tills are configured.</p>
+{% endfor %}
+{% endblock %}

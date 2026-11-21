@@ -11,6 +11,7 @@ from sales import views as sales_views
 from core import backup_views, sync_views
 from sales import analytics_views
 from sales import mpesa_views
+from sales import pages as sales_pages
 from tills import cashup_views
 from tills import views as tills_views
 
@@ -22,10 +23,13 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("pos/sell/", sales_views.pos_page, name="pos-sell"),
     path("manage/tills/", tills_views.overview, name="tills-overview"),
+    path("manage/till-connections/", tills_views.local_connections, name="till-local-connections"),
     path("manage/staff/", accounts_views.manage_staff, name="manage-staff"),
     path("manage/reconciliation/", recon_views.reconciliation, name="reconciliation"),
     path("manage/refunds/", refund_views.refunds, name="refunds-overview"),
     path("manage/sales-report/", sales_report_views.sales_report, name="sales-report"),
+    path("manage/sales/", sales_pages.manage_sales, name="manage-sales"),
+    path("manage/sales/<int:pk>/", sales_pages.manage_sale_detail, name="manage-sale-detail"),
     path("manage/cashups/", cashup_views.cashups, name="cashups"),
     path("manage/cashups/<int:shift_id>/", cashup_views.cashup_detail, name="cashup-detail"),
     path("manage/cashups/<int:shift_id>/slip/", cashup_views.cashup_slip, name="cashup-slip"),

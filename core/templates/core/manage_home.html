@@ -14,7 +14,8 @@
     {% if refund_count %}<div class="attn"><p><span class="dot blue"></span>{{ refund_count }} refund{{ refund_count|pluralize }} to approve</p><a class="btn btn-action" href="/manage/refunds/">Review</a></div>{% endif %}
     {% if pending_receivings %}<div class="attn"><p><span class="dot"></span>{{ pending_receivings }} deliver{{ pending_receivings|pluralize:"y,ies" }} waiting for approval</p><a class="btn btn-action" href="/manage/receiving/?status=PENDING">Approve</a></div>{% endif %}
     {% if low_count %}<div class="attn"><p><span class="dot red"></span>{{ low_count }} product{{ low_count|pluralize }} at or below reorder level</p><a class="btn btn-action" href="/manage/stock/?low=1">Reorder</a></div>{% endif %}
-    {% if not refund_count and not pending_receivings and not low_count %}<p class="allgood">Nothing needs attention.</p>{% endif %}
+    {% if imported_inactive_count %}<div class="attn"><p><span class="dot blue"></span>{{ imported_inactive_count }} scanned product{{ imported_inactive_count|pluralize }} inactive and waiting for review</p><a class="btn btn-action" href="/manage/products/?imported=1">Review products</a></div>{% endif %}
+    {% if not refund_count and not pending_receivings and not low_count and not imported_inactive_count %}<p class="allgood">Nothing needs attention.</p>{% endif %}
   </div>
 </div>
 <div class="shortcuts">

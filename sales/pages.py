@@ -9,6 +9,7 @@ from core.decorators import perm_required
 from core.models import ShopSettings
 from tills.models import CashierShift, Till
 
+from . import receipt
 from .models import Sale
 
 
@@ -36,19 +37,37 @@ def sell_page(request):
 
 @perm_required("sales.view_all")
 def manage_sales(request):
-    sales = Sale.objects.filter(status__in=[Sale.COMPLETED, Sale.VOIDED]).select_related("cashier", "till")
+    sales = Sale.objects.filter(status__in=[Sale.COMPLETED, Sale.VOIDED]).select_related(
+        "cashier", "till").prefetch_related("payments__mpesa_transaction")
     q = request.GET.get("q", "").strip()
     if q:
-        sales = sales.filter(Q(number__icontains=q) | Q(customer_name__icontains=q))
-    return render(request, "sales/manage_sales.html", {"sales": sales.order_by("-id")[:200], "q": q})
+        sales = sales.filter(
+            Q(number__icontains=q) | Q(customer_name__icontains=q)
+            | Q(payments__mpesa_transaction__customer_name__icontains=q)
+            | Q(payments__mpesa_transaction__payer_ref__icontains=q)).distinct()
+    rows = list(sales.order_by("-id")[:200])
+    for sale in rows:
+        name, number = receipt.customer_identity(sale)
+        sale.customer_display = f"{name} ({number})" if name and number else name or number
+    return render(request, "sales/manage_sales.html", {"sales": rows, "q": q})
 
 
 @perm_required("sales.view_all")
 def manage_sale_detail(request, pk):
-    sale = get_object_or_404(Sale.objects.select_related("cashier", "till", "authorized_by"), pk=pk,
+    sale = get_object_or_404(Sale.objects.select_related("cashier", "till", "authorized_by")
+                             .prefetch_related("payments__mpesa_transaction"), pk=pk,
                              status__in=[Sale.COMPLETED, Sale.VOIDED])
+    customer_name, customer_number = receipt.customer_identity(sale)
+    payments = list(sale.payments.all())
+    for payment in payments:
+        transaction = payment.mpesa_transaction if payment.mpesa_transaction_id else None
+        number = transaction.payer_ref if transaction and receipt.mpesa_rules.phone_hint(
+            transaction.payer_ref) else ""
+        payment.customer_display = " · ".join(
+            value for value in ((transaction.customer_name if transaction else ""), number) if value)
     return render(request, "sales/manage_sale_detail.html", {
-        "sale": sale, "items": sale.items.all(), "payments": sale.payments.all(),
+        "sale": sale, "items": sale.items.all(), "payments": payments,
+        "customer_name": customer_name, "customer_number": customer_number,
         "can_reprint": request.user.can("receipts.reprint") and sale.status == Sale.COMPLETED})
 
 

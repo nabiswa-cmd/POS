@@ -66,6 +66,8 @@ def format_receipt(data, paper_mm=80):
     out.append(_pair("Till:", data["till"], width))
     if data.get("customer"):
         out += _wrap(f"Customer: {data['customer']}", width)
+    if data.get("customer_number"):
+        out += _wrap(f"M-PESA number: {data['customer_number']}", width)
     if data.get("customer_pin"):
         out += _wrap(f"Customer PIN: {data['customer_pin']}", width)
     if data.get("cashier"):

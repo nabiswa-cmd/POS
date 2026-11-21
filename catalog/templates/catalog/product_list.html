@@ -1,11 +1,13 @@
 {% extends "core/base.html" %}{% block title %}Products{% endblock %}
 {% block content %}
 <h1>Products</h1><p class="sub">{{ page.paginator.count }} product{{ page.paginator.count|pluralize }}.</p>
+{% if imported %}<p class="msg error">Scanned products waiting for review. Check the name and details, set a selling price and stock, then activate the product.</p>{% endif %}
 <form method="get" class="card row noprint">
+  {% if imported %}<input type="hidden" name="imported" value="1">{% endif %}
   <div style="flex:3"><label for="q">Search or scan</label><input id="q" type="search" name="q" value="{{ q }}" data-search data-autofocus></div>
   <div><label for="category">Category</label><select id="category" name="category"><option value="">All</option>{% for c in categories %}<option value="{{ c.pk }}"{% if selected_category == c.pk|stringformat:"s" %} selected{% endif %}>{{ c.name }}</option>{% endfor %}</select></div>
   <div><label for="shelf">Shelf</label><select id="shelf" name="shelf"><option value="">All</option>{% for s in shelves %}<option value="{{ s.pk }}"{% if selected_shelf == s.pk|stringformat:"s" %} selected{% endif %}>{{ s.code }}</option>{% endfor %}</select></div>
-  <div style="flex:0 0 auto"><label style="color:var(--text)"><input type="checkbox" name="inactive" value="1"{% if inactive %} checked{% endif %}>Show inactive</label></div>
+  <div style="flex:0 0 auto"><label style="color:var(--text)"><input type="checkbox" name="inactive" value="1"{% if inactive %} checked{% endif %}{% if imported %} disabled{% endif %}>Show inactive</label></div>
   <div style="flex:0 0 auto"><button type="submit">Search</button></div>
 </form>
 {% if perms and "products.manage" in perms %}<p class="noprint"><a class="btn" href="/manage/products/new/" accesskey="n">New product (Alt+N)</a></p>{% endif %}
@@ -16,8 +18,9 @@
 <td class="product-photo-cell">{% if p.image_url %}<img class="product-thumbnail" src="{{ p.image_url }}" alt="{{ p.name }} product photo" loading="lazy">{% else %}<span class="product-no-photo">No photo</span>{% endif %}</td>
 <td>{{ p.brand|default:"" }}</td><td>{{ p.category|default:"" }}</td><td>{{ p.shelf.code|default:"" }}</td>
 <td class="num">{{ p.selling_price }}</td>{% if show_cost %}<td class="num">{{ p.avg_cost }}</td>{% endif %}
-<td class="num">{{ p.stock_qty }} {% if p.is_low %}<span class="pill low">low</span>{% endif %}</td><td>{% if not p.active %}<span class="pill bad">inactive</span>{% endif %}</td></tr>
+<td class="num">{{ p.stock_qty }} {% if p.is_low %}<span class="pill low">low</span>{% endif %}</td>
+<td>{% if p.active %}{% if perms and "products.manage" in perms %}<form method="post" action="{% url 'product-delete' p.pk %}" style="display:inline">{% csrf_token %}<button class="ghost" type="submit" onclick="return confirm('Delete {{ p.name|escapejs }}? It will become inactive.');">Delete</button></form>{% endif %}{% else %}<span class="pill bad">inactive</span>{% endif %}</td></tr>
 {% empty %}<tr><td colspan="{% if show_cost %}9{% else %}8{% endif %}" class="muted">No products found.</td></tr>{% endfor %}
 </table>
-<p class="noprint">{% if page.has_previous %}<a href="?page={{ page.previous_page_number }}&q={{ q|urlencode }}">Previous</a> {% endif %}Page {{ page.number }} of {{ page.paginator.num_pages }}{% if page.has_next %} <a href="?page={{ page.next_page_number }}&q={{ q|urlencode }}">Next</a>{% endif %}</p>
+<p class="noprint">{% if page.has_previous %}<a href="?{% if page_query %}{{ page_query }}&amp;{% endif %}page={{ page.previous_page_number }}">Previous</a> {% endif %}Page {{ page.number }} of {{ page.paginator.num_pages }}{% if page.has_next %} <a href="?{% if page_query %}{{ page_query }}&amp;{% endif %}page={{ page.next_page_number }}">Next</a>{% endif %}</p>
 {% endblock %}

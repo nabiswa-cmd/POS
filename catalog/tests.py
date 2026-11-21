@@ -91,6 +91,22 @@ class CodeTests(CatalogCase):
         self.assertEqual(self.client.get("/api/catalog/lookup/", {"code": "JW-BLK"}).status_code, 401)
 
 
+class ImportedProductAttentionTests(CatalogCase):
+    def test_dashboard_links_to_scanned_inactive_products_without_other_inactive_items(self):
+        imported = make_product("Scanned unknown wine", "SCAN-1", active=False,
+                                description="Imported from Open Food Facts. Verify details.")
+        make_product("Manually deactivated", "OLD-1", active=False, description="Discontinued.")
+        self.client.force_login(self.manager)
+
+        home = self.client.get("/manage/")
+        self.assertContains(home, "1 scanned product inactive and waiting for review")
+        self.assertContains(home, 'href="/manage/products/?imported=1"')
+        products = self.client.get("/manage/products/?imported=1")
+        self.assertContains(products, imported.name)
+        self.assertNotContains(products, "Manually deactivated")
+        self.assertContains(products, "set a selling price and stock, then activate")
+
+
 class PackagingTests(CatalogCase):
     def test_pack_price_defaults_to_unit_times_units(self):
         pack = Packaging.objects.create(product=self.product, name="Carton", units_per_pack=12)
@@ -114,6 +130,25 @@ class ProductPermissionTests(CatalogCase):
                 "buying_cost": "2400", "selling_price": "3500", "reorder_level": 0, "active": "on"}
         data.update(extra)
         return ProductForm(data, instance=self.product, user=self.manager)
+
+    def test_manager_can_delete_product_from_table_view(self):
+        self.client.force_login(self.manager)
+        response = self.client.get("/manage/products/")
+        self.assertContains(response, "Delete")
+        self.assertContains(response, f"/manage/products/{self.product.pk}/delete/")
+
+        deleted = self.client.post(f"/manage/products/{self.product.pk}/delete/")
+        self.assertEqual(deleted.status_code, 302)
+        self.product.refresh_from_db()
+        self.assertFalse(self.product.active)
+        self.assertTrue(AuditLog.objects.filter(action="product.deactivated", object_ref=str(self.product.pk)).exists())
+
+    def test_cashier_cannot_delete_product(self):
+        self.client.force_login(self.cashier)
+        response = self.client.post(f"/manage/products/{self.product.pk}/delete/")
+        self.assertEqual(response.status_code, 403)
+        self.product.refresh_from_db()
+        self.assertTrue(self.product.active)
 
     def test_cashier_and_clerk_cannot_open_product_creation(self):
         for user in (self.cashier, self.clerk):

@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
 
@@ -9,12 +10,22 @@ class Till(models.Model):
     number = models.PositiveSmallIntegerField(unique=True)
     name = models.CharField(max_length=40)
     active = models.BooleanField(default=True)
+    local_server_urls = models.JSONField(default=list, blank=True)
 
     class Meta:
         ordering = ["number"]
 
     def __str__(self):
         return self.name
+
+    def clean(self):
+        super().clean()
+        from .local_servers import normalize_local_server_urls
+
+        try:
+            self.local_server_urls = normalize_local_server_urls(self.local_server_urls)
+        except ValidationError as exc:
+            raise ValidationError({"local_server_urls": exc.messages}) from exc
 
 
 class PosAuthorization(models.Model):
@@ -47,6 +58,11 @@ class CashierShift(models.Model):
     opened_at = models.DateTimeField(auto_now_add=True)
     opening_float = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     locked_at = models.DateTimeField(null=True, blank=True)
+    unrestricted_selling = models.BooleanField(default=False)
+    unrestricted_authorized_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="unrestricted_shifts")
+    unrestricted_since = models.DateTimeField(null=True, blank=True)
     closed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:

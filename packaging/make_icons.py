@@ -23,7 +23,7 @@ from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "packaging" / "winePOSlogo.png"
-SIZES = [16, 24, 32, 48, 64, 128, 256]
+SIZES = [16, 24, 32, 48, 64, 128, 192, 256, 512]
 SMALL = {16, 24, 32, 48}          # mark only
 WEB = ROOT / "core" / "static" / "core"
 SERVED = ROOT / "staticfiles" / "core"

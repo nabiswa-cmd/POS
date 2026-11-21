@@ -53,6 +53,7 @@ PERMISSIONS = {
     "approve.reopen_shift": "Authorize reopening a closed shift",
     "approve.stock_adjust": "Authorize stock adjustments",
     "approve.negative_stock_sale": "Authorize sales that create negative stock",
+    "approve.unrestricted_selling": "Temporarily enable unrestricted selling on a till",
 }
 
 # Actions that can require supervisor/manager approval. The manager decides which
@@ -67,6 +68,7 @@ RESTRICTED_ACTIONS = {
     "reopen_shift": {"label": "Reopen a closed shift", "permission": "approve.reopen_shift"},
     "stock_adjust": {"label": "Adjust stock", "permission": "approve.stock_adjust"},
     "negative_stock_sale": {"label": "Sell below available stock", "permission": "approve.negative_stock_sale"},
+    "unrestricted_selling": {"label": "Temporarily enable unrestricted selling", "permission": "approve.unrestricted_selling"},
 }
 
 METHOD_PASSWORD = "PASSWORD"
@@ -89,6 +91,7 @@ _SUPERVISOR_APPROVALS = [
     "approve.refund",
     "approve.stock_adjust",
     "approve.negative_stock_sale",
+    "approve.unrestricted_selling",
 ]
 
 # Manager is special-cased as "all permissions" (is_manager=True), so it is not listed.

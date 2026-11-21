@@ -1,14 +1,14 @@
 # Set up the shop PC and copy the server data
 
 This guide sets up a Windows **Shop server PC** with a local database, connects it to the shop network, and explains how
-to use `shop.dev.surf`.
+to use `shop.devs.surf`.
 
 ## Before you start
 
 - Confirm the online server is running the same or a compatible WinesPOS version and uses **PostgreSQL**. The Windows
   installer creates a PostgreSQL database; the backup must also contain PostgreSQL data.
 - Make a fresh, verified backup of the online data. A WinesPOS backup includes the whole database and product images.
-- Have the online server's public address (for example `https://pos.dev.surf`) and its private `SYNC_TOKEN` ready.
+- Have the online server's public address (for example `https://pos.devs.surf`) and its private `SYNC_TOKEN` ready.
   Do not put the token in a shared document or send it in an ordinary message.
 - Decide which machine will be the **Shop server PC**. It stores the local database and should stay on and connected to
   the shop router. Use a reserved/fixed LAN address, for example `192.168.1.10`.
@@ -30,8 +30,8 @@ online server's live database on demand.
    from reaching one another. Reserve the PC's LAN IP address in the router.
 2. Run the WinesPOS installer as administrator and choose **Shop server PC**.
 3. Enter the shop and manager details. Enter the reserved LAN IP if another till or device will connect locally.
-4. On **Online server (optional)**, enter the online server URL (for example `https://pos.dev.surf`) and its sync token.
-   The online server address is the server that has the sync API; it is not `shop.dev.surf`.
+4. On **Online server (optional)**, enter the online server URL (for example `https://pos.devs.surf`) and its sync token.
+   The online server address is the server that has the sync API; it is not `shop.devs.surf`.
 5. Finish setup and inspect `C:\ProgramData\WinesPOS\logs\install.log`. For automatic seeding, look for a message that
    says this PC now starts from the online copy. The installer may set up a fresh shop if it cannot find or restore a
    compatible backup. **Do not start trading until the expected products, stock, sales, and users have been checked.**
@@ -86,23 +86,36 @@ between PCs is not needed.
 For tills inside the shop, prefer this local address. Sales then continue to work if the shop's internet connection is
 down.
 
-## Use `shop.dev.surf`
+## Use `shop.devs.surf`
 
-`shop.dev.surf` is a public/remote access name for the shop server, not the shop Wi-Fi network itself. For it to work,
-the online server must be configured for the secure tunnel and reverse proxy, and public DNS for `shop.dev.surf` must
-point to that online server. The online server also needs a valid HTTPS certificate for `shop.dev.surf`. The automatic
+`shop.devs.surf` is a public/remote access name for the shop server, not the shop Wi-Fi network itself. For it to work,
+the online server must be configured for the secure tunnel and reverse proxy, and public DNS for `shop.devs.surf` must
+point to that online server. The online server also needs a valid HTTPS certificate for `shop.devs.surf`. The automatic
 tunnel setup requires the online server's tunnel-key setting and SSH account to be configured as described in
 [ONLINE_SERVER_SETUP.md](./ONLINE_SERVER_SETUP.md).
 
-When the installer is given `https://pos.dev.surf`, it derives `shop.dev.surf` as the remote shop hostname. Confirm the
-121installer log says the tunnel was registered and started, and test `https://shop.dev.surf/health/` from a device outside
+When the installer is given `https://pos.devs.surf`, it derives `shop.devs.surf` as the remote shop hostname. Confirm the
+installer log says the tunnel was registered and started, and test `https://shop.devs.surf/health/` from a device outside
 the shop network. A DNS record alone is not enough: the tunnel, web-server proxy, and TLS certificate must all be in
 place.
 
 On shop Wi-Fi, continue to use the local `http://<shop-server-LAN-IP>:8000` address for tills. Whether
-`https://shop.dev.surf` also works from inside the shop depends on the router's DNS/NAT loopback behavior. If you need
+`https://shop.devs.surf` also works from inside the shop depends on the router's DNS/NAT loopback behavior. If you need
 the domain to work both inside and outside, configure split DNS or NAT loopback on the router and validate it on the
 actual shop network; this is separate from the POS installer.
+
+## Install the Android POS app
+
+The cashier screen is an installable PWA. Open `https://shop.devs.surf/app/pos/` in Chrome on each Android tablet while
+online. Sign in and open the till once so the device saves that till's local connection choices, then use **Install POS
+on this device** (or Chrome's **Install app / Add to Home screen** menu). A valid HTTPS certificate and the working
+tunnel are required for installation.
+
+Managers can open **Tills & sales > Configure local tablet connections** and enter one private shop-server URL per
+line for each till (for example `http://192.168.1.10:8000`). Reserve those addresses in the shop router. The browser
+does not silently probe or switch to a private address; if the public connection fails, use **Local connection
+options**, choose the right till/address, and sign in again. This reaches the same shop database, but the browser
+session and unfinished cart do not transfer. The PWA does not cache sales or payment API data for offline selling.
 
 ## Related guides
 

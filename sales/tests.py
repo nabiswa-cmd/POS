@@ -231,6 +231,36 @@ class DiscountAndPriceTests(SalesCase):
         self.assertEqual(self.product.selling_price, D("3500.00"))      # the catalogue is untouched
 
 
+class UnrestrictedSellingTests(SalesCase):
+    def test_enabling_requires_supervisor_and_waives_restricted_actions_until_disabled(self):
+        sale, line = self.scan()
+        with self.assertRaises(services.ApprovalNeeded) as needed:
+            services.set_unrestricted_selling(self.cashier, self.shift, True)
+        self.assertEqual(needed.exception.action, "unrestricted_selling")
+
+        token = self.approval("unrestricted_selling", f"shift-{self.shift.pk}")
+        services.set_unrestricted_selling(self.cashier, self.shift, True, approval_token=token)
+        services.change_price(self.cashier, self.shift, line.pk, "3000")
+        services.remove_item(self.cashier, self.shift, line.pk)
+        entry = AuditLog.objects.get(action="sale.item_removed")
+        self.assertEqual(entry.approver, self.supervisor)
+        self.assertIn("unrestricted selling", entry.reason.lower())
+
+        services.set_unrestricted_selling(self.cashier, self.shift, False)
+        self.assertFalse(self.shift.unrestricted_selling)
+        _sale, new_line = self.scan()
+        with self.assertRaises(services.ApprovalNeeded):
+            services.remove_item(self.cashier, self.shift, new_line.pk)
+
+    def test_unrestricted_mode_does_not_waive_negative_stock_approval(self):
+        token = self.approval("unrestricted_selling", f"shift-{self.shift.pk}")
+        services.set_unrestricted_selling(self.cashier, self.shift, True, approval_token=token)
+        sale, _line = self.scan(qty=11)
+        with self.assertRaises(services.ApprovalNeeded) as needed:
+            services.checkout_cash(self.cashier, self.shift, "38500")
+        self.assertEqual(needed.exception.action, "negative_stock_sale")
+
+
 class CheckoutTests(SalesCase):
     def test_cash_sale_reduces_stock_records_cost_and_payment(self):
         self.scan(qty=3)

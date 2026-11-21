@@ -69,6 +69,15 @@ class SellPageTests(ScreenCase):
         self.assertIn('data-item-index="', html)
         self.assertIn('data-theme-toggle', html)
         self.assertNotIn('class="t-label"', html)
+        self.assertIn('data-act="more"', html)
+        self.assertIn("More POS actions", html)
+        self.assertIn("pos-more-grid", html)
+        self.assertIn("Enable unrestricted selling", html)
+
+    def test_more_actions_bind_click_handlers_to_the_dialog_dom(self):
+        html = self.c.get("/pos/sell/").content.decode()
+        self.assertIn('d.root.querySelectorAll("[data-more-action]")', html)
+        self.assertNotIn('d.querySelectorAll("[data-more-action]")', html)
 
     def test_tablet_pos_shows_touch_actions_and_browses_products_without_typing(self):
         html = self.c.get("/pos/sell/").content.decode()
@@ -151,6 +160,26 @@ class ApprovalHandshakeTests(ScreenCase):
                                                        "reason": "Wrong item"})
         self.assertTrue(res.json()["ok"])
         self.assertEqual(res.json()["cart"]["items"], [])
+
+    def test_unrestricted_selling_requires_approval_and_is_shift_scoped(self):
+        state = self.c.get("/api/sales/config/").json()
+        self.assertFalse(state["unrestricted_selling"])
+        enable = post(self.c, "/api/sales/shift/unrestricted/", {"enabled": True})
+        requirement = enable.json()["approval_required"]
+        self.assertEqual(requirement["action"], "unrestricted_selling")
+
+        approval = post(self.c, "/api/approvals/request/", {
+            "action": requirement["action"], "object_ref": requirement["object_ref"],
+            "approver_username": "sup", "secret": "4321", "reason": "Busy service",
+        }).json()
+        self.assertTrue(approval["ok"])
+        enabled = post(self.c, "/api/sales/shift/unrestricted/",
+                       {"enabled": True, "approval_token": approval["token"]})
+        self.assertTrue(enabled.json()["ok"])
+        self.assertTrue(self.c.get("/api/sales/config/").json()["unrestricted_selling"])
+
+        self.assertTrue(post(self.c, "/api/sales/shift/unrestricted/", {"enabled": False}).json()["ok"])
+        self.assertFalse(self.c.get("/api/sales/config/").json()["unrestricted_selling"])
 
     def test_wrong_pin_or_token_is_a_plain_error_not_another_approval_request(self):
         post(self.c, "/api/sales/cart/add/", {"code": "6001111111111"})

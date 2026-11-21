@@ -7,10 +7,13 @@
 <link rel="icon" href="{% static 'core/favicon.ico' %}" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="{% static 'core/icons/icon-32.png' %}">
 <link rel="apple-touch-icon" href="{% static 'core/apple-touch-icon.png' %}">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#321516">
 <link rel="stylesheet" href="{% static 'core/theme.css' %}?v=7">
 <script src="{% static 'core/theme.js' %}"></script>
 <link rel="stylesheet" href="{% static 'core/posloader.css' %}">
 <script src="{% static 'core/posloader.js' %}"></script>
+<script src="{% static 'core/pwa.js' %}" defer></script>
 <style>
   /* Till picker shown on every step after the supervisor step */
   main.auth .tillpick{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
@@ -25,6 +28,8 @@
   <div class="auth-logo"><img src="{% static 'core/logo-mark.png' %}" alt=""><span class="brand-text"><b>WINE</b> <i>POS</i></span></div>
   <h1>{{ area_title }}</h1>
   <p class="shop">{{ shop_name }}</p>
+  {% if mode == "pos" %}<a id="local-fallback-link" class="btn ghost" href="/offline/" hidden>Local connection options</a>{% endif %}
+  {% if mode == "pos" %}<button type="button" id="pwa-install" class="ghost" data-pwa-install hidden>Install POS on this device</button>{% endif %}
 
   <!-- POS step 1 when required: supervisor authorization -->
   <form id="f-authorize" hidden autocomplete="off">
@@ -119,8 +124,14 @@
     var opts = { method: method, credentials: "same-origin", headers: { "X-CSRFToken": csrf() } };
     if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
     return fetch(url, opts).then(function (r) {
+      var fallbackLink = MODE === "pos" && $("local-fallback-link");
+      if (fallbackLink) fallbackLink.hidden = [502, 503, 504].indexOf(r.status) === -1;
       return r.json().catch(function () { return { ok: false, error: "Unexpected server response." }; });
-    }).catch(function () { return { ok: false, error: "Cannot reach the shop server." }; });
+    }).catch(function () {
+      var fallbackLink = MODE === "pos" && $("local-fallback-link");
+      if (fallbackLink) fallbackLink.hidden = false;
+      return { ok: false, error: "Cannot reach the shop server." };
+    });
   }
   function say(id, text, ok) { var el = $(id); el.textContent = text || ""; el.className = "msg" + (ok ? " ok" : ""); }
   function submit(formId, msgId, handler) {
@@ -300,8 +311,19 @@
     function ready(user, till, shift) {
       $("r-till").textContent = till; $("r-who").textContent = "Cashier: " + user.name + " | Float: " + shift.opening_float;
       show("s-ready");
-      PosLoader.show("Opening till " + till, "Loading the sales screen");   // stays up until the next page appears
-      location.replace("/pos/sell/");
+      api("GET", "/api/pos/local-fallback/").then(function (fallback) {
+        if (fallback.ok && fallback.urls.length) {
+          try {
+            localStorage.setItem("winespos-local-fallback-" + fallback.till, JSON.stringify({
+              till: fallback.till, name: fallback.name, urls: fallback.urls
+            }));
+          } catch (error) {
+            console.error("Could not save local till addresses for offline use.", error);
+          }
+        }
+        PosLoader.show("Opening till " + till, "Loading the sales screen");
+        location.replace("/pos/sell/");
+      });
     }
   } else {
     var NEEDS = { manager: "Manager area", receiving: "Stock receiving" };

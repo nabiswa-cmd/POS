@@ -4,6 +4,7 @@ from . import views
 
 urlpatterns = [
     path("state/", views.state, name="pos-state"),
+    path("local-fallback/", views.local_fallback, name="pos-local-fallback"),
     path("authorize/", views.authorize, name="pos-authorize"),
     path("authorization/cancel/", views.cancel_authorization, name="pos-authorization-cancel"),
     path("till/change/", views.change_till, name="pos-till-change"),

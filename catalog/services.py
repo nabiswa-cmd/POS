@@ -293,6 +293,20 @@ def update_product(form, user, ip=None):
     return product
 
 
+@transaction.atomic
+def deactivate_product(product, user, ip=None):
+    """Remove a product from normal catalogue use without destroying stock or sales history."""
+    if not user.can("products.manage"):
+        raise CatalogError("You are not allowed to delete products.")
+    product = Product.objects.select_for_update().get(pk=product.pk)
+    if product.active:
+        product.active = False
+        product.save(update_fields=["active"])
+        audit.record("product.deactivated", actor=user, object_type="product", object_ref=product.pk,
+                     previous={"active": True}, new={"active": False}, ip=ip)
+    return product
+
+
 def _validate_bottle_capacity_change(old, product):
     """Keep the sealed-stock capacity stable while bottles that use the old value remain."""
     from inventory.models import Bottle      # inventory imports catalog, so import lazily
