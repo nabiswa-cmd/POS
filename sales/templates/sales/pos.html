@@ -79,9 +79,9 @@
   .opts li.on .pick-result{background:var(--nav-on)}
   .cartbox tbody tr{cursor:pointer}
   .keys{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px}
-  /* Touch action bar: the same actions as the keyboard shortcuts, on screen. Shown on phones and small tablets only. */
+  /* Touch action bar: the same actions as the keyboard shortcuts, on screen. */
   .actionbar{display:none}
-  @media (max-width:900px){
+  @media (max-width:1200px), (hover:none) and (pointer:coarse){
     body.pos{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
     .actionbar{display:grid;grid-template-columns:repeat(5,minmax(0,1fr)) minmax(0,1.7fr);gap:8px;position:fixed;z-index:30;left:0;right:0;bottom:0;
       padding:8px 10px calc(8px + env(safe-area-inset-bottom));background-color:var(--surface-nav);border-top:1px solid var(--border)}
@@ -136,6 +136,8 @@
     .actionbar button.pay svg{width:18px;height:18px}
   }
   #printframe{position:fixed;width:0;height:0;border:0;left:-99px}
+  .browse-mode #sr-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px;max-height:58vh;overflow:auto}
+  .browse-mode #sr-list li{border:1px solid var(--line);border-radius:4px}
 </style>
 </head>
 <body class="pos" data-till="{{ till_number }}">
@@ -556,10 +558,13 @@
 
   /* ---------- search (F2) ---------- */
   function search() {
-    var results = [], idx = 0, timer = null;
-    var d = openDialog('<div class="dlg-head"><h2>Search product</h2><button class="ghost dlg-close" id="sr-close" type="button" aria-label="Close product search">Close</button></div>' +
+    var results = [], idx = 0, timer = null, offset = 0, hasMore = false, queryVersion = 0, loading = false;
+    var browseMode = window.matchMedia && window.matchMedia("(max-width: 1200px), (pointer: coarse)").matches;
+    var d = openDialog('<div class="dlg-head"><h2>' + (browseMode ? "Choose product" : "Search product") + '</h2><button class="ghost dlg-close" id="sr-close" type="button" data-first aria-label="Close product search">Close</button></div>' +
       '<p class="note">Tap a product to add it. You can also use Up / Down and Enter. Start with 3* for a quantity.</p>' +
-      '<input id="sr-q" data-first autocomplete="off" placeholder="e.g. johnnie, or 3*tusker"><ul class="opts" id="sr-list" style="margin-top:10px"></ul><div class="err" id="sr-err"></div>');
+      '<input id="sr-q" ' + (browseMode ? "" : "data-first") + ' autocomplete="off" placeholder="Filter products (optional)">' +
+      '<ul class="opts" id="sr-list" style="margin-top:10px"></ul><div class="btns" id="sr-more-wrap"></div><div class="err" id="sr-err"></div>');
+    if (browseMode) d.root.classList.add("browse-mode");
     function selectResult(i) {
       if (i < 0 || i >= results.length) return;
       var raw = $("sr-q").value.trim(), m = raw.match(/^(\d{1,4})\s*[*x]/i), p = results[i];
@@ -575,16 +580,29 @@
       Array.prototype.forEach.call($("sr-list").querySelectorAll("[data-result]"), function (button) {
         button.addEventListener("click", function () { selectResult(Number(button.getAttribute("data-result"))); });
       });
+      $("sr-more-wrap").innerHTML = hasMore ? '<button type="button" class="ghost" id="sr-more">More products</button>' : "";
+      if ($("sr-more")) $("sr-more").addEventListener("click", function () { query(false); });
     }
-    function query() {
+    function query(reset) {
       var raw = $("sr-q").value.trim(), m = raw.match(/^(\d{1,4})\s*[*x]\s*(.*)$/i), q = m ? m[2] : raw;
-      if (q.length < 2) { results = []; paint(); return; }
-      api("GET", "/api/catalog/search/?q=" + encodeURIComponent(q)).then(function (r) {
-        if (r.ok) { results = r.items; idx = 0; paint(); $("sr-err").textContent = r.items.length ? "" : "No product found."; }
+      if (reset) { offset = 0; results = []; hasMore = false; loading = false; queryVersion++; }
+      if (q.length === 1) { results = []; hasMore = false; paint(); return; }
+      if (!reset && loading) return;
+      var version = queryVersion, start = reset ? 0 : offset;
+      var browse = browseMode && !q ? "&browse=1" : "";
+      loading = true;
+      api("GET", "/api/catalog/search/?q=" + encodeURIComponent(q) + "&offset=" + start + browse).then(function (r) {
+        if (version !== queryVersion) return;
+        loading = false;
+        if (r.ok) {
+          results = reset ? r.items : results.concat(r.items);
+          offset = r.next_offset; hasMore = r.has_more; idx = 0; paint();
+          $("sr-err").textContent = results.length ? "" : "No product found.";
+        } else $("sr-err").textContent = r.error || "Could not load products.";
       });
     }
     $("sr-close").addEventListener("click", function () { closeDialog(d); });
-    $("sr-q").addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(query, 180); });
+    $("sr-q").addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(function () { query(true); }, 180); });
     d.onKey = function (e) {
       if (e.key === "ArrowDown") { e.preventDefault(); if (results.length) { idx = Math.min(results.length - 1, idx + 1); paint(); } return true; }
       if (e.key === "ArrowUp") { e.preventDefault(); if (results.length) { idx = Math.max(0, idx - 1); paint(); } return true; }
@@ -595,6 +613,7 @@
       }
       return false;
     };
+    if (browseMode) query(true);
   }
 
   /* ---------- hold / retrieve ---------- */

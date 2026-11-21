@@ -257,7 +257,7 @@ def approve_refund(user, refund_id, approval_token=None, restock=None):
                     stock_services.post_movement(
                         product_id=si.product_id, movement_type=mr.REFUND_RETURN, quantity=base,
                         user=user, reference=refund.number, reason=f"Refund of {refund.sale.number}",
-                        unit_cost=unit_cost, approved_by=approver)
+                        unit_cost=unit_cost, approved_by=approver, allow_negative=True)
                 except stock_services.StockError as exc:
                     raise SaleError(str(exc)) from exc
             it.restocked = True

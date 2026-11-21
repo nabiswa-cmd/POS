@@ -71,6 +71,22 @@ class CodeTests(CatalogCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["items"][0]["code"], "6001234567890")
 
+    def test_product_browse_is_paginated_without_a_search_query(self):
+        for i in range(21):
+            make_product(f"Browse {i:02}", f"BROWSE-{i:02}")
+        self.client.force_login(self.cashier)
+
+        first = self.client.get("/api/catalog/search/", {"browse": "1"}).json()
+        second = self.client.get("/api/catalog/search/", {"browse": "1", "offset": first["next_offset"]}).json()
+
+        self.assertEqual(len(first["items"]), 20)
+        self.assertTrue(first["has_more"])
+        self.assertEqual(first["items"][0]["name"], "Browse 00")
+        self.assertEqual(len(second["items"]), 2)
+        self.assertFalse(second["has_more"])
+        self.assertEqual(second["items"][-1]["name"], self.product.name)
+        self.assertEqual(self.client.get("/api/catalog/search/").json()["items"], [])
+
     def test_lookup_requires_login(self):
         self.assertEqual(self.client.get("/api/catalog/lookup/", {"code": "JW-BLK"}).status_code, 401)
 

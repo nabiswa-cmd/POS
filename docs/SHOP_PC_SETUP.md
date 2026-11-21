@@ -69,7 +69,7 @@ the current data. First install the Shop server PC as above (the backup can be r
    Start-ScheduledTask "WinesPOS Server"
    ```
 
-   Check several known products, stock quantities, recent sales, and product images before using the tills. If restore
+   Check several known products, stock quantities, recent sales, and product images before 211211using the tills. If restore
    reports that the database engine or application version is incompatible, stop and resolve that before trading.
 
 ## Connect tills over shop Wi-Fi
@@ -78,11 +78,11 @@ The Shop server PC and each Till PC must be on the same trusted shop router/netw
 between PCs is not needed.
 
 - When installing the Shop server PC, enter its reserved LAN IP in the installer so the shop-only firewall rule is
-  created.
+  created.1
 - Install the other PC as **Till PC** and enter the local address, for example `http://192.168.1.10:8000`.
 - On a till, open the POS and confirm it can sign in. If it cannot connect, check that both PCs are on the same
   non-guest Wi-Fi/LAN, the server PC is on, its IP has not changed, and the **WinesPOS Server** task is running.
-
+212
 For tills inside the shop, prefer this local address. Sales then continue to work if the shop's internet connection is
 down.
 
@@ -95,7 +95,7 @@ tunnel setup requires the online server's tunnel-key setting and SSH account to 
 [ONLINE_SERVER_SETUP.md](./ONLINE_SERVER_SETUP.md).
 
 When the installer is given `https://pos.dev.surf`, it derives `shop.dev.surf` as the remote shop hostname. Confirm the
-installer log says the tunnel was registered and started, and test `https://shop.dev.surf/health/` from a device outside
+121installer log says the tunnel was registered and started, and test `https://shop.dev.surf/health/` from a device outside
 the shop network. A DNS record alone is not enough: the tunnel, web-server proxy, and TLS certificate must all be in
 place.
 

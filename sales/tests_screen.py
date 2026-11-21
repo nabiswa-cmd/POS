@@ -70,6 +70,13 @@ class SellPageTests(ScreenCase):
         self.assertIn('data-theme-toggle', html)
         self.assertNotIn('class="t-label"', html)
 
+    def test_tablet_pos_shows_touch_actions_and_browses_products_without_typing(self):
+        html = self.c.get("/pos/sell/").content.decode()
+        self.assertIn("@media (max-width:1200px)", html)
+        self.assertIn('var browseMode = window.matchMedia', html)
+        self.assertIn('if (browseMode) query(true);', html)
+        self.assertIn('&browse=1', html)
+
     def test_payment_methods_are_tappable_and_keep_desktop_number_shortcuts(self):
         html = self.c.get("/pos/sell/").content.decode()
         self.assertIn('data-payment-index=', html)

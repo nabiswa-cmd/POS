@@ -115,6 +115,23 @@ class RefundFlowTests(SalesCase):
         self.assertEqual((mv.quantity, mv.reference, mv.approved_by), (1, r.number, self.supervisor))
         self.assertTrue(r.items.get().restocked)
 
+    def test_refund_approval_moves_negative_stock_toward_zero(self):
+        sale, _line = self.scan(qty=16)
+        token = self.approval("negative_stock_sale", rules.sale_ref(sale.pk), reason="Approved stock shortage")
+        sale = services.checkout_cash(self.cashier, self.shift, "56000", approval_token=token)
+        self.assertEqual(self.stock(), -8)
+
+        refund = refunds.request_refund(
+            self.cashier, self.shift, sale.pk,
+            [{"item_id": sale.items.get().pk, "quantity": 1}], "Customer returned it", "CASH")
+        refunds.approve_refund(
+            self.cashier, refund.pk,
+            approval_token=self.approval("refund", refunds.ref(refund.pk)))
+
+        self.assertEqual(self.stock(), -7)
+        movement = StockMovement.objects.get(movement_type="REFUND_RETURN", reference=refund.number)
+        self.assertEqual((movement.quantity, movement.balance_after), (1, -7))
+
     def test_approval_token_is_single_use_and_bound_to_that_refund(self):
         r1, r2 = self.ask(qty=1), self.ask(qty=1)
         token = self.approval("refund", refunds.ref(r1.pk))

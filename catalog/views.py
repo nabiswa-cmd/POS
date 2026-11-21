@@ -578,10 +578,24 @@ def api_search(request):
     if not (request.user.can("sales.make") or request.user.can("stock.receive") or request.user.can("products.view")):
         return JsonResponse({"ok": False, "error": "Not allowed."}, status=403)
     q = request.GET.get("q", "").strip()
-    if len(q) < 2:
-        return JsonResponse({"ok": True, "items": []})
-    qs = (Product.objects.filter(active=True)
-          .filter(Q(name__icontains=q) | Q(brand__name__icontains=q) | Q(sku__icontains=q.upper()) | Q(codes__code__startswith=q.upper()))
-          .distinct().select_related("brand").prefetch_related(
-              Prefetch("codes", queryset=ProductCode.objects.order_by("kind", "code")))[:20])
-    return JsonResponse({"ok": True, "items": [_product_json(p) for p in qs]})
+    try:
+        offset = int(request.GET.get("offset", "0"))
+    except ValueError:
+        return JsonResponse({"ok": False, "error": "Invalid product-list offset."}, status=400)
+    if offset < 0:
+        return JsonResponse({"ok": False, "error": "Invalid product-list offset."}, status=400)
+    if not q and request.GET.get("browse") != "1":
+        return JsonResponse({"ok": True, "items": [], "has_more": False, "next_offset": offset})
+    if q and len(q) < 2:
+        return JsonResponse({"ok": True, "items": [], "has_more": False, "next_offset": offset})
+    qs = Product.objects.filter(active=True)
+    if q:
+        qs = qs.filter(Q(name__icontains=q) | Q(brand__name__icontains=q) | Q(sku__icontains=q.upper())
+                       | Q(codes__code__startswith=q.upper()))
+    rows = list(qs.distinct().select_related("brand").prefetch_related(
+        Prefetch("codes", queryset=ProductCode.objects.order_by("kind", "code")))
+        .order_by("name", "pk")[offset:offset + 21])
+    has_more = len(rows) > 20
+    items = rows[:20]
+    return JsonResponse({"ok": True, "items": [_product_json(p) for p in items],
+                         "has_more": has_more, "next_offset": offset + len(items)})
