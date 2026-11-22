@@ -132,10 +132,9 @@ pos.yourdomain.com {
 
 ## Disaster recovery (shop PC lost)
 
-For a new local Shop server PC, follow [SHOP_PC_SETUP.md](./SHOP_PC_SETUP.md). The `/api/sync/latest/` download
-contains the newest backup received by the online server; it is not an on-demand dump of the online server's live
-database. If the online server is the live POS and its current data is the source, create a backup there with
-`python manage.py backup_db` and securely transfer that file before restoring.
+For a new local Shop server PC, the Windows installer requests a fresh, token-protected snapshot of the configured
+online server's live POS database. The separate `/api/sync/latest/` endpoint still returns the newest shop-PC backup
+uploaded to the sync inbox; it is not the live server's database.
 
 ## Phone camera scanning
 
@@ -152,12 +151,17 @@ explains this and the cashier types the code instead. Chrome on Android uses its
 2. Run the installer on the shop PC, choose *Shop server PC*, and on the **Online server (optional)** page type the
    address (for example `https://pos.devs.surf`) and the sync token. Setup then:
    * writes the sync settings,
-   * downloads the online server's newest backup and loads it into this PC, so both start identical
-     (only on a PC with no data; it never overwrites real sales),
+   * requests and verifies a fresh snapshot of the online server's live database, restores it into a newly created staging
+     database, applies migrations and checks the schema before switching to it,
+   * preserves restored shop settings, manager accounts and tills rather than running fresh-shop setup,
    * creates the tunnel key, registers it on the server and starts the "WinesPOS Tunnel" task.
-   If the online server has no backup yet, or cannot be reached, the shop is set up fresh and sync starts later.
+   The online backup replaces the active local shop data after the installer asks for confirmation. A pre-restore backup
+   is created and the former database and media are retained. If the backup cannot be downloaded, verified, migrated or
+   switched safely, installation stops and reports failure. It does not fall back to a fresh shop or drop the retained
+   database. Leave both online-server fields empty to install a fresh shop.
 3. Same thing from a command line, with the shop server stopped:
-   `WinesPOSAdmin.exe manage sync_seed` (add `--force` only to deliberately replace data on this PC).
+   `WinesPOSAdmin.exe manage sync_seed --force` (this deliberately replaces active local data; PostgreSQL restoration
+   uses a staged database, creates a pre-restore backup and retains the former database).
 
 Note: secrets stored in the database (M-PESA/eTIMS) are encrypted with `INTEGRATION_SETTINGS_KEY`. A reinstalled PC
 creates a new key, so re-enter those secrets once in admin (or copy the old key into the settings file first).

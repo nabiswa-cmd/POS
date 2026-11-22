@@ -9,11 +9,13 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from django.conf import settings
+from django.core.management import call_command
 from django.db import connection, connections
 
 from . import audit
@@ -51,6 +53,137 @@ def _pg_env():
     return {**os.environ, "PGPASSWORD": connection.settings_dict.get("PASSWORD") or ""}
 
 
+def _maintenance_connection():
+    import psycopg
+
+    s = connection.settings_dict
+    password_file = getattr(settings, "WINESPOS_PG_ADMIN_PASSWORD_FILE", Path(""))
+    password = ""
+    user = s["USER"]
+    if str(password_file) and password_file.is_file():
+        try:
+            password = password_file.read_text(encoding="utf-8-sig").strip()
+        except OSError as exc:
+            raise BackupError(f"Could not read the protected PostgreSQL administrator password file: {exc}") from exc
+        user = os.environ.get("WINESPOS_PG_ADMIN_USER", "postgres")
+    try:
+        return psycopg.connect(
+            host=s.get("HOST") or "127.0.0.1",
+            port=s.get("PORT") or "5432",
+            user=user,
+            password=password or s.get("PASSWORD") or "",
+            dbname="postgres",
+            autocommit=True,
+            connect_timeout=10,
+        )
+    except Exception as exc:
+        raise BackupError(f"Could not connect to PostgreSQL to stage the restore: {exc}") from exc
+
+
+def _create_pg_database(name):
+    from psycopg import sql
+
+    with _maintenance_connection() as conn:
+        try:
+            conn.execute(sql.SQL("CREATE DATABASE {} OWNER {} ENCODING 'UTF8' TEMPLATE template0").format(
+                sql.Identifier(name), sql.Identifier(connection.settings_dict["USER"])))
+        except Exception as exc:
+            raise BackupError(f"Could not create the empty restore database '{name}': {exc}") from exc
+
+
+def _drop_pg_database(name):
+    from psycopg import sql
+
+    connections.close_all()
+    with _maintenance_connection() as conn:
+        conn.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(name)))
+
+
+def _restore_pg_dump(dump, database):
+    _run(_pg_args(_pg_tool("pg_restore")) + [
+        "--exit-on-error", "--no-owner", "--no-privileges", "-d", database, str(dump),
+    ], _pg_env())
+
+
+def _migrate_restore_database(name):
+    database_settings = connections.databases["default"]
+    original_name = database_settings["NAME"]
+    connections.close_all()
+    database_settings["NAME"] = name
+    try:
+        call_command("migrate", database="default", interactive=False, verbosity=0)
+        connection.ensure_connection()
+        with connection.cursor() as cursor:
+            tables = set(connection.introspection.table_names(cursor))
+            if "core_receiptsettings" not in tables:
+                raise BackupError("The restored database is missing core_receiptsettings after migrations.")
+            columns = {column.name for column in connection.introspection.get_table_description(
+                cursor, "core_receiptsettings")}
+        if "printer_name" not in columns:
+            raise BackupError(
+                "The restored database migration history does not match its schema: "
+                "core_receiptsettings.printer_name is missing after migrations."
+            )
+        from django.db.migrations.recorder import MigrationRecorder
+        applied_core_migrations = set(MigrationRecorder(connection).migration_qs.filter(
+            app="core", name__in=(
+                "0010_receiptsettings_printer_name",
+                "0011_repair_receiptsettings_printer_name",
+            )).values_list("name", flat=True))
+        if applied_core_migrations != {
+                "0010_receiptsettings_printer_name",
+                "0011_repair_receiptsettings_printer_name",
+        }:
+            raise BackupError("The restored database did not record the receipt printer schema migrations.")
+        connection.check_constraints()
+    finally:
+        connections.close_all()
+        database_settings["NAME"] = original_name
+
+
+def _switch_pg_database(stage, original, stamp):
+    from psycopg import sql
+
+    previous = f"{original[:16]}_before_restore_{stamp}_{uuid.uuid4().hex[:8]}"
+    connections.close_all()
+    with _maintenance_connection() as conn:
+        exists = conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (original,)).fetchone()
+        moved_original = False
+        try:
+            if exists:
+                conn.execute(sql.SQL("ALTER DATABASE {} RENAME TO {}").format(
+                    sql.Identifier(original), sql.Identifier(previous)))
+                moved_original = True
+            conn.execute(sql.SQL("ALTER DATABASE {} RENAME TO {}").format(
+                sql.Identifier(stage), sql.Identifier(original)))
+        except Exception as exc:
+            if moved_original:
+                try:
+                    conn.execute(sql.SQL("ALTER DATABASE {} RENAME TO {}").format(
+                        sql.Identifier(previous), sql.Identifier(original)))
+                except Exception as rollback_exc:
+                    raise BackupError(
+                        f"Could not switch to the restored database ({exc}); restoring the original database "
+                        f"name also failed ({rollback_exc}). The original database remains under '{previous}'."
+                    ) from exc
+            raise BackupError(f"Could not switch to the staged database; the original database was preserved: {exc}") from exc
+    return previous if exists else None
+
+
+def _rollback_pg_switch(original, previous, stamp):
+    from psycopg import sql
+
+    failed = f"{original[:16]}_failed_restore_{stamp}_{uuid.uuid4().hex[:8]}"
+    connections.close_all()
+    with _maintenance_connection() as conn:
+        conn.execute(sql.SQL("ALTER DATABASE {} RENAME TO {}").format(
+            sql.Identifier(original), sql.Identifier(failed)))
+        if previous:
+            conn.execute(sql.SQL("ALTER DATABASE {} RENAME TO {}").format(
+                sql.Identifier(previous), sql.Identifier(original)))
+    return failed
+
+
 def _run(cmd, env=None):
     try:
         done = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=3600)
@@ -71,8 +204,11 @@ def code_migrations():
 def applied_migrations():
     """{app: newest applied migration name} for the manifest, read from the live database."""
     from django.db.migrations.recorder import MigrationRecorder
+    recorder = MigrationRecorder(connection)
+    if not recorder.has_table():
+        return {}
     newest = {}
-    for row in MigrationRecorder(connection).migration_qs.order_by("id"):
+    for row in recorder.migration_qs.order_by("id"):
         newest[row.app] = row.name
     return newest
 
@@ -251,58 +387,136 @@ def verify_backup(path):
 
 # --- restore -------------------------------------------------------------------------------------------------------
 
-def _restore_media(z, stamp):
+def _stage_media(z, stamp):
     root = Path(settings.MEDIA_ROOT)
-    moved = None
+    try:
+        root.parent.mkdir(parents=True, exist_ok=True)
+        stage = Path(tempfile.mkdtemp(prefix=f".{root.name}-restore-{stamp}-", dir=root.parent))
+    except OSError as exc:
+        raise BackupError(f"Could not prepare a staging folder for backup media: {exc}") from exc
+    base = stage.resolve()
+    try:
+        for name in z.namelist():
+            if not name.startswith("media/"):
+                continue
+            relative = name[len("media/"):]
+            target = (stage / relative).resolve()
+            if target != base and base not in target.parents:
+                raise BackupError("The backup contains an unsafe file path and was not restored.")
+            if name.endswith("/"):
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with z.open(name) as src, open(target, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+        return stage
+    except Exception:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
+
+
+def _restore_media(stage, stamp):
+    root = Path(settings.MEDIA_ROOT)
+    old = None
     if root.exists():
-        moved = root.with_name(f"{root.name}.before-restore-{stamp}")
-        shutil.move(str(root), str(moved))
-    root.mkdir(parents=True, exist_ok=True)
-    base = root.resolve()
-    for name in z.namelist():
-        if not name.startswith("media/") or name.endswith("/"):
-            continue
-        target = (root / name[len("media/"):]).resolve()
-        if base not in target.parents:                   # a crafted zip must never write outside the media folder
-            raise BackupError("The backup contains an unsafe file path and was not restored.")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with z.open(name) as src, open(target, "wb") as dst:
-            shutil.copyfileobj(src, dst)
-    return moved
+        old = root.with_name(f"{root.name}.before-restore-{stamp}")
+        if old.exists():
+            old = old.with_name(f"{old.name}-{uuid.uuid4().hex[:8]}")
+        try:
+            os.replace(root, old)
+        except OSError as exc:
+            raise BackupError(f"Could not preserve the current media folder '{root}': {exc}") from exc
+    try:
+        os.replace(stage, root)
+    except OSError as exc:
+        if old and old.exists():
+            try:
+                os.replace(old, root)
+            except OSError as rollback_exc:
+                raise BackupError(
+                    f"Could not install restored media ({exc}); the previous media remains at '{old}' "
+                    f"because rollback failed ({rollback_exc})."
+                ) from exc
+        raise BackupError(f"Could not install restored media; the previous media was preserved: {exc}") from exc
+    return old
 
 
 def restore_backup(path, *, user=None, now=None):
-    """Put a backup back. STOP the server first (see the guide). Returns a summary dict.
-
-    Order: verify the file, check it fits this program, save the CURRENT state as a pre-restore backup, then replace
-    the database and the product images. If anything fails before the replace, nothing has changed.
-    """
+    """Restore a verified backup through a migrated staging database; keep the prior database and media aside."""
     summary = verify_backup(path)
     rules.check_manifest(summary["manifest"], vendor=rules.engine_key(connection.vendor), code_migrations=code_migrations())
     now = now or datetime.now(timezone.utc)
-    safety = create_backup(user=user, prerestore=True, note=f"Before restoring {Path(path).name}", now=now)
+    try:
+        safety = create_backup(user=user, prerestore=True, note=f"Before restoring {Path(path).name}", now=now)
+    except (BackupError, OSError) as exc:
+        raise BackupError(f"Could not create the pre-restore safety backup; nothing was replaced: {exc}") from exc
+    verify_backup(safety["path"])
+    stamp = f"{now:%Y%m%d-%H%M%S}"
+    stage_media = None
+    stage_database = None
+    previous_database = None
+    media_moved = None
     with zipfile.ZipFile(path) as z, tempfile.TemporaryDirectory() as tmp:
         db_file = summary["manifest"]["db_file"]
         extracted = Path(tmp) / db_file
         with z.open(db_file) as src, open(extracted, "wb") as dst:
             shutil.copyfileobj(src, dst)
-        if connection.vendor == "sqlite":
-            source = sqlite3.connect(extracted)
-            try:
-                connection.ensure_connection()
-                source.backup(connection.connection)
-            finally:
-                source.close()
-        else:
-            s = connection.settings_dict
-            connections.close_all()
-            _run(_pg_args(_pg_tool("pg_restore")) + ["--clean", "--if-exists", "--no-owner", "--no-privileges",
-                                                    "-d", s["NAME"], str(extracted)], _pg_env())
-        moved = _restore_media(z, f"{now:%Y%m%d-%H%M%S}")
+        stage_media = _stage_media(z, stamp)
+        try:
+            if connection.vendor == "sqlite":
+                source = sqlite3.connect(extracted)
+                try:
+                    connection.ensure_connection()
+                    source.backup(connection.connection)
+                finally:
+                    source.close()
+                media_moved = _restore_media(stage_media, stamp)
+                stage_media = None
+            else:
+                original_database = connection.settings_dict["NAME"]
+                stage_database = f"{original_database[:34]}_restore_{uuid.uuid4().hex[:12]}"
+                _create_pg_database(stage_database)
+                _restore_pg_dump(extracted, stage_database)
+                _migrate_restore_database(stage_database)
+                previous_database = _switch_pg_database(stage_database, original_database, stamp)
+                stage_database = None
+                try:
+                    media_moved = _restore_media(stage_media, stamp)
+                    stage_media = None
+                except Exception as exc:
+                    try:
+                        failed_database = _rollback_pg_switch(original_database, previous_database, stamp)
+                    except Exception as rollback_exc:
+                        raise BackupError(
+                            f"Media restoration failed ({exc}) and database rollback failed ({rollback_exc}). "
+                            f"The previous database remains under '{previous_database}'."
+                        ) from exc
+                    raise BackupError(
+                        f"Media restoration failed; the prior database was restored. "
+                        f"The staged database remains under '{failed_database}'. {exc}"
+                    ) from exc
+        except Exception as exc:
+            cleanup_error = ""
+            if stage_database:
+                try:
+                    _drop_pg_database(stage_database)
+                    stage_database = None
+                except Exception as cleanup_exc:
+                    cleanup_error = f" The incomplete staging database '{stage_database}' could not be removed: {cleanup_exc}"
+            if stage_media and stage_media.exists():
+                try:
+                    shutil.rmtree(stage_media)
+                    stage_media = None
+                except OSError as cleanup_exc:
+                    cleanup_error += f" The staged media folder '{stage_media}' could not be removed: {cleanup_exc}"
+            if isinstance(exc, BackupError):
+                raise BackupError(f"{exc}{cleanup_error}") from exc
+            raise BackupError(f"Restore failed; the existing database was not replaced: {exc}{cleanup_error}") from exc
     connections.close_all()
     try:
         audit.record("backup.restored", actor=user, object_type="backup", object_ref=Path(path).name,
                      new={"safety_copy": safety["path"].name})
     except Exception:
         pass
-    return {"restored": Path(path).name, "safety_copy": safety["path"], "old_media": moved, "created_at": summary["created_at"]}
+    return {"restored": Path(path).name, "safety_copy": safety["path"], "old_media": media_moved,
+            "previous_database": previous_database, "created_at": summary["created_at"]}

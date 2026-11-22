@@ -61,6 +61,7 @@ def build_values(role, *, root, existing=None, lan_host="", server_url="", port=
         "DB_ENGINE": "postgres", "DB_NAME": "winespos", "DB_USER": "winespos",
         "DB_PASSWORD": existing.get("DB_PASSWORD") or generate_secret(24),
         "DB_HOST": "127.0.0.1", "DB_PORT": "5432",
+        "WINESPOS_PG_ADMIN_PASSWORD_FILE": str(root / "config" / "postgres-admin.txt"),
         "WINESPOS_BIND": "0.0.0.0" if lan_host else "127.0.0.1",   # only open to the shop network if a second till needs it
         "WINESPOS_PORT": str(port),
         "WINESPOS_SERVER_URL": f"http://127.0.0.1:{port}",
@@ -73,7 +74,7 @@ def build_values(role, *, root, existing=None, lan_host="", server_url="", port=
 
 
 def render_env(values):
-    lines = ["# Wines & Spirits POS settings for this PC. Contains secrets: do not email or share this file."]
+    lines = ["# Wines & Spirits POS settings for this PC."]
     for key in sorted(values):
         lines.append(f"{key}={_clean(values[key])}")
     return "\n".join(lines) + "\n"
@@ -89,19 +90,27 @@ def write_env(path, text):
     os.replace(tmp, path)       # on Windows the installer script then restricts the file with icacls
 
 
-def provision_postgres(values, admin_password, admin_user="postgres"):
-    """Create the shop's database login and database if they do not exist; set the login's password to the saved one."""
+def provision_postgres(values, admin_password, admin_user="postgres", *, require_new_database=False):
+    """Provision the app role and database, optionally refusing any pre-existing database."""
     import psycopg
     from psycopg import sql
     with psycopg.connect(host=values["DB_HOST"], port=values["DB_PORT"], user=admin_user, password=admin_password,
                          dbname="postgres", autocommit=True, connect_timeout=10) as conn:
         user, name, password = values["DB_USER"], values["DB_NAME"], values["DB_PASSWORD"]
+        database_exists = conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (name,)).fetchone()
+        if require_new_database and database_exists:
+            raise ConfigError(
+                f"The database '{name}' already exists. It was left untouched; online restoration only runs "
+                "into a newly created database."
+            )
         if conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (user,)).fetchone():
             conn.execute(sql.SQL("ALTER ROLE {} WITH LOGIN PASSWORD {}").format(sql.Identifier(user), sql.Literal(password)))
         else:
             conn.execute(sql.SQL("CREATE ROLE {} WITH LOGIN PASSWORD {}").format(sql.Identifier(user), sql.Literal(password)))
-        if not conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (name,)).fetchone():
+        if not database_exists:
             conn.execute(sql.SQL("CREATE DATABASE {} OWNER {} ENCODING 'UTF8'").format(sql.Identifier(name), sql.Identifier(user)))
+            return True
+        return False
 
 
 def main(argv=None):
@@ -115,7 +124,11 @@ def main(argv=None):
     p.add_argument("--remote-host", default="", help="Server PC: the address people use to reach this shop remotely, e.g. shop.example.com")
     p.add_argument("--force", action="store_true", help="Generate new secrets even if a settings file exists (breaks saved logins).")
     p.add_argument("--provision-db", action="store_true", help="Server PC: create the PostgreSQL login and database.")
+    p.add_argument("--require-new-db", action="store_true",
+                   help="Refuse online restoration unless this installer creates a new database.")
     a = p.parse_args(argv)
+    if a.require_new_db and (a.role != "server" or not a.provision_db):
+        p.error("--require-new-db requires --role server --provision-db.")
     path = paths.env_file_path()
     existing = {} if a.force or not path.is_file() else paths.parse_env(path.read_text(encoding="utf-8"))
     try:
@@ -129,6 +142,7 @@ def main(argv=None):
     merged = {**{k: v for k, v in existing.items() if k not in values}, **values}
     write_env(path, render_env(merged))
     print(f"Settings written to {path}")
+    write_env(paths.client_env_file_path(), render_env({"WINESPOS_SERVER_URL": values["WINESPOS_SERVER_URL"]}))
     if a.role == "server":
         for folder in ("media", "backups"):
             (paths.data_root() / "data" / folder).mkdir(parents=True, exist_ok=True)
@@ -138,7 +152,7 @@ def main(argv=None):
                 print("Set WINESPOS_PG_ADMIN_PASSWORD (the PostgreSQL 'postgres' password) to create the database.", file=sys.stderr)
                 return 2
             try:
-                provision_postgres(merged, admin_pw)
+                provision_postgres(merged, admin_pw, require_new_database=a.require_new_db)
             except Exception as exc:        # driver errors vary; the message is what the installer log needs
                 print(f"Could not create the database: {exc}", file=sys.stderr)
                 return 3

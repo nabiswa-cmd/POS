@@ -24,7 +24,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
-from django.db import close_old_connections
+from django.db import close_old_connections, connection
 from django.utils import timezone
 
 from . import audit, backup, runtime
@@ -239,14 +239,18 @@ def local_is_empty():
     from django.contrib.auth import get_user_model
     from catalog.models import Product
     from sales.models import Sale
+    tables = set(connection.introspection.table_names())
+    if not tables:
+        return True
+    if not {"catalog_product", "sales_sale", "accounts_user"}.issubset(tables):
+        return False
     return not (Product.objects.exists() or Sale.objects.exists() or get_user_model().objects.exists())
 
 
-def download_latest(dest_dir):
-    """Download the newest backup from the online server into dest_dir. Returns the file path."""
+def _download_server_backup(dest_dir, endpoint):
     if not (settings.SYNC_SERVER_URL and settings.SYNC_TOKEN):
         raise SyncError("Set the online server address and the sync token first.")
-    req = urllib.request.Request(settings.SYNC_SERVER_URL.rstrip("/") + "/api/sync/latest/",
+    req = urllib.request.Request(settings.SYNC_SERVER_URL.rstrip("/") + endpoint,
                                  headers={"Authorization": f"Bearer {settings.SYNC_TOKEN}"})
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -267,6 +271,11 @@ def download_latest(dest_dir):
     except urllib.error.HTTPError as exc:
         part.unlink(missing_ok=True)
         if exc.code == 404:
+            if endpoint == "/api/sync/live-backup/":
+                raise SyncError(
+                    "The online server does not provide live database snapshots yet (update it first), "
+                    "or the sync token/address is wrong."
+                )
             raise SyncError("The online server has no backup yet, or the token/address is wrong.")
         raise SyncError(f"The online server answered with an error ({exc.code}).")
     except (urllib.error.URLError, OSError):
@@ -282,13 +291,24 @@ def download_latest(dest_dir):
     return final
 
 
+def download_latest(dest_dir):
+    """Download the newest shop backup received by the online server."""
+    return _download_server_backup(dest_dir, "/api/sync/latest/")
+
+
+def download_live_server(dest_dir):
+    """Request and download a fresh snapshot of the online server's active database."""
+    return _download_server_backup(dest_dir, "/api/sync/live-backup/")
+
+
 def seed_from_server(force=False, user=None):
-    """Make this PC start from the online server's newest backup. Stop the shop server first.
+    """Replace this PC from a fresh snapshot of the online server's live database.
+    Stop the shop server first.
     Without force it only runs on an empty PC, so it can never overwrite real sales. Returns the restore summary."""
     if not force and not local_is_empty():
         raise SyncError("This PC already has data. Seeding would replace it; use --force only if that is what you want.")
     folder = Path(settings.BACKUP_DIR) if getattr(settings, "BACKUP_DIR", None) else Path(settings.BASE_DIR) / "backups"
-    path = download_latest(folder / "seed")
+    path = download_live_server(folder / "seed")
     try:
         return backup.restore_backup(path, user=user)
     except BackupError as exc:

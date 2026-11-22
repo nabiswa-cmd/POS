@@ -3,9 +3,11 @@ import contextlib
 import io
 import os
 import stat
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from desktop import configure, main as desktop_main, paths
 
@@ -78,6 +80,10 @@ class MainConfigureTests(unittest.TestCase):
             code, first = self.run_configure(tmp, "--role", "server")
             self.assertEqual(code, 0)
             self.assertTrue((Path(tmp) / "data" / "backups").is_dir() and (Path(tmp) / "data" / "media").is_dir())
+            client_env = Path(tmp) / "config" / "winespos-client.env"
+            client_values = paths.parse_env(client_env.read_text(encoding="utf-8"))
+            self.assertEqual(client_values, {"WINESPOS_SERVER_URL": "http://127.0.0.1:8000"})
+            self.assertNotIn("DB_PASSWORD", client_values)
             if os.name != "nt":
                 mode = stat.S_IMODE((Path(tmp) / "config" / "winespos.env").stat().st_mode)
                 self.assertEqual(mode, 0o600)                       # secrets are not world-readable
@@ -107,6 +113,22 @@ class MainConfigureTests(unittest.TestCase):
             code, _ = self.run_configure(tmp, "--role", "server", "--provision-db")
             self.assertEqual(code, 2)
 
+    def test_restore_provisioning_refuses_an_existing_database_before_changing_roles(self):
+        cursor = unittest.mock.Mock()
+        cursor.fetchone.return_value = (1,)
+        connection = unittest.mock.MagicMock()
+        connection.__enter__.return_value = connection
+        connection.execute.return_value = cursor
+        psycopg = SimpleNamespace(connect=unittest.mock.Mock(return_value=connection), sql=SimpleNamespace())
+        with unittest.mock.patch.dict(sys.modules, {"psycopg": psycopg}):
+            with self.assertRaisesRegex(configure.ConfigError, "already exists"):
+                configure.provision_postgres(
+                    configure.build_values("server", root=Path("/x")),
+                    "admin-password",
+                    require_new_database=True,
+                )
+        connection.execute.assert_called_once()
+
 
 class PathsAndMainTests(unittest.TestCase):
     def test_env_file_is_loaded_but_a_real_environment_variable_wins(self):
@@ -121,6 +143,25 @@ class PathsAndMainTests(unittest.TestCase):
             os.environ.pop("WP_TEST_B", None)
             os.environ.pop("WINESPOS_ENV_FILE", None)
         self.assertFalse(paths.load_env_file(Path("/definitely/not/here.env")))
+
+    def test_client_env_loader_ignores_secret_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "client.env"
+            path.write_text("WINESPOS_SERVER_URL=http://127.0.0.1:8000\nDB_PASSWORD=not-for-clients\n")
+            os.environ.pop("WINESPOS_SERVER_URL", None)
+            os.environ.pop("DB_PASSWORD", None)
+            self.assertTrue(paths.load_client_env_file(path))
+            self.assertEqual(os.environ["WINESPOS_SERVER_URL"], "http://127.0.0.1:8000")
+            self.assertNotIn("DB_PASSWORD", os.environ)
+            os.environ.pop("WINESPOS_SERVER_URL", None)
+
+    def test_gui_commands_load_only_the_public_client_settings(self):
+        with unittest.mock.patch("desktop.paths.load_client_env_file") as client_loader, \
+                unittest.mock.patch("desktop.paths.load_env_file") as secret_loader, \
+                unittest.mock.patch("desktop.launcher.main", return_value=0):
+            self.assertEqual(desktop_main.main(["manager"]), 0)
+        client_loader.assert_called_once_with()
+        secret_loader.assert_not_called()
 
     def test_help_and_unknown_commands(self):
         with contextlib.redirect_stdout(io.StringIO()) as out:

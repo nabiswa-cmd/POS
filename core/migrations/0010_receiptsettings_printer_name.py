@@ -2,6 +2,8 @@
 
 from django.db import migrations, models
 
+from core.migration_ops import AddFieldIfMissing
+
 
 class Migration(migrations.Migration):
 
@@ -10,9 +12,20 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='receiptsettings',
-            name='printer_name',
-            field=models.CharField(blank=True, help_text='Optional Windows printer name used for silent receipt printing.', max_length=120),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                AddFieldIfMissing(
+                    model_name='receiptsettings',
+                    name='printer_name',
+                    field=models.CharField(blank=True, help_text='Optional Windows printer name used for silent receipt printing.', max_length=120),
+                ),
+            ],
+            state_operations=[
+                migrations.AddField(
+                    model_name='receiptsettings',
+                    name='printer_name',
+                    field=models.CharField(blank=True, help_text='Optional Windows printer name used for silent receipt printing.', max_length=120),
+                ),
+            ],
         ),
     ]

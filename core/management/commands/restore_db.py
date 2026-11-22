@@ -4,8 +4,8 @@ from core import backup
 
 
 class Command(BaseCommand):
-    help = ("Restore a backup zip over the CURRENT database and product images. Stop the POS server first. "
-            "A safety backup of the current state is written before anything is replaced.")
+    help = ("Stage, validate and migrate a backup before switching databases. Stop the POS server first; "
+            "the prior database and media are retained for rollback.")
 
     def add_arguments(self, parser):
         parser.add_argument("path", help="The backup zip to restore.")
@@ -20,6 +20,8 @@ class Command(BaseCommand):
             raise CommandError(str(exc))
         self.stdout.write(self.style.SUCCESS(f"Restored {r['restored']} (made {r['created_at']})."))
         self.stdout.write(f"What was there before is saved as: {r['safety_copy']}")
+        if r.get("previous_database"):
+            self.stdout.write(f"The previous PostgreSQL database was retained as: {r['previous_database']}")
         if r["old_media"]:
             self.stdout.write(f"Previous product images moved to: {r['old_media']}")
         self.stdout.write("Start the server again, then check the latest sale and stock figures.")

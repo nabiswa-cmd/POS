@@ -33,6 +33,11 @@ Note on 17: the tests that check the sales screen's shortcut guide (`sales/tests
 ## B. Windows install checks
 **Server PC**
 - [ ] `verify_install.ps1` prints "All checks passed"
+- [ ] Log in as a standard Windows user (not Administrator); POS and Manager shortcuts open and can reach the server without granting that user access to `winespos.env`
+- [ ] `winespos-client.env` is readable by the standard user and contains only the server URL; `winespos.env` and `postgres-admin.txt` remain inaccessible to that user
+- [ ] Fresh install path: install with no online-server settings, verify migrations, `printer_name`, manager login, till setup and normal startup
+- [ ] Online restore path on a separate clean PC: restore a known-good online backup, confirm the prior shop name/users/tills remain, check receipt printer settings, and verify sales/stock
+- [ ] Failure path: try a missing/incompatible backup and confirm setup stops, the installer reports failure, and no fresh-shop setup or partial database becomes active
 - [ ] Restart the PC. Without logging in to anything, the Manager shortcut opens the login screen within 2 minutes
 - [ ] Desktop shortcuts: POS opens full screen and a cashier cannot close it; Manager and Stock Receiving open maximised
 - [ ] `WinesPOSAdmin.exe manage selfcheck` shows no FAIL (WARN for sandbox/second backup location is understood)

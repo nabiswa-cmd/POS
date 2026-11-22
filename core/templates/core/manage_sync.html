@@ -29,17 +29,17 @@
     <form method="post">{% csrf_token %}<input type="hidden" name="action" value="test"><button class="ghost" type="submit">Test connection</button></form>
     <form method="post">{% csrf_token %}<input type="hidden" name="action" value="now"><button type="submit">Sync now</button></form>
     <form method="post">{% csrf_token %}<input type="hidden" name="action" value="now"><input type="hidden" name="force" value="1"><button class="ghost" type="submit">Back up and send a new copy</button></form>
-    <form method="post" onsubmit="return confirm('This downloads a full server backup. Restoring it replaces local shop data. Stop all tills and the WinesPOS Server task before restoring. Continue?');">{% csrf_token %}<input type="hidden" name="action" value="download_server"><button class="ghost" type="submit">Download server database backup</button></form>
+    <form method="post" onsubmit="return confirm('This creates and downloads a fresh backup of the live POS database at the configured online server. It is not the newest backup uploaded to the sync inbox. Continue?');">{% csrf_token %}<input type="hidden" name="action" value="download_server"><button class="ghost" type="submit">Download live server database snapshot</button></form>
     {% if automatic_restore_available %}
-    <form method="post" onsubmit="return confirm('REPLACE ALL LOCAL DATA with the newest online server backup? All local sales, products, staff and settings not in that backup will be replaced. Close every cashier shift first. The app will save a safety backup, stop the POS and printer tasks, restore the server copy, then restart them. Continue?');">{% csrf_token %}<input type="hidden" name="action" value="restore_server"><button type="submit" {% if open_shifts or restore_status.state == 'scheduled' or restore_status.state == 'stopping' or restore_status.state == 'restoring' or restore_status.state == 'starting' %}disabled{% endif %}>Replace local data with online server copy</button></form>
+    <form method="post" onsubmit="return confirm('REPLACE ALL LOCAL DATA with a fresh snapshot of the live POS database at the configured online server? All local sales, products, staff and settings will be replaced by that server database. Close every cashier shift first. The app will save a safety backup, stop the POS and printer tasks, restore the server copy, then restart them. Continue?');">{% csrf_token %}<input type="hidden" name="action" value="restore_server"><button type="submit" {% if open_shifts or restore_status.state == 'scheduled' or restore_status.state == 'stopping' or restore_status.state == 'restoring' or restore_status.state == 'starting' %}disabled{% endif %}>Replace local data with live server database</button></form>
     {% endif %}
     <a class="btn ghost" href="/admin/core/runtimesetting/">Change server settings</a>
   </div>
   {% if automatic_restore_available %}
     {% if open_shifts %}<p class="msg error">Close all {{ open_shifts }} open cashier shift{{ open_shifts|pluralize }} before replacing local data.</p>{% endif %}
-    <p class="muted"><b>Important:</b> Automatic restore is only enabled on the Windows shop server. It first downloads and verifies the newest backup from the online server. The local database and product images will be replaced; an automatic pre-restore safety backup is saved. The server and printer tasks restart automatically.</p>
+    <p class="muted"><b>Important:</b> Automatic restore is only enabled on the Windows shop server. It requests a fresh backup from the configured online server's active database (not the uploaded-backup inbox), verifies it, replaces the local database and product images, and saves an automatic pre-restore safety backup. The server and printer tasks restart automatically.</p>
   {% else %}
-    <p class="muted"><b>Important:</b> Downloading does not replace the live database. To copy all server data, stop selling, stop the WinesPOS Server scheduled task, restore this downloaded backup using the documented restore steps, then restart the task.</p>
+    <p class="muted"><b>Important:</b> Downloading creates a snapshot of the configured online server's current live POS database. It does not replace this database.</p>
   {% endif %}
 </div>
 

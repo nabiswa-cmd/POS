@@ -144,6 +144,7 @@ else:
             "PORT": env("DB_PORT", "5432"),
         }
     }
+WINESPOS_PG_ADMIN_PASSWORD_FILE = Path(env("WINESPOS_PG_ADMIN_PASSWORD_FILE", ""))
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # --- Auth -----------------------------------------------------------------

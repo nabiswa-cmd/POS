@@ -61,12 +61,29 @@ def api_status(request):
 @csrf_exempt
 @require_GET
 def api_latest(request):
-    """Disaster recovery: a new shop PC downloads the newest backup."""
+    """Disaster recovery: download the newest backup received from a shop PC."""
     _guard(request)
     path = sync.newest_received()
     if path is None:
         raise Http404()
     response = FileResponse(open(path, "rb"), as_attachment=True, filename=path.name, content_type="application/zip")
+    response["Cache-Control"] = "no-store"
+    response["X-Content-SHA256"] = rules.sha256_file(path)
+    return response
+
+
+@csrf_exempt
+@require_GET
+def api_live_backup(request):
+    """Create and stream a fresh backup of this server's active POS database."""
+    _guard(request)
+    try:
+        result = backup.create_backup(note="On-demand live POS server snapshot")
+    except (backup.BackupError, OSError) as exc:
+        return bad(f"Could not create a live server backup: {exc}", 500)
+    path = result["path"]
+    response = FileResponse(open(path, "rb"), as_attachment=True, filename=path.name,
+                            content_type="application/zip")
     response["Cache-Control"] = "no-store"
     response["X-Content-SHA256"] = rules.sha256_file(path)
     return response
@@ -122,7 +139,7 @@ def sync_page(request):
                 if not sync.enabled():
                     raise sync.SyncError("Set up server sync before downloading a server backup.")
                 folder = Path(settings.BACKUP_DIR) / "server-downloads"
-                path = sync.download_latest(folder)
+                path = sync.download_live_server(folder)
                 try:
                     summary = backup.verify_backup(path)
                     rules.check_manifest(summary["manifest"], vendor=rules.engine_key(connection.vendor),
@@ -142,7 +159,7 @@ def sync_page(request):
                         "Close every cashier shift before replacing local data.")
                 windows_restore.check_ready()
                 folder = Path(settings.BACKUP_DIR) / "server-downloads"
-                path = sync.download_latest(folder)
+                path = sync.download_live_server(folder)
                 try:
                     summary = backup.verify_backup(path)
                     rules.check_manifest(summary["manifest"], vendor=rules.engine_key(connection.vendor),
@@ -153,7 +170,7 @@ def sync_page(request):
                 windows_restore.launch_restore(path.name)
                 messages.warning(
                     request,
-                    f"Restore started from {path.name}. The POS server will stop, replace local data, and restart. "
+                    f"Restore started from live server snapshot {path.name}. The POS server will stop, replace local data, and restart. "
                     "This page will reconnect when it is back.")
             else:
                 messages.error(request, "Unknown action.")

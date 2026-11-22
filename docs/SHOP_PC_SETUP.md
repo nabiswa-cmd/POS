@@ -13,18 +13,18 @@ to use `shop.devs.surf`.
 - Decide which machine will be the **Shop server PC**. It stores the local database and should stay on and connected to
   the shop router. Use a reserved/fixed LAN address, for example `192.168.1.10`.
 
-### Know which server backup you have
+### Confirm the source database
 
-The installer's automatic first copy downloads the newest backup **received by the online server**. It does not dump the
-online server's live database on demand.
+The installer asks the configured online server for a fresh snapshot of its **active POS database**. This is the correct
+source when `https://pos.devs.surf` is the live POS containing the users, products, stock, and sales you want. The
+separate `/api/sync/latest/` endpoint contains the newest backup uploaded by a shop PC; it is not used by the installer
+or the live-server restore button.
 
-- If the online server already receives backups from the shop, check its **Server sync** page and confirm the newest
-  backup contains the expected latest sales, products, staff, and stock.
-- If the online server is the live POS and has no received backup, create a backup on that server with
-  `python manage.py backup_db`, then securely copy the resulting zip to the shop PC. Do not rely on automatic seeding
-  in this case; use the manual restore steps below.
+Before replacing local data, confirm the online address and token belong to the server whose live database is
+authoritative. The restore replaces active local data only after validation; a pre-restore safety backup and the former
+database/media are retained.
 
-## Install and automatically seed a new Shop server PC
+## Install or replace data on the Shop server PC
 
 1. Connect the PC to the shop's trusted Wi-Fi or Ethernet network. Do not use a guest Wi-Fi network that blocks devices
    from reaching one another. Reserve the PC's LAN IP address in the router.
@@ -32,19 +32,20 @@ online server's live database on demand.
 3. Enter the shop and manager details. Enter the reserved LAN IP if another till or device will connect locally.
 4. On **Online server (optional)**, enter the online server URL (for example `https://pos.devs.surf`) and its sync token.
    The online server address is the server that has the sync API; it is not `shop.devs.surf`.
-5. Finish setup and inspect `C:\ProgramData\WinesPOS\logs\install.log`. For automatic seeding, look for a message that
-   says this PC now starts from the online copy. The installer may set up a fresh shop if it cannot find or restore a
-   compatible backup. **Do not start trading until the expected products, stock, sales, and users have been checked.**
+5. Finish setup and inspect `C:\ProgramData\WinesPOS\logs\install.log`. For online restoration, confirm it reports the
+   live snapshot filename and successful restore. **Do not start trading until the expected products, stock, sales, and
+   users have been checked.**
 6. Open Manager > **Server sync** and use **Test connection**. Check **Sync now** and the latest success time. The
    online server needs to permit the secure sync connection and the shop must have internet for uploads.
 
-The installer only seeds an empty database. It will not overwrite a shop database that already contains real data.
-Do not use `sync_seed --force` unless you deliberately want to replace local data; first make and verify a local backup.
+When both the online server and this PC already contain data, online restore deliberately replaces the active local
+database and media. It creates a pre-restore backup and retains the former database/media for recovery. To run that
+operation manually with the shop server stopped, use `WinesPOSAdmin.exe manage sync_seed --force`.
 
-## Restore a backup of the live online database
+## Manual restore from a transferred backup
 
-Use these steps when the online server's current database is the source and its **Server sync** inbox does not contain
-the current data. First install the Shop server PC as above (the backup can be restored after setup).
+Use these steps only when you have a verified backup zip transferred from the authoritative server. The installer and
+Manager > Server sync button already request a live snapshot directly.
 
 1. On the online server, run `python manage.py backup_db` from the application directory. Note the exact zip path printed.
 2. Transfer that zip to the shop PC using an approved secure method, such as SSH/SCP or an encrypted USB drive. Do not

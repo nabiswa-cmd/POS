@@ -21,6 +21,7 @@ New-Item -ItemType Directory -Force -Path $Cfg, $Logs | Out-Null
 Start-Transcript -Path (Join-Path $Logs "install.log") -Append | Out-Null
 $Admin = Join-Path $AppDir "WinesPOSAdmin.exe"
 $EnvFile = Join-Path $Cfg "winespos.env"
+$ClientEnvFile = Join-Path $Cfg "winespos-client.env"
 $env:WINESPOS_ENV_FILE = $EnvFile
 $PgAdminFile = Join-Path $Cfg "postgres-admin.txt"
 
@@ -29,11 +30,39 @@ function Run($exe, [string[]]$arguments) {
     & $exe @arguments
     if ($LASTEXITCODE -ne 0) { throw "'$([IO.Path]::GetFileName($exe)) $($arguments -join ' ')' failed (code $LASTEXITCODE)." }
 }
+function Set-FileAcl($path, [string[]]$grants) {
+    & icacls $path /reset | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not reset inherited permissions on '$path'." }
+    & icacls $path /inheritance:r | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not disable inherited permissions on '$path'." }
+    foreach ($grant in $grants) {
+        & icacls $path /grant:r $grant | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Could not set permissions on '$path'." }
+    }
+}
 function Lock-File($path, [bool]$usersMayRead) {
     $grants = @("*S-1-5-32-544:F", "*S-1-5-18:F")        # Administrators, SYSTEM (by SID: works on any Windows language)
     if ($usersMayRead) { $grants += "*S-1-5-32-545:R" }  # Users
+    Set-FileAcl $path $grants
+}
+function Lock-ConfigDirectory($path) {
+    & icacls $path /reset | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not reset inherited permissions on '$path'." }
     & icacls $path /inheritance:r | Out-Null
-    foreach ($g in $grants) { & icacls $path /grant:r $g | Out-Null }
+    if ($LASTEXITCODE -ne 0) { throw "Could not disable inherited permissions on '$path'." }
+    & icacls $path /grant:r "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-545:RX" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not secure the configuration directory '$path'." }
+}
+function Stop-ExistingTask($name) {
+    $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+    if (-not $task -or $task.State -ne "Running") { return }
+    Stop-ScheduledTask -TaskName $name -ErrorAction Stop
+    for ($i = 0; $i -lt 60; $i++) {
+        Start-Sleep -Seconds 1
+        $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+        if (-not $task -or $task.State -ne "Running") { return }
+    }
+    throw "The '$name' task did not stop; refusing to change the database while the shop may be using it."
 }
 function Find-Pg($tool) {
     $c = Get-Command "$tool.exe" -ErrorAction SilentlyContinue
@@ -44,6 +73,7 @@ function Find-Pg($tool) {
 }
 
 try {
+    Lock-ConfigDirectory $Cfg
     $managerPw = ""; $pgAdminPw = ""; $syncToken = ""
     if ($SecretsFile -and (Test-Path $SecretsFile)) {
         $lines = Get-Content $SecretsFile
@@ -57,6 +87,7 @@ try {
         Step "Configuring this PC as a till"
         Run $Admin @("configure", "--role", "till", "--server-url", $ServerUrl)
         Lock-File $EnvFile $true          # holds only the server address, so cashiers may read it
+        Lock-File $ClientEnvFile $true
         try { Invoke-WebRequest "$ServerUrl/health/" -UseBasicParsing -TimeoutSec 8 | Out-Null; Write-Host "The server answered." }
         catch { Write-Warning "The server at $ServerUrl did not answer yet. Check it is on and the address is right." }
         Stop-Transcript | Out-Null
@@ -70,7 +101,7 @@ try {
         if (-not $pgAdminPw) { $pgAdminPw = [Convert]::ToBase64String((1..24 | ForEach-Object { Get-Random -Maximum 256 }) -as [byte[]]).Replace("=", "") }
         Write-Host "Installing PostgreSQL (a few minutes)..."
         Run $setup.FullName @("--mode", "unattended", "--unattendedmodeui", "none", "--superpassword", $pgAdminPw, "--servicename", "postgresql-winespos", "--serverport", "5432")
-        Set-Content -Path $PgAdminFile -Value $pgAdminPw -Encoding ASCII
+        Set-Content -Path $PgAdminFile -Value $pgAdminPw -Encoding UTF8
         Lock-File $PgAdminFile $false      # only administrators can read the PostgreSQL admin password
     } elseif (-not $pgAdminPw -and (Test-Path $PgAdminFile)) {
         $pgAdminPw = (Get-Content $PgAdminFile -Raw).Trim()
@@ -92,29 +123,47 @@ try {
         if ($RemoteHost -and ($RemoteHost -split ",") -notcontains $syncHost) { $RemoteHost = "$RemoteHost,$syncHost" }
         if ($RemoteHost) { $cfgArgs += @("--remote-host", $RemoteHost); Write-Host "Remote access address: $RemoteHost" }
     }
+    Step "Stopping existing shop tasks"
+    Stop-ExistingTask "WinesPOS Backup"
+    Stop-ExistingTask "WinesPOS Printer"
+    Stop-ExistingTask "WinesPOS Server"
+
     Run $Admin $cfgArgs
     Remove-Item Env:\WINESPOS_SYNC_TOKEN -ErrorAction SilentlyContinue
     Remove-Item Env:\WINESPOS_PG_ADMIN_PASSWORD
+    Set-Content -Path $PgAdminFile -Value $pgAdminPw -Encoding UTF8
+    Lock-File $PgAdminFile $false
     Lock-File $EnvFile $false               # secrets: administrators and the server task only
+    Lock-File $ClientEnvFile $true
 
-    Step "Creating the tables"
-    Run $Admin @("manage", "migrate", "--noinput")
-    Run $Admin @("manage", "harden_db")
     $seeded = $false
     if ($SyncUrl -and $syncToken) {
-        Step "Copying the online server's data to this PC (first install)"
-        $out = & $Admin manage sync_seed --if-available 2>&1 | Out-String
-        Write-Host $out
-        $seeded = $out -match "now starts from"
-        if (-not $seeded) { Write-Warning "Nothing was copied from the online server (see the line above). Setting up a fresh shop instead." }
+        Step "Replacing local shop data with the verified online backup"
+        Write-Host "A pre-restore backup will be made, and the previous database and media will be retained."
+        $restoreOutput = & $Admin manage sync_seed --force 2>&1
+        $restoreCode = $LASTEXITCODE
+        $restoreOutput | Out-Host
+        if ($restoreCode -ne 0) {
+            throw "Online shop restoration failed (code $restoreCode). No fresh-shop setup was run. See $Logs\install.log."
+        }
+        $seeded = $true
     }
+
+    Step "Applying database migrations"
+    Run $Admin @("manage", "migrate", "--noinput")
+    Run $Admin @("manage", "harden_db")
+
     $setupArgs = @("manage", "setup_shop")
-    if ($ShopName) { $setupArgs += @("--shop-name", $ShopName) }
-    if ($ManagerUser -and -not $seeded) { $setupArgs += @("--manager-username", $ManagerUser) }   # a seeded shop already has its users
-    if ($LanHost) { $setupArgs += @("--tills", "2") } else { $setupArgs += @("--tills", "1") }
-    if ($managerPw) { $env:WINESPOS_MANAGER_PASSWORD = $managerPw }
-    Run $Admin $setupArgs
-    Remove-Item Env:\WINESPOS_MANAGER_PASSWORD -ErrorAction SilentlyContinue
+    if (-not $seeded) {
+        if ($ShopName) { $setupArgs += @("--shop-name", $ShopName) }
+        if ($ManagerUser) { $setupArgs += @("--manager-username", $ManagerUser) }
+        if ($LanHost) { $setupArgs += @("--tills", "2") } else { $setupArgs += @("--tills", "1") }
+        if ($managerPw) { $env:WINESPOS_MANAGER_PASSWORD = $managerPw }
+        Run $Admin $setupArgs
+        Remove-Item Env:\WINESPOS_MANAGER_PASSWORD -ErrorAction SilentlyContinue
+    } else {
+        Write-Host "Restored shop settings, manager accounts and tills were preserved; first-shop setup was skipped."
+    }
 
     Step "Starting the shop server, printer and nightly backup"
     $account = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
@@ -148,7 +197,7 @@ try {
             $TunnelDir = Join-Path $Data "tunnel"; New-Item -ItemType Directory -Force $TunnelDir | Out-Null
             $key = Join-Path $TunnelDir "id_ed25519"
             if (-not (Test-Path $key)) { & $keygen -t ed25519 -f $key -N '""' -C "shop-pc" | Out-Null }
-            & icacls $TunnelDir /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" | Out-Null
+            Set-FileAcl $TunnelDir @("*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F")
             $pub = (Get-Content "$key.pub" -Raw).Trim()
             $reply = Invoke-RestMethod -Method Post -Uri "$($SyncUrl.TrimEnd('/'))/api/sync/tunnel-key/" -TimeoutSec 20 `
                 -Headers @{ Authorization = "Bearer $syncToken" } -ContentType "application/json" -Body (@{ public_key = $pub } | ConvertTo-Json)
@@ -180,11 +229,14 @@ while (`$true) {
     Write-Host "The server is running."
     Start-ScheduledTask -TaskName "WinesPOS Printer"
     & $Admin manage selfcheck
+    if ($LASTEXITCODE -ne 0) { throw "The application self-check reported a failure. See $Logs\install.log." }
     Stop-Transcript | Out-Null
     exit 0
 }
 catch {
-    Write-Error $_
+    $failure = $_
+    $ErrorActionPreference = "Continue"
+    Write-Host "Installation failed: $failure" -ForegroundColor Red
     Stop-Transcript | Out-Null
     exit 1
 }

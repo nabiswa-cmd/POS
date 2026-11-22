@@ -88,8 +88,8 @@ begin
   TillPage.Values[0] := 'http://';
 
   SyncPage := CreateInputQueryPage(AccountPage.ID, 'Online server (optional)', 'Server PC',
-    'Leave both empty for a shop that is not connected to an online server. If filled, setup connects this PC by itself, ' +
-    'copies the online server''s data here, and sets up the secure tunnel.');
+    'Leave both empty for a fresh shop. If filled, the online backup replaces the active local shop data after validation. ' +
+    'A pre-restore backup is made and the previous database and media are retained.');
   SyncPage.Add('Online server address, for example https://pos.devs.surf:', False);
   SyncPage.Add('Sync token (the same long text as on the online server):', True);
 end;
@@ -108,6 +108,37 @@ end;
 function HasQuote(S: String): Boolean;
 begin
   Result := Pos('"', S) > 0;
+end;
+
+procedure PrepareSecretsFile(var SecretsPath: String);
+var
+  SecretsDir: String;
+  Code: Integer;
+begin
+  SecretsDir := ExpandConstant('{commonappdata}\WinesPOS\config');
+  if not ForceDirectories(SecretsDir) then
+  begin
+    MsgBox('Could not create the protected settings folder under ProgramData.', mbError, MB_OK);
+    Abort;
+  end;
+  if (not Exec(ExpandConstant('{sys}\icacls.exe'), '"' + SecretsDir + '" /reset', '', SW_HIDE, ewWaitUntilTerminated, Code)) or (Code <> 0) then
+  begin
+    MsgBox('Could not prepare protected installer settings permissions.', mbError, MB_OK);
+    Abort;
+  end;
+  if (not Exec(ExpandConstant('{sys}\icacls.exe'), '"' + SecretsDir + '" /inheritance:r', '', SW_HIDE, ewWaitUntilTerminated, Code)) or (Code <> 0) then
+  begin
+    MsgBox('Could not disable inherited installer settings permissions.', mbError, MB_OK);
+    Abort;
+  end;
+  if (not Exec(ExpandConstant('{sys}\icacls.exe'),
+      '"' + SecretsDir + '" /grant:r "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F"', '',
+      SW_HIDE, ewWaitUntilTerminated, Code)) or (Code <> 0) then
+  begin
+    MsgBox('Could not restrict installer settings to Administrators and SYSTEM.', mbError, MB_OK);
+    Abort;
+  end;
+  SecretsPath := SecretsDir + '\install-secrets.txt';
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -149,6 +180,13 @@ begin
         MsgBox('Type the full online address (https://...) and the sync token, or leave both empty.', mbError, MB_OK);
         Result := False;
       end;
+      if Result then
+      begin
+        if MsgBox('The online backup will replace the active local shop data. A pre-restore backup will be saved and ' +
+                  'the previous database and media retained. Continue with the replacement?',
+                  mbConfirmation, MB_YESNO) <> IDYES then
+          Result := False;
+      end;
     end;
   end;
   if CurPageID = TillPage.ID then
@@ -172,7 +210,7 @@ begin
   if CurStep <> ssPostInstall then
     exit;
   WizardForm.StatusLabel.Caption := 'Setting up the shop. This can take several minutes...';
-  SecretsPath := ExpandConstant('{tmp}\wp-secrets.txt');
+  PrepareSecretsFile(SecretsPath);
   Args := '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\scripts\post_install.ps1') +
           '" -AppDir "' + ExpandConstant('{app}') + '"';
   if IsServer then
@@ -188,8 +226,12 @@ begin
   else
     Args := Args + ' -Role till -ServerUrl "' + Trim(TillPage.Values[0]) + '"';
   if (not Exec('powershell.exe', Args, '', SW_HIDE, ewWaitUntilTerminated, Code)) or (Code <> 0) then
+  begin
     MsgBox('The program was copied, but this PC could not be set up.' + #13#10 +
            'Details: C:\ProgramData\WinesPOS\logs\install.log' + #13#10 +
-           'Fix the problem, then run this installer again: it is safe to run over an existing install.', mbError, MB_OK);
+           'Setup will stop. Fix the problem, then run this installer again. Existing shop data is not deleted.', mbError, MB_OK);
+    DeleteFile(SecretsPath);
+    Abort;
+  end;
   DeleteFile(SecretsPath);
 end;

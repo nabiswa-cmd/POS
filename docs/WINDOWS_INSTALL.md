@@ -1,7 +1,6 @@
 # Windows installation
 
-> Written and scripted on Linux. The installer, PyInstaller build and PowerShell scripts have **not** been run on Windows yet.
-> Follow "First install on a spare PC" below before using them in the shop, and fix what the logs tell you.
+The Windows installer and its PowerShell setup scripts require validation on a clean Windows 11 PC before use in a shop.
 
 ## What you need
 | | |
@@ -23,9 +22,10 @@ Run the installer as administrator and answer:
 2. Shop name, manager login name, and (only if a second till will connect) this PC's shop-network address, e.g. `192.168.1.10`. Give the PC a fixed address in the router first.
 3. A manager password (10+ characters). **PostgreSQL password:** leave empty if the installer should install PostgreSQL itself (a bundled installer is needed); otherwise type your existing `postgres` password.
 
-It then: writes the settings file `C:\ProgramData\WinesPOS\config\winespos.env` (private: administrators only), creates the database,
-creates the tables, creates the manager, starts the **WinesPOS Server** task (starts at boot, restarts if it stops), and, if a printer is configured, the **WinesPOS Printer** task,
+It then: writes the settings file `C:\ProgramData\WinesPOS\config\winespos.env` (readable only by Administrators and SYSTEM),
+creates the database, creates the tables, creates the manager, starts the **WinesPOS Server** task (starts at boot, restarts if it stops), and, if a printer is configured, the **WinesPOS Printer** task,
 schedules **WinesPOS Backup** every night at 23:00, and, if you gave an address, opens port 8000 to the shop network only.
+The shortcuts read only `winespos-client.env`, which contains the server URL and is readable by standard users. Database credentials, Django secrets, the sync token, and the PostgreSQL administrator password remain in protected files; the desktop client never reads those secrets.
 Shortcuts on the desktop: **POS (Cashier)**, **Manager**, **Stock Receiving**.
 
 Where things live: program `C:\Program Files\WinesPOS` (replaced on update) · data `C:\ProgramData\WinesPOS\data` (`media`, `backups`) · logs `C:\ProgramData\WinesPOS\logs` (`install.log`, `server.log`). **Never delete ProgramData\WinesPOS: it is the shop.**
@@ -45,6 +45,13 @@ powershell -ExecutionPolicy Bypass -File "C:\Program Files\WinesPOS\scripts\veri
 ```
 It prints PASS/FAIL for: shortcuts exist and start the right window, settings file is private, the server, configured printer and backup tasks exist, the server answers, and the shop health check (`selfcheck`) is clean. Then do `UAT_CHECKLIST.md`.
 
+### Fresh install vs. online-shop restoration
+
+- Leave the online-server fields empty for a fresh shop. Setup creates the administrator and till after migrations.
+- Enter both the online server address and token only when that server's live POS database should replace this PC's active shop data. The installer asks for confirmation, requests a fresh snapshot from the server's active database, then restores into a separate staging database, applies compatible migrations, checks the receipt-printer schema and database constraints, and switches only after validation. It makes a pre-restore backup and retains the previous database and media. Restored shop settings, users and tills become active; first-shop setup is skipped. This is not the same as restoring the newest backup uploaded to the sync inbox.
+- If the backup is unavailable/incompatible, a migration or schema check fails, or the database switch/rollback fails, setup stops and reports the cause. It does not fall back to a fresh shop or drop the retained database.
+- An in-place repair/update without online restore keeps the existing database and applies migrations normally. Stop and resolve any migration or database error before starting the server.
+
 ## 5. Printers
 By default receipts use the current device's print dialog. To send receipts from a till or phone to the server computer, install the printer driver on that server PC, then:
 1. Install its Windows driver for all users (the printer task runs as SYSTEM). Set the paper size to its roll width (80 mm or 58 mm) and margins to 0 in Printing preferences.
@@ -62,7 +69,7 @@ Settings > Apps > Wines & Spirits POS. It removes the program, the tasks and the
 ## Problems
 | Symptom | Look at |
 |---|---|
-| Installer says the PC could not be set up | `C:\ProgramData\WinesPOS\logs\install.log`; fix; run the installer again (safe over an existing install) |
+| Installer says the PC could not be set up | `C:\ProgramData\WinesPOS\logs\install.log`; setup stops instead of reporting success. Resolve the cause before retrying. Online restoration replaces active local data only after confirmation, and retains a pre-restore backup, the prior database and media. |
 | POS window says it cannot reach the server | Is the server PC on? On it: `Get-ScheduledTask "WinesPOS Server"`; `logs\server.log`. On a till: is the address right, is the PC on the same network, is the firewall rule there |
 | Anything feels wrong | Administrator prompt: `WinesPOSAdmin.exe manage selfcheck` |
 | Forgot the manager password | Administrator prompt: `WinesPOSAdmin.exe manage changepassword <login>` |

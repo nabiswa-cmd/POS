@@ -68,14 +68,22 @@ class Command(BaseCommand):
         except Exception as exc:
             error = str(exc) or exc.__class__.__name__
         finally:
-            if server_stopped:
+            restart_server = server_stopped
+            if error and restart_server:
+                try:
+                    connection.close()
+                    connection.ensure_connection()
+                except Exception as exc:
+                    restart_server = False
+                    error = f"{error} The active database is not accessible; the server remains stopped: {exc}".strip()
+            if restart_server:
                 try:
                     if windows_restore.task_states().get(windows_restore.SERVER_TASK) != "Running":
                         windows_restore.start_task(windows_restore.SERVER_TASK)
                     windows_restore.wait_for_server(True)
                 except windows_restore.RestoreOperationError as exc:
                     error = f"{error} Server restart failed: {exc}".strip()
-            if printer_stopped:
+            if printer_stopped and restart_server:
                 try:
                     if windows_restore.task_states().get(windows_restore.PRINTER_TASK) != "Running":
                         windows_restore.start_task(windows_restore.PRINTER_TASK)

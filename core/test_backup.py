@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import zipfile
 import os
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -68,6 +69,10 @@ class RoundTripTests(BackupCase):
         b = backup.create_backup(now=now)["path"]
         self.assertNotEqual(a, b)
         self.assertTrue(a.exists() and b.exists())
+
+    def test_backup_manifest_handles_a_database_without_migrations_yet(self):
+        with mock.patch("django.db.migrations.recorder.MigrationRecorder.has_table", return_value=False):
+            self.assertEqual(backup.applied_migrations(), {})
 
 
 class VerifyTests(BackupCase):

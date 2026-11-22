@@ -26,11 +26,27 @@ foreach ($name in $wanted.Keys) {
     }
 }
 $envFile = Join-Path $env:ProgramData "WinesPOS\config\winespos.env"
+$clientEnvFile = Join-Path $env:ProgramData "WinesPOS\config\winespos-client.env"
 Check "Settings file exists" (Test-Path $envFile) $envFile
+Check "Desktop client settings exist" (Test-Path $clientEnvFile) $clientEnvFile
 
 if ($serverPc) {
-    $acl = (& icacls $envFile) -join " "
-    Check "Settings file (holds secrets) is not readable by ordinary users" ($acl -notmatch "Users:|Everyone:|Authenticated Users:") $acl
+    $acl = (& icacls $envFile 2>&1) -join " "
+    $envAclCode = $LASTEXITCODE
+    Check "Settings file ACL is readable by administrators and SYSTEM only" (($envAclCode -eq 0) -and ($acl -notmatch "Users:|Everyone:|Authenticated Users:")) $acl
+    $clientAcl = (& icacls $clientEnvFile 2>&1) -join " "
+    $clientAclCode = $LASTEXITCODE
+    $clientSettings = if (Test-Path $clientEnvFile) { Get-Content $clientEnvFile } else { @() }
+    $hasServerUrl = [bool]($clientSettings | Where-Object { $_ -match "^WINESPOS_SERVER_URL=https?://" })
+    $hasNoSecrets = -not [bool]($clientSettings | Where-Object { $_ -match "PASSWORD|SECRET|TOKEN" })
+    Check "Desktop client settings are readable by standard users and contain no secrets" `
+        (($clientAclCode -eq 0) -and ($clientAcl -match "Users:\(R\)") -and $hasServerUrl -and $hasNoSecrets) $clientAcl
+    $pgAdminFile = Join-Path $env:ProgramData "WinesPOS\config\postgres-admin.txt"
+    if (Test-Path $pgAdminFile) {
+        $pgAcl = (& icacls $pgAdminFile 2>&1) -join " "
+        $pgAclCode = $LASTEXITCODE
+        Check "PostgreSQL administrator password is private" (($pgAclCode -eq 0) -and ($pgAcl -notmatch "Users:|Everyone:|Authenticated Users:")) $pgAcl
+    }
     Check "Server task exists" ([bool](Get-ScheduledTask -TaskName "WinesPOS Server" -ErrorAction SilentlyContinue))
     $printerTask = [bool](Get-ScheduledTask -TaskName "WinesPOS Printer" -ErrorAction SilentlyContinue)
     Check "Receipt printer task exists" $printerTask
@@ -42,6 +58,9 @@ if ($serverPc) {
     & (Join-Path $AppDir "WinesPOSAdmin.exe") manage selfcheck
     Check "Shop health check has no FAIL" ($LASTEXITCODE -eq 0)
 } else {
+    $clientAcl = (& icacls $clientEnvFile 2>&1) -join " "
+    $clientAclCode = $LASTEXITCODE
+    Check "Till client settings are readable by standard users" (($clientAclCode -eq 0) -and ($clientAcl -match "Users:\(R\)")) $clientAcl
     $url = ((Get-Content $envFile | Where-Object { $_ -like "WINESPOS_SERVER_URL=*" }) -replace "WINESPOS_SERVER_URL=", "")
     $ok = $false
     try { $ok = (Invoke-WebRequest "$url/health/" -UseBasicParsing -TimeoutSec 5).StatusCode -eq 200 } catch {}

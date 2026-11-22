@@ -20,7 +20,10 @@ def main(argv=None):
     command, rest = argv[0], argv[1:]
 
     from desktop import paths
-    paths.load_env_file()
+    if command in GUI:
+        paths.load_client_env_file()
+    else:
+        paths.load_env_file()
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
     if command in GUI:

@@ -20,6 +20,10 @@ def env_file_path():
     return Path(os.environ.get("WINESPOS_ENV_FILE") or data_root() / "config" / "winespos.env")
 
 
+def client_env_file_path():
+    return data_root() / "config" / "winespos-client.env"
+
+
 def parse_env(text):
     values = {}
     for line in text.splitlines():
@@ -39,4 +43,15 @@ def load_env_file(path=None):
     for key, value in parse_env(path.read_text(encoding="utf-8")).items():
         os.environ.setdefault(key, value)
     os.environ.setdefault("WINESPOS_ENV_FILE", str(path))
+    return True
+
+
+def load_client_env_file(path=None):
+    """Load only non-secret settings needed by a desktop client."""
+    path = Path(path) if path else client_env_file_path()
+    if not path.is_file():
+        return False
+    for key, value in parse_env(path.read_text(encoding="utf-8")).items():
+        if key == "WINESPOS_SERVER_URL":
+            os.environ.setdefault(key, value)
     return True

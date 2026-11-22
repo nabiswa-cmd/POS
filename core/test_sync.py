@@ -1,7 +1,9 @@
 """Runtime (database) settings and the shop <-> online server sync."""
 import io
+import sqlite3
 import shutil
 import tempfile
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -107,12 +109,30 @@ class OnlineServerTests(SyncCase):
         return r["path"].name, r["path"].read_bytes()
 
     def test_endpoints_do_not_exist_without_the_token(self):
-        for url in ("/api/sync/ping/", "/api/sync/status/", "/api/sync/latest/"):
+        for url in ("/api/sync/ping/", "/api/sync/status/", "/api/sync/latest/",
+                    "/api/sync/live-backup/"):
             self.assertEqual(Client().get(url).status_code, 404)
             self.assertEqual(Client().get(url, HTTP_AUTHORIZATION="Bearer wrong").status_code, 404)
         self.assertEqual(Client().get("/api/sync/ping/", **self.auth).status_code, 200)
         with override_settings(SYNC_TOKEN=""):
             self.assertEqual(Client().get("/api/sync/ping/", HTTP_AUTHORIZATION="Bearer ").status_code, 404)
+
+    def test_live_backup_endpoint_exports_the_current_database_not_the_upload_inbox(self):
+        manager = User.objects.create_user(username="live-owner", password="secret", is_manager=True)
+        response = Client().get("/api/sync/live-backup/", **self.auth)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/zip")
+        archive = self.tmp / "live-server.zip"
+        archive.write_bytes(b"".join(response.streaming_content))
+        summary = backup.verify_backup(archive)
+        self.assertEqual(summary["manifest"]["note"], "On-demand live POS server snapshot")
+        self.assertEqual(SyncReceipt.objects.count(), 0)
+        database = self.tmp / "live-server.sqlite3"
+        with zipfile.ZipFile(archive) as source:
+            database.write_bytes(source.read("database.sqlite3"))
+        with sqlite3.connect(database) as db:
+            usernames = {row[0] for row in db.execute("SELECT username FROM accounts_user")}
+        self.assertIn(manager.username, usernames)
 
     def test_valid_backup_is_stored_checked_and_listed(self):
         name, data = self.make_backup()
@@ -201,17 +221,17 @@ class ShopCycleTests(SyncCase):
         self.assertContains(page, "last success")
         self.assertNotContains(page, "last success: <b>never")
 
-    def test_manager_can_download_a_verified_server_backup_but_not_restore_live_data(self):
+    def test_manager_can_download_a_verified_live_server_backup(self):
         boss = User.objects.create(username="boss", is_manager=True)
         client = Client()
         client.force_login(boss)
         path = backup.create_backup(note="server copy")["path"]
-        with mock.patch.object(sync, "download_latest", return_value=path):
+        with mock.patch.object(sync, "download_live_server", return_value=path):
             response = client.post("/manage/sync/", {"action": "download_server"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Disposition"], f'attachment; filename="{path.name}"')
         self.assertEqual(b"".join(response.streaming_content), path.read_bytes())
-        self.assertContains(client.get("/manage/sync/"), "Download server database backup")
+        self.assertContains(client.get("/manage/sync/"), "Download live server database snapshot")
 
     def test_manager_can_queue_verified_server_restore(self):
         boss = User.objects.create(username="boss", is_manager=True)
@@ -222,7 +242,7 @@ class ShopCycleTests(SyncCase):
         folder.mkdir()
         staged = folder / path.name
         shutil.copyfile(path, staged)
-        with mock.patch.object(sync, "download_latest", return_value=staged), \
+        with mock.patch.object(sync, "download_live_server", return_value=staged), \
                 mock.patch.object(windows_restore, "check_ready"), \
                 mock.patch.object(windows_restore, "launch_restore") as launch:
             response = client.post("/manage/sync/", {"action": "restore_server"})
@@ -235,7 +255,7 @@ class ShopCycleTests(SyncCase):
         client = Client()
         client.force_login(boss)
         with mock.patch.object(CashierShift.objects, "filter") as active_shifts, \
-                mock.patch.object(sync, "download_latest") as download:
+                mock.patch.object(sync, "download_live_server") as download:
             active_shifts.return_value.exists.return_value = True
             response = client.post("/manage/sync/", {"action": "restore_server"})
         self.assertEqual(response.status_code, 302)
