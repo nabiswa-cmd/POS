@@ -126,22 +126,25 @@ def day_report(day):
     checks += 1
     for t in MpesaTransaction.objects.filter(status=MpesaTransaction.MATCHED).exclude(sale__status=Sale.COMPLETED).select_related("sale")[:25]:
         problems.append(f"Payment {t.trans_id} (KES {t.amount:,.2f}) is marked used but its sale is not completed.")
-    # 4. Used payments must have a sale; waiting/set-aside ones must not.
+    # 4. Used payments must have a sale.
     checks += 1
     for t in MpesaTransaction.objects.filter(status=MpesaTransaction.MATCHED, sale__isnull=True)[:25]:
         problems.append(f"Payment {t.trans_id} is marked used but is not linked to any sale.")
+    # 5. Waiting and set-aside payments must not have a sale.
+    checks += 1
     for t in MpesaTransaction.objects.filter(status__in=[MpesaTransaction.UNMATCHED, MpesaTransaction.IGNORED], sale__isnull=False)[:25]:
         problems.append(f"Payment {t.trans_id} is marked {t.get_status_display().lower()} but is linked to a sale.")
-    # 5. Today's received money must be fully accounted for by status.
+    # 6. Today's received money must be fully accounted for by status.
     checks += 1
     if sum(v["total"] for v in by_status.values()) != _sum(received):
         problems.append("Today's payments by status do not add up to the total received. Tell the developer.")
-    # 6. Phone requests that were paid must have produced a payment record.
+    # 7. Phone requests that were paid must have produced a payment record.
     checks += 1
     for r in MpesaStkRequest.objects.filter(status=MpesaStkRequest.CONFIRMED, transaction__isnull=True)[:25]:
         problems.append(f"Phone request {r.pk} says paid but has no Safaricom payment record.")
     stuck = MpesaStkRequest.objects.filter(status__in=MpesaStkRequest.OPEN_STATES,
                                            created_at__lt=now - timedelta(minutes=STK_STUCK_MINUTES))
+    # 8. Old phone requests must not remain unanswered indefinitely.
     checks += 1
     for r in stuck.select_related("sale")[:25]:
         problems.append(f"Phone request for KES {r.amount:,.2f} sent {timezone.localtime(r.created_at):%d %b %H:%M} never got an answer. "

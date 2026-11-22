@@ -269,14 +269,13 @@ class ScreenTests(CashupBase):
         self.assertIsNotNone(self.shift.closed_at)
         self.assertEqual(c.get("/pos/cashup/").status_code, 302)  # signed out, sent back to the till login
 
-    def test_a_wrong_count_stays_on_the_page_with_the_message_and_keeps_what_was_typed(self):
+    def test_a_wrong_count_is_recorded_on_the_cashup_slip(self):
         self.cash_sale()
         c = self.login(self.cashier)
         r = c.post("/pos/cashup/", {"c_1000": "8", "c_100": "3"})
-        self.assertContains(r, "off by KES")
-        self.assertContains(r, 'value="8"')
+        self.assertContains(r, "Short by 200.00")
         self.shift.refresh_from_db()
-        self.assertIsNone(self.shift.closed_at)
+        self.assertIsNotNone(self.shift.closed_at)
 
     def test_no_shift_or_no_login_goes_back_to_the_till_login(self):
         self.assertEqual(Client().get("/pos/cashup/").status_code, 302)

@@ -522,8 +522,8 @@ class ApiTests(SalesCase):
 
         res = self.post("/api/sales/cart/remove/", {"item_id": item["id"]})        # no approval
         self.assertEqual(res.status_code, 409)                                      # "a supervisor must approve"
-        self.assertEqual(res.json()["approval_required"], "remove_item")
-        self.assertEqual(res.json()["object_ref"], item["ref"])
+        self.assertEqual(res.json()["approval_required"]["action"], "remove_item")
+        self.assertEqual(res.json()["approval_required"]["object_ref"], item["ref"])
 
         res = self.post("/api/approvals/request/", {"action": "remove_item", "approver_username": "sup",
                                                     "secret": "4321", "reason": "Customer changed mind",

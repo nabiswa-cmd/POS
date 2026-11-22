@@ -378,9 +378,10 @@ class SalesScreenTests(SalesCase):
     def test_discount_over_the_limit_asks_for_approval_then_succeeds_with_a_token(self):
         item = self.post("/api/sales/cart/add/", {"code": "6001111111111"}).json()["cart"]["items"][0]
         res = self.post("/api/sales/cart/discount/", {"item_id": item["id"], "percent": "20"})
-        self.assertEqual((res.status_code, res.json()["approval_required"]), (409, "exceptional_discount"))
+        self.assertEqual((res.status_code, res.json()["approval_required"]["action"]), (409, "exceptional_discount"))
         token = self.post("/api/approvals/request/", {"action": "exceptional_discount", "approver_username": "sup", "secret": "4321",
-                                                      "reason": "Regular customer", "object_ref": res.json()["object_ref"]}).json()["token"]
+                                                      "reason": "Regular customer",
+                                                      "object_ref": res.json()["approval_required"]["object_ref"]}).json()["token"]
         res = self.post("/api/sales/cart/discount/", {"item_id": item["id"], "percent": "20", "approval_token": token})
         self.assertEqual((res.status_code, res.json()["cart"]["total"]), (200, "2800.00"))
 

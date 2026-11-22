@@ -93,14 +93,21 @@ class CodeTests(CatalogCase):
 
 class ImportedProductAttentionTests(CatalogCase):
     def test_dashboard_links_to_scanned_inactive_products_without_other_inactive_items(self):
+        from inventory import services as receiving_services
+
         imported = make_product("Scanned unknown wine", "SCAN-1", active=False,
                                 description="Imported from Open Food Facts. Verify details.")
         make_product("Manually deactivated", "OLD-1", active=False, description="Discontinued.")
+        receiving = receiving_services.new_receiving(self.manager)
+        receiving_services.add_receiving_item(
+            receiving, self.manager, product=imported, packaging=None,
+            qty_good=1, qty_damaged=0, qty_missing=0, cost_per_pack=Decimal("2400"))
+        receiving_services.submit_receiving(receiving.pk, self.manager)
         self.client.force_login(self.manager)
 
         home = self.client.get("/manage/")
-        self.assertContains(home, "1 scanned product inactive and waiting for review")
-        self.assertContains(home, 'href="/manage/products/?imported=1"')
+        self.assertContains(home, "1 newly received product")
+        self.assertContains(home, 'href="/manage/products/?imported=1&amp;received=1"')
         products = self.client.get("/manage/products/?imported=1")
         self.assertContains(products, imported.name)
         self.assertNotContains(products, "Manually deactivated")

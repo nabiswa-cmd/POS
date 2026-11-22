@@ -332,7 +332,9 @@ class RefundEndpointTests(SalesCase):
         self.assertEqual(retry["refund"]["id"], made["refund"]["id"])
         rid = made["refund"]["id"]
         first = self.post(f"/api/sales/refund/{rid}/approve/")
-        self.assertEqual((first.status_code, first.json()["approval_required"], first.json()["object_ref"]), (409, "refund", f"refund:{rid}"))
+        approval = first.json()["approval_required"]
+        self.assertEqual((first.status_code, approval["action"], approval["object_ref"]),
+                         (409, "refund", f"refund:{rid}"))
         token = self.approval("refund", f"refund:{rid}")
         ok = self.post(f"/api/sales/refund/{rid}/approve/", {"approval_token": token}).json()
         self.assertEqual((ok["ok"], ok["refund"]["status"], ok["refund"]["can"]["pay_cash"]), (True, "APPROVED", True))

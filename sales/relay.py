@@ -9,6 +9,7 @@ import json
 import urllib.error
 import urllib.request
 from datetime import timedelta
+from urllib.parse import urlsplit
 
 from django.core.cache import cache
 from django.db import transaction
@@ -64,7 +65,11 @@ def feed(after_id, limit, hours):
 def _fetch(after, limit, hours):
     """One page from the VPS. Kept separate so tests can replace it."""
     c = cfg()
-    url = (f"{c['RELAY_URL'].rstrip('/')}/api/pay/relay/{c['CALLBACK_SECRET']}/"
+    base_url = c["RELAY_URL"].rstrip("/")
+    parsed_url = urlsplit(base_url)
+    if parsed_url.scheme.lower() != "https" or not parsed_url.netloc:
+        raise RelayError("The online server URL must use https.")
+    url = (f"{base_url}/api/pay/relay/{c['CALLBACK_SECRET']}/"
            f"?after={int(after)}&limit={int(limit)}&hours={int(hours)}")
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {c['RELAY_TOKEN']}", "Accept": "application/json"})
     try:

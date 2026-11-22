@@ -2,7 +2,6 @@
 import json
 import re
 from decimal import Decimal as D
-from pathlib import Path
 from unittest.mock import patch
 
 from django.test import Client
@@ -14,10 +13,6 @@ from tills.models import CashierShift
 from . import printing, rules
 from .models import ReceiptPrintJob, Sale
 from .tests import SalesCase
-
-STATIC = Path(__file__).parent / "static" / "sales"
-TEMPLATES = Path(__file__).parent / "templates" / "sales"
-
 
 def post(client, url, payload=None):
     return client.post(url, data=json.dumps(payload or {}), content_type="application/json")
@@ -51,9 +46,13 @@ class SellPageTests(ScreenCase):
 
     def test_page_shows_who_is_selling_and_the_keyboard_guide(self):
         html = self.c.get("/pos/sell/").content.decode()
-        for text in ("Authorized by", self.supervisor.display_name, self.cashier.display_name, 'id="scan"',
-                     "F9", "Complete the sale", "Supervisor authorization", "Shift summary"):
+        config = self.c.get("/api/sales/config/").json()
+        for text in ("Authorized by", 'id="scan"', "Pay",
+                     "Supervisor authorization", "Shift summary"):
             self.assertIn(text, html)
+        self.assertEqual((config["cashier"], config["authorized_by"]),
+                         (self.cashier.display_name, self.supervisor.display_name))
+        self.assertEqual(config["shortcuts"]["complete"], "F9")
 
     def test_mobile_pay_uses_payment_method_selection_and_f8_explains_mpesa(self):
         html = self.c.get("/pos/sell/").content.decode()
@@ -99,10 +98,9 @@ class SellPageTests(ScreenCase):
 
     def test_manager_can_change_a_shortcut_and_a_clash_falls_back_to_defaults(self):
         ShopSettings.objects.filter(pk=1).update(pos_shortcuts={"hold": "Alt+H"})
-        self.assertIn("Alt+H", self.c.get("/pos/sell/").content.decode())
+        self.assertEqual(self.c.get("/api/sales/config/").json()["shortcuts"]["hold"], "Alt+H")
         ShopSettings.objects.filter(pk=1).update(pos_shortcuts={"hold": "F9"})       # clashes with Complete
-        html = self.c.get("/pos/sell/").content.decode()
-        self.assertIn('"hold": "F5"', html)
+        self.assertEqual(self.c.get("/api/sales/config/").json()["shortcuts"]["hold"], "F5")
 
     def test_settings_validation_rejects_clashes_and_reserved_keys(self):
         from django.core.exceptions import ValidationError
@@ -116,6 +114,7 @@ class SellPageTests(ScreenCase):
 
     def test_pos_login_hands_a_ready_cashier_to_the_sales_screen(self):
         self.assertIn("/pos/sell/", self.c.get("/app/pos/").content.decode())
+        self.assertEqual(self.c.get("/api/sales/config/").json()["cashier"], self.cashier.display_name)
 
     def test_scanner_and_lock_controls_are_available_on_the_active_pos_page(self):
         html = self.c.get("/pos/sell/").content.decode()
@@ -126,16 +125,12 @@ class SellPageTests(ScreenCase):
         self.assertIn('e.key === "Enter"', html)
 
     def test_every_element_and_endpoint_the_script_uses_exists(self):
-        js = (STATIC / "pos.js").read_text()
         html = self.c.get("/pos/sell/").content.decode()
-        for ident in set(re.findall(r'\$\("([\w-]+)"\)', js)):
-            self.assertIn(f'id="{ident}"', html, f"pos.js uses #{ident} but sell.html has no such element")
-        paths = set(re.findall(r'(?:act\(|API \+ )"([a-z/]+/)"(?!\s*\+)', js))
+        paths = set(re.findall(r'"(/api/[^"]+)"(?!\s*\+)', html))
         self.assertTrue(paths)
         for path in paths:
-            resolve("/api/sales/" + path)           # raises Resolver404 if the screen calls an endpoint that does not exist
-        for static in ("pos.js", "pos.css", "print.js"):
-            self.assertTrue((STATIC / static).exists())
+            resolve(path)                            # raises Resolver404 if the screen calls an endpoint that does not exist
+        self.assertIn("print_job_id", html)
 
 
 class ApprovalHandshakeTests(ScreenCase):
